@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -53,17 +54,22 @@ const (
 )
 
 // PushSegment applies one segment exactly once (C2): the SEG put plus the ART and
-// DAY increments commit together or not at all.
+// DAY increments commit together or not at all. The monotonic max_progress and
+// last_read_at updates run after the commit (see raiseArticleMax); if they cannot be
+// applied the outcome is PushRetry, so the client keeps the segment and resends it.
+// The resend hits the duplicate path, which re-applies them (they are idempotent)
+// without counting the segment twice.
 func (s *Store) PushSegment(ctx context.Context, w SegmentWrite) (PushOutcome, error) {
-	in := s.pushTx(w)
 	for attempt := 1; ; attempt++ {
-		_, err := s.db.TransactWriteItems(ctx, in)
+		// A fresh input per attempt: the SDK stamps an idempotency token on the struct it
+		// is given, and a retry must not replay the token of a cancelled attempt.
+		_, err := s.db.TransactWriteItems(ctx, s.pushTx(w))
 		if err == nil {
-			break
+			return s.finishPush(ctx, w, PushAccepted), nil
 		}
 		switch classifyTx(err) {
 		case txDuplicate:
-			return PushDuplicate, nil
+			return s.finishPush(ctx, w, PushDuplicate), nil
 		case txThrottled:
 			return PushRetry, nil
 		case txConflict:
@@ -76,8 +82,17 @@ func (s *Store) PushSegment(ctx context.Context, w SegmentWrite) (PushOutcome, e
 			return 0, err
 		}
 	}
-	s.raiseArticleMax(ctx, w)
-	return PushAccepted, nil
+}
+
+// finishPush runs the post-commit step for a segment that is committed (accepted or
+// already stored) and downgrades the outcome to PushRetry when it cannot complete.
+func (s *Store) finishPush(ctx context.Context, w SegmentWrite, outcome PushOutcome) PushOutcome {
+	if err := s.raiseArticleMax(ctx, w); err != nil {
+		slog.WarnContext(ctx, "store: post-commit update failed; asking client to retry",
+			"segment_id", w.SegmentID, "err", err)
+		return PushRetry
+	}
+	return outcome
 }
 
 func (s *Store) pushTx(w SegmentWrite) *dynamodb.TransactWriteItemsInput {
@@ -128,28 +143,50 @@ func (s *Store) pushTx(w SegmentWrite) *dynamodb.TransactWriteItemsInput {
 	}}
 }
 
-// raiseArticleMax applies the post-commit monotonic updates (spec §3.2). They are
-// outside the transaction; a lost update is healed by the article's next segment.
-func (s *Store) raiseArticleMax(ctx context.Context, w SegmentWrite) {
+// raiseArticleMax applies the post-commit monotonic updates (spec §3.2). They sit
+// outside the transaction because DynamoDB cannot express "set if greater" next to
+// ADD on the same item. Both are idempotent, so PushSegment re-runs them on a
+// duplicate. It returns the first error; only a failed condition (the stored value
+// is already as large) is ignored.
+func (s *Store) raiseArticleMax(ctx context.Context, w SegmentWrite) error {
 	k := key(InstPK(w.InstallationID), ArticleSK(w.URLHash))
 	if w.MaxProgress > 0 {
-		s.setIfGreater(ctx, k, "max_progress", numF(w.MaxProgress))
+		if err := s.setIfGreater(ctx, k, "max_progress", numF(w.MaxProgress)); err != nil {
+			return err
+		}
 	}
-	s.setIfGreater(ctx, k, "last_read_at", str(Timestamp(w.EndedAt)))
+	return s.setIfGreater(ctx, k, "last_read_at", str(Timestamp(w.EndedAt)))
 }
 
-func (s *Store) setIfGreater(ctx context.Context, k map[string]types.AttributeValue, attr string, v types.AttributeValue) {
-	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+// setIfGreater raises attr to v unless it is already >= v. A plain UpdateItem on an
+// item with a transaction in flight fails with TransactionConflictException, which
+// the SDK retryer does not retry, so conflicts and throttling are retried here with
+// the same back-off as the push transaction.
+func (s *Store) setIfGreater(ctx context.Context, k map[string]types.AttributeValue, attr string, v types.AttributeValue) error {
+	in := &dynamodb.UpdateItemInput{
 		TableName:                 &s.table,
 		Key:                       k,
 		UpdateExpression:          aws.String("SET #f = :v"),
 		ConditionExpression:       aws.String("attribute_not_exists(#f) OR #f < :v"),
 		ExpressionAttributeNames:  map[string]string{"#f": attr},
 		ExpressionAttributeValues: map[string]types.AttributeValue{":v": v},
-	})
-	if err != nil && !isConditionFailed(err) {
-		slog.WarnContext(ctx, "store: post-commit update failed", "attr", attr, "err", err)
 	}
+	for attempt := 1; ; attempt++ {
+		_, err := s.db.UpdateItem(ctx, in)
+		switch {
+		case err == nil, isConditionFailed(err):
+			return nil
+		case attempt < conflictAttempts && (isTxConflict(err) || IsThrottle(err)):
+			s.sleep(time.Duration(attempt*50) * time.Millisecond)
+		default:
+			return fmt.Errorf("store: raise %s: %w", attr, err)
+		}
+	}
+}
+
+func isTxConflict(err error) bool {
+	var c *types.TransactionConflictException
+	return errors.As(err, &c)
 }
 
 type txClass int

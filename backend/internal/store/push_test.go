@@ -128,6 +128,117 @@ func TestPushRetriesTransactionConflict(t *testing.T) {
 	}
 }
 
+// updateConflictDB fails the first `failures` UpdateItem calls with a
+// TransactionConflictException, the error a plain UpdateItem gets while a
+// TransactWriteItems on the same item is in flight (scenario 4).
+type updateConflictDB struct {
+	store.API
+	failures int
+	calls    int
+}
+
+func (c *updateConflictDB) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
+	c.calls++
+	if c.calls <= c.failures {
+		return nil, &types.TransactionConflictException{Message: aws.String("conflict")}
+	}
+	return c.API.UpdateItem(ctx, in, opts...)
+}
+
+// Spec §3.2: the post-commit max_progress/last_read_at update retries a transaction conflict.
+func TestPostCommitUpdateRetriesConflict(t *testing.T) {
+	env := storetest.New(t)
+	db := &updateConflictDB{API: env.DB, failures: 1}
+	s := store.New(db, env.Table, store.WithSleep(func(time.Duration) {}))
+	if out := push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)); out != store.PushAccepted {
+		t.Fatalf("got %v, want accepted after post-commit conflict retry", out)
+	}
+	a, err := s.GetArticle(ctx, "bot-1", store.URLHash(articleURL))
+	must(t, err)
+	if a.MaxProgress != 0.5 || a.LastReadAt != store.Timestamp(testNow.Add(60*time.Second)) {
+		t.Fatalf("post-commit update lost: %+v", a)
+	}
+}
+
+// A post-commit update that keeps failing must not be acknowledged: the client resends and the
+// duplicate path heals max_progress/last_read_at without counting the segment twice.
+func TestPostCommitFailureIsRetryAndDuplicateHeals(t *testing.T) {
+	env := storetest.New(t)
+	w := segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)
+	failing := store.New(&updateConflictDB{API: env.DB, failures: 1000}, env.Table, store.WithSleep(func(time.Duration) {}))
+	if out := push(t, failing, w); out != store.PushRetry {
+		t.Fatalf("got %v, want retry when the post-commit update cannot be applied", out)
+	}
+	a, err := env.Store.GetArticle(ctx, "bot-1", store.URLHash(articleURL))
+	must(t, err)
+	if a.TotalSeconds != 60 || a.MaxProgress != 0 || a.LastReadAt != "" {
+		t.Fatalf("expected committed totals but no post-commit values yet: %+v", a)
+	}
+
+	if out := push(t, env.Store, w); out != store.PushDuplicate {
+		t.Fatalf("resend = %v, want duplicate", out)
+	}
+	a, err = env.Store.GetArticle(ctx, "bot-1", store.URLHash(articleURL))
+	must(t, err)
+	if a.MaxProgress != 0.5 || a.LastReadAt != store.Timestamp(testNow.Add(60*time.Second)) {
+		t.Fatalf("duplicate path did not heal: %+v", a)
+	}
+	if a.TotalSeconds != 60 || a.Sessions != 1 || a.Version != 1 {
+		t.Fatalf("resend double-counted: %+v", a)
+	}
+}
+
+// The duplicate path reports retry too when it cannot heal.
+func TestDuplicateReportsRetryWhenHealFails(t *testing.T) {
+	env := storetest.New(t)
+	w := segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)
+	push(t, env.Store, w)
+	failing := store.New(&updateConflictDB{API: env.DB, failures: 1000}, env.Table, store.WithSleep(func(time.Duration) {}))
+	if out := push(t, failing, w); out != store.PushRetry {
+		t.Fatalf("got %v, want retry", out)
+	}
+}
+
+// inputRecordingDB mimics the SDK's idempotency middleware, which writes ClientRequestToken into
+// the caller's input struct, then cancels the first attempt with a conflict.
+type inputRecordingDB struct {
+	store.API
+	inputs []*dynamodb.TransactWriteItemsInput
+	tokens []*string // token on each input as it arrived, before this wrapper filled one
+}
+
+func (r *inputRecordingDB) TransactWriteItems(ctx context.Context, in *dynamodb.TransactWriteItemsInput, opts ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error) {
+	r.inputs = append(r.inputs, in)
+	r.tokens = append(r.tokens, in.ClientRequestToken)
+	if len(r.inputs) == 1 {
+		in.ClientRequestToken = aws.String("token-of-cancelled-attempt")
+		return nil, &types.TransactionCanceledException{Message: aws.String("conflict"), CancellationReasons: []types.CancellationReason{
+			{Code: aws.String("None")}, {Code: aws.String("TransactionConflict")}, {Code: aws.String("None")},
+		}}
+	}
+	return r.API.TransactWriteItems(ctx, in, opts...)
+}
+
+// Each attempt needs a fresh input: the SDK stamps an idempotency token on the struct, so
+// reusing it would replay a cancelled attempt's token.
+func TestPushConflictRetryBuildsFreshInput(t *testing.T) {
+	env := storetest.New(t)
+	rec := &inputRecordingDB{API: env.DB}
+	s := store.New(rec, env.Table, store.WithSleep(func(time.Duration) {}))
+	if out := push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)); out != store.PushAccepted {
+		t.Fatalf("got %v, want accepted", out)
+	}
+	if len(rec.inputs) != 2 {
+		t.Fatalf("attempts = %d, want 2", len(rec.inputs))
+	}
+	if rec.inputs[0] == rec.inputs[1] {
+		t.Fatal("conflict retry reused the first attempt's input struct")
+	}
+	if rec.tokens[1] != nil {
+		t.Fatalf("retry carried the cancelled attempt's token %q", *rec.tokens[1])
+	}
+}
+
 type countingDB struct {
 	store.API
 	batchGets int
