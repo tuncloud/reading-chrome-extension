@@ -90,8 +90,10 @@ func numF(v float64) types.AttributeValue {
 
 func boolV(v bool) types.AttributeValue { return &types.AttributeValueMemberBOOL{Value: v} }
 
+// get and queryAll read with ConsistentRead: token rotation (C7) and logout (T17) need
+// read-after-write, and a stale read would replay a rotated refresh token.
 func (s *Store) get(ctx context.Context, pk, sk string, out any) error {
-	res, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{TableName: &s.table, Key: key(pk, sk)})
+	res, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{TableName: &s.table, Key: key(pk, sk), ConsistentRead: aws.Bool(true)})
 	if err != nil {
 		return err
 	}
@@ -132,6 +134,7 @@ func (s *Store) update(ctx context.Context, pk, sk, expr, cond string, names map
 // queryAll pages through a query and returns every item.
 func (s *Store) queryAll(ctx context.Context, in *dynamodb.QueryInput) ([]map[string]types.AttributeValue, error) {
 	in.TableName = &s.table
+	in.ConsistentRead = aws.Bool(true)
 	var items []map[string]types.AttributeValue
 	for {
 		res, err := s.db.Query(ctx, in)
