@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 
 	"reading-tracker/backend/internal/app"
-	"reading-tracker/backend/internal/config"
+	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/store"
 )

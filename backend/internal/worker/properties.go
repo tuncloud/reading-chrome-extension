@@ -4,9 +4,9 @@ import (
 	"math"
 	"strings"
 
-	"reading-tracker/backend/internal/config"
+	"reading-tracker/backend/internal/platform/config"
+	"reading-tracker/backend/internal/platform/textutil"
 	"reading-tracker/backend/internal/store"
-	"reading-tracker/backend/internal/textutil"
 )
 
 // Notion request limits (appendix §8 + request-limits reference).

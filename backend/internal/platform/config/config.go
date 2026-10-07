@@ -9,7 +9,7 @@ import (
 	"time"
 	_ "time/tzdata" // C15: provided.al2023 ships no zoneinfo.
 
-	"reading-tracker/backend/internal/crypto"
+	"reading-tracker/backend/internal/platform/crypto"
 )
 
 // NotionVersion is pinned (C10); any other NOTION_VERSION fails fast.

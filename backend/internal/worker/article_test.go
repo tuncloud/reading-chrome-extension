@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"reading-tracker/backend/internal/config"
 	"reading-tracker/backend/internal/notion/notiontest"
+	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/setup"
 	"reading-tracker/backend/internal/store"

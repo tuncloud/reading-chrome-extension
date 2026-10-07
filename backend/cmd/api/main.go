@@ -9,8 +9,8 @@ import (
 	echoadapter "github.com/awslabs/aws-lambda-go-api-proxy/echo"
 
 	"reading-tracker/backend/internal/app"
-	"reading-tracker/backend/internal/config"
 	"reading-tracker/backend/internal/httpapi"
+	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/store"
 )

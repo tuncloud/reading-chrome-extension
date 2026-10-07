@@ -11,8 +11,8 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
-	"reading-tracker/backend/internal/crypto"
 	"reading-tracker/backend/internal/notion"
+	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/store"
 )

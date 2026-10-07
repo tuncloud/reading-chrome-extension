@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"reading-tracker/backend/internal/crypto"
+	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/store"
 )
 

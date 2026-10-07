@@ -20,11 +20,11 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/labstack/echo/v4"
 
-	"reading-tracker/backend/internal/config"
-	"reading-tracker/backend/internal/crypto"
 	"reading-tracker/backend/internal/httpapi"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/notion/notiontest"
+	"reading-tracker/backend/internal/platform/config"
+	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/setup"
 	"reading-tracker/backend/internal/store"

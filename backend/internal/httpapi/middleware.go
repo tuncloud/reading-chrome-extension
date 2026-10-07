@@ -9,7 +9,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"reading-tracker/backend/internal/crypto"
+	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/store"
 )
 

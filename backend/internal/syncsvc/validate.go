@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"reading-tracker/backend/internal/platform/textutil"
 	"reading-tracker/backend/internal/store"
-	"reading-tracker/backend/internal/textutil"
 )
 
 // Segment rejection reasons.

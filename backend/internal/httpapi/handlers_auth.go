@@ -8,9 +8,9 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/oklog/ulid/v2"
 
-	"reading-tracker/backend/internal/crypto"
+	"reading-tracker/backend/internal/platform/crypto"
+	"reading-tracker/backend/internal/platform/textutil"
 	"reading-tracker/backend/internal/store"
-	"reading-tracker/backend/internal/textutil"
 )
 
 type tokenRequest struct {
