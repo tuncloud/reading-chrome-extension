@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { TrackingConfig } from '../../domain/config'
 import type { ArticleMeta, Segment } from '../../domain/reading'
-import { claimPage, startTracking, type Driver } from './tracker-driver'
+import { claimPage, releasePage, startTracking, type Driver } from './tracker-driver'
 
 const config: TrackingConfig = {
   idleSeconds: 60, segmentSeconds: 60, minCreateSeconds: 30, completeProgress: 0.9, completeTimeRatio: 0.3,
@@ -126,6 +126,17 @@ describe('startTracking', () => {
     expect(driver!.current()?.canonicalUrl).toBe('http://localhost:3000/post/b')
   })
 
+  test('a hash-only change keeps the reading session', () => {
+    start(() => meta('http://localhost:3000/post/a'))
+    vi.advanceTimersByTime(5_000)
+    history.pushState(null, '', location.pathname + '#section-2')
+    vi.advanceTimersByTime(5_000)
+    const before = driver!.current()
+    window.dispatchEvent(new Event('pagehide'))
+    expect(sent.map((s) => s.segment.activeSeconds)).toEqual([10])
+    expect(driver!.current()).toEqual(before)
+  })
+
   test('metadata is re-read at flush time', () => {
     let title = ''
     start(() => meta(location.href, title))
@@ -170,4 +181,11 @@ test('Review focus 2: a second injection does not start a second tracker', () =>
   const win = {} as Window
   expect(claimPage(win)).toBe(true)
   expect(claimPage(win)).toBe(false)
+})
+
+test('releasePage lets the page be claimed again', () => {
+  const win = {} as Window
+  expect(claimPage(win)).toBe(true)
+  releasePage(win)
+  expect(claimPage(win)).toBe(true)
 })

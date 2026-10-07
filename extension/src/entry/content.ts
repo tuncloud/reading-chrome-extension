@@ -1,14 +1,20 @@
 // Content script composition root: ask the background whether and how to track this
 // page, then run the tracker driver with the chosen site adapter.
 import { ExtensionGoneError, sendToBackground, serveTabRequests } from '../adapters/chrome/messaging'
-import { claimPage, startTracking, type Driver } from '../adapters/page/tracker-driver'
+import { claimPage, releasePage, startTracking, type Driver } from '../adapters/page/tracker-driver'
 import { adapterFor } from '../adapters/site/registry'
 import type { ArticleMeta, Segment } from '../domain/reading'
 
 async function main(): Promise<void> {
   if (!claimPage(window)) return
-  const plan = await sendToBackground({ type: 'tracking-plan', host: location.hostname }).catch(() => null)
-  if (!plan) return
+  const plan = await sendToBackground({ type: 'tracking-plan', host: location.hostname }).catch((e: unknown) => {
+    if (!(e instanceof ExtensionGoneError)) console.warn('reading-tracker: no tracking plan', e)
+    return null
+  })
+  if (!plan) {
+    releasePage(window)
+    return
+  }
   const adapter = adapterFor(plan.adapter)
   let driver: Driver | null = null
 

@@ -35,6 +35,13 @@ export function claimPage(win: Window): boolean {
   return true
 }
 
+// releasePage lets a later injection claim the page again (no tracking plan was obtained).
+export function releasePage(win: Window): void {
+  delete (win as Window & { [CLAIM]?: boolean })[CLAIM]
+}
+
+const withoutHash = (url: string) => url.split('#')[0]!
+
 export function startTracking(d: DriverDeps): Driver {
   const { win } = d
   const doc = win.document
@@ -48,7 +55,7 @@ export function startTracking(d: DriverDeps): Driver {
     newId: d.newId,
   })
   let meta = d.extract()
-  let href = win.location.href
+  let href = withoutHash(win.location.href)
   let lastMove = Number.NEGATIVE_INFINITY
   let stopped = false
 
@@ -102,8 +109,9 @@ export function startTracking(d: DriverDeps): Driver {
   }
 
   const tick = () => {
-    if (win.location.href !== href) {
-      href = win.location.href
+    const current = withoutHash(win.location.href)
+    if (current !== href) {
+      href = current
       emit(tracker.newSession(now()), meta) // the open segment belongs to the previous article
       meta = d.extract()
     }
