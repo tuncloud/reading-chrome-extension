@@ -1,9 +1,8 @@
-// Db is the LocalStore over IndexedDB (spec §3.4). Rows keep the spec's snake_case
+// Db is the local store over IndexedDB (spec §3.4). Rows keep the spec's snake_case
 // names; the mapping to domain types lives here only.
 import Dexie, { type Table } from 'dexie'
 import type { LocalArticle, StoredSegment } from '../shared/reading'
 import type { Installation, CachedConfig, User } from '../shared/types'
-import type { LocalStore } from '../application/ports'
 
 // KvSchema is the kv table of spec §3.4.
 export interface KvSchema {
@@ -97,7 +96,7 @@ function fromSegment(s: StoredSegment): SegmentRow {
   }
 }
 
-export class Db implements LocalStore {
+export class Db {
   constructor(private readonly db: ReadingDb) {}
 
   applyRead(segment: StoredSegment, merge: (prev: LocalArticle | undefined) => LocalArticle): Promise<boolean> {

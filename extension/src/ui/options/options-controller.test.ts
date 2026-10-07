@@ -6,7 +6,8 @@ import {
 import { ApiError } from '../../shared/errors'
 import { DomainService } from '../../application/domains'
 import { SessionService } from '../../application/session'
-import { SetupService } from '../../application/setup'
+import type { Db } from '../../background/db'
+import { SetupService } from '../../background/setup'
 import type { ConnectResult } from '../../application/session'
 import { createOptionsController } from './options-controller'
 import type { OptionsState } from './OptionsView'
@@ -35,7 +36,7 @@ describe('options controller', () => {
     return createOptionsController(
       {
         session,
-        setup: new SetupService({ store, api }),
+        setup: new SetupService({ db: store as unknown as Db, api }), // MemoryStore stands in for Db until Task 4
         domains: new DomainService({ store, permissions: new FakePermissions(true, events), scripts: new FakeContentScripts() }),
         connect: () => connect(),
       },

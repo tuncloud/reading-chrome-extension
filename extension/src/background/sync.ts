@@ -1,8 +1,10 @@
 // SyncService pushes the local outbox to POST /v1/sync/push (spec §2.8, T28).
 import type { ArticleMeta, LocalArticle, Segment, StoredSegment } from '../shared/reading'
 import { isApiError } from '../shared/errors'
-import { AUTH_KEYS } from './session'
-import type { Api, Clock, LocalStore, Log } from './ports'
+import type { Log } from '../shared/log'
+import { AUTH_KEYS } from '../application/session'
+import type { ApiClient } from './api'
+import type { Db } from './db'
 import type { PushResult, SyncOutcome } from '../shared/types'
 
 export type { SyncOutcome } from '../shared/types'
@@ -16,9 +18,9 @@ const MINUTE = 60_000
 const DAY = 24 * 60 * MINUTE
 
 export interface SyncDeps {
-  store: LocalStore
-  api: Api
-  clock: Clock
+  db: Db
+  api: Pick<ApiClient, 'push'>
+  clock: { now(): Date; timeZone(): string }
   log: Log
 }
 
@@ -64,19 +66,19 @@ export class SyncService {
 
   // prune deletes synced segments that started more than RETENTION_DAYS ago.
   prune(): Promise<number> {
-    const { store, clock } = this.deps
-    return store.pruneSynced(new Date(clock.now().getTime() - RETENTION_DAYS * DAY).toISOString())
+    const { db, clock } = this.deps
+    return db.pruneSynced(new Date(clock.now().getTime() - RETENTION_DAYS * DAY).toISOString())
   }
 
   private async loop(): Promise<SyncOutcome> {
-    const { store, api, clock, log } = this.deps
-    const token = await store.getKv('device_token')
+    const { db, api, clock, log } = this.deps
+    const token = await db.getKv('device_token')
     if (!token) return 'disconnected'
-    const until = await store.getKv('sync_backoff_until')
+    const until = await db.getKv('sync_backoff_until')
     if (until && clock.now().toISOString() < until) return 'backoff'
 
     for (;;) {
-      const segments = await store.unsyncedSegments(PUSH_LIMIT)
+      const segments = await db.unsyncedSegments(PUSH_LIMIT)
       if (segments.length === 0) break
       let progress: Progress
       try {
@@ -99,8 +101,8 @@ export class SyncService {
   // halves, and a single segment still too large is dropped, so one oversized segment cannot
   // block the outbox. Every other failure propagates and backs off with the data kept.
   private async push(token: string, segments: StoredSegment[]): Promise<Progress> {
-    const { store, api, clock, log } = this.deps
-    const articles = await store.articles([...new Set(segments.map((s) => s.canonicalUrl))])
+    const { db, api, clock, log } = this.deps
+    const articles = await db.articles([...new Set(segments.map((s) => s.canonicalUrl))])
     let res: PushResult
     try {
       res = await api.push(token, {
@@ -113,7 +115,7 @@ export class SyncService {
       if (!isApiError(e, TOO_LARGE)) throw e
       const only = segments[0]!
       if (segments.length === 1) {
-        await store.deleteSegments([only.id])
+        await db.deleteSegments([only.id])
         log.warn(`sync: dropped segment ${only.id} (${e.status} ${e.code})`)
         return { settled: 1, retry: false }
       }
@@ -123,30 +125,30 @@ export class SyncService {
       const rest = await this.push(token, segments.slice(mid))
       return { settled: first.settled + rest.settled, retry: rest.retry }
     }
-    await store.markSynced([...res.accepted, ...res.duplicate])
+    await db.markSynced([...res.accepted, ...res.duplicate])
     if (res.rejected.length > 0) {
-      await store.deleteSegments(res.rejected.map((r) => r.id))
+      await db.deleteSegments(res.rejected.map((r) => r.id))
       for (const r of res.rejected) log.warn(`sync: server rejected segment ${r.id}: ${r.reason}`)
     }
     return { settled: res.accepted.length + res.duplicate.length + res.rejected.length, retry: res.retry.length > 0 }
   }
 
   private async fail(e: unknown): Promise<SyncOutcome> {
-    const { store, clock, log } = this.deps
+    const { db, clock, log } = this.deps
     if (isApiError(e, 401)) {
-      await store.deleteKv(...AUTH_KEYS, 'sync_failures', 'sync_backoff_until')
+      await db.deleteKv(...AUTH_KEYS, 'sync_failures', 'sync_backoff_until')
       log.warn('sync: device token rejected; disconnected')
       return 'disconnected'
     }
-    const failures = ((await store.getKv('sync_failures')) ?? 0) + 1
+    const failures = ((await db.getKv('sync_failures')) ?? 0) + 1
     const minutes = Math.min(2 ** (failures - 1), MAX_BACKOFF_MINUTES)
-    await store.setKv('sync_failures', failures)
-    await store.setKv('sync_backoff_until', new Date(clock.now().getTime() + minutes * MINUTE).toISOString())
+    await db.setKv('sync_failures', failures)
+    await db.setKv('sync_backoff_until', new Date(clock.now().getTime() + minutes * MINUTE).toISOString())
     log.warn(`sync: push failed (${e instanceof Error ? e.message : String(e)}); retrying in ${minutes} min`)
     return 'failed'
   }
 
   private async clearBackoff(): Promise<void> {
-    await this.deps.store.deleteKv('sync_failures', 'sync_backoff_until')
+    await this.deps.db.deleteKv('sync_failures', 'sync_backoff_until')
   }
 }

@@ -1,22 +1,22 @@
 import { beforeEach, describe, expect, test, vi, type Mock } from 'vitest'
-import { FixedClock, MemoryLog, MemoryStore } from '../../test/fakes'
-import { META, segment } from '../../test/helpers'
+import { captureLog, clock, META, segment, testDb } from '../../test/helpers'
 import { parseRemoteConfig, type RemoteConfig } from '../shared/config'
 import { wireConfig } from '../../test/fixtures'
+import type { Db } from './db'
 import { RecordService } from './record'
 
 describe('RecordService', () => {
-  let store: MemoryStore
+  let db: Db
   let syncSoon: Mock<() => void>
   let config: RemoteConfig | null
   let svc: RecordService
-  const log = new MemoryLog()
+  const log = captureLog()
 
   beforeEach(() => {
-    store = new MemoryStore()
+    db = testDb()
     syncSoon = vi.fn<() => void>()
     config = parseRemoteConfig({ ...wireConfig, tracking: { ...wireConfig.tracking, sync_threshold_segments: 2 } })
-    svc = new RecordService({ store, clock: new FixedClock(), config: async () => config, syncSoon, log })
+    svc = new RecordService({ db, now: clock().now, config: async () => config, syncSoon, log })
   })
 
   const plain = (id: string) => {
@@ -26,18 +26,18 @@ describe('RecordService', () => {
 
   test('stores the segment unsynced with created_at and merges the article', async () => {
     expect(await svc.record(META, plain('a'))).toBe(true)
-    expect(store.segmentRows.get('a')).toMatchObject({ synced: 0, createdAt: '2026-10-06T03:00:00.000Z' })
-    expect(store.articleRows.get(META.canonicalUrl)?.totalSeconds).toBe(60)
+    expect((await db.segmentsSince('')).find((s) => s.id === 'a')).toMatchObject({ synced: 0, createdAt: '2026-10-06T03:00:00.000Z' })
+    expect((await db.articles([META.canonicalUrl]))[0]?.totalSeconds).toBe(60)
   })
 
   test('C23: a 0-second segment is never stored', async () => {
     expect(await svc.record(META, { ...plain('a'), activeSeconds: 0 })).toBe(false)
-    expect(store.segmentRows.size).toBe(0)
+    expect(await db.segmentsSince('')).toHaveLength(0)
   })
 
   test('a segment whose URL does not match its article is dropped', async () => {
     expect(await svc.record(META, { ...plain('a'), canonicalUrl: 'https://other.example/' })).toBe(false)
-    expect(store.segmentRows.size).toBe(0)
+    expect(await db.segmentsSince('')).toHaveLength(0)
   })
 
   test('asks for a sync once unsynced segments reach sync_threshold_segments', async () => {
@@ -57,7 +57,7 @@ describe('RecordService', () => {
     config = null
     await svc.record(META, plain('a'))
     await svc.record(META, plain('b'))
-    expect(store.segmentRows.size).toBe(2)
+    expect(await db.segmentsSince('')).toHaveLength(2)
     expect(syncSoon).not.toHaveBeenCalled()
   })
 })

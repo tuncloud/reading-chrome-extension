@@ -3,7 +3,7 @@
 import { isApiError } from '../../shared/errors'
 import type { DomainService } from '../../application/domains'
 import type { ConnectResult, SessionService } from '../../application/session'
-import type { SetupService } from '../../application/setup'
+import type { SetupService } from '../../background/setup'
 import { connectMessage } from '../popup/messages'
 import type { OptionsActions, OptionsState } from './OptionsView'
 

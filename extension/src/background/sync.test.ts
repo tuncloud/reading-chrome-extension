@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, test } from 'vitest'
-import { FakeApi, FixedClock, MemoryLog, MemoryStore } from '../../test/fakes'
-import { record, segment } from '../../test/helpers'
+import { apiStub, captureLog, clock as makeClock, record, segment, testDb } from '../../test/helpers'
 import { ApiError, NetworkError } from '../shared/errors'
 import type { PushBody, PushResult } from '../shared/types'
+import type { Db } from './db'
 import { SyncService } from './sync'
 
 const MIN = 60_000
 
-async function seed(store: MemoryStore, n: number, urls = ['https://e.com/a', 'https://e.com/b']): Promise<string[]> {
+async function seed(store: Db, n: number, urls = ['https://e.com/a', 'https://e.com/b']): Promise<string[]> {
   const ids: string[] = []
   for (let i = 0; i < n; i++) {
     const id = `s${String(i).padStart(3, '0')}`
@@ -19,23 +19,23 @@ async function seed(store: MemoryStore, n: number, urls = ['https://e.com/a', 'h
 }
 
 describe('SyncService.run', () => {
-  let store: MemoryStore
-  let clock: FixedClock
-  let log: MemoryLog
+  let store: Db
+  let clock: ReturnType<typeof makeClock>
+  let log: ReturnType<typeof captureLog>
 
   beforeEach(async () => {
-    store = new MemoryStore()
-    clock = new FixedClock()
-    log = new MemoryLog()
+    store = testDb()
+    clock = makeClock()
+    log = captureLog()
     await store.setKv('device_token', 'rt_x')
   })
 
-  const service = (api: FakeApi) => new SyncService({ store, api, clock, log })
+  const service = (api: ReturnType<typeof apiStub>) => new SyncService({ db: store, api, clock, log })
 
   test('without a device token it does nothing', async () => {
     await store.deleteKv('device_token')
     await seed(store, 3)
-    const api = new FakeApi()
+    const api = apiStub()
     expect(await service(api).run()).toBe('disconnected')
     expect(api.count('push')).toBe(0)
   })
@@ -43,7 +43,7 @@ describe('SyncService.run', () => {
   test('C25: batches of ≤ 50, oldest first, each with only its own articles', async () => {
     const urls = Array.from({ length: 60 }, (_, i) => `https://e.com/${i}`)
     const ids = await seed(store, 120, urls)
-    const api = new FakeApi()
+    const api = apiStub()
     expect(await service(api).run()).toBe('synced')
     const bodies = api.calls.filter((c) => c.method === 'push').map((c) => c.args[1] as PushBody)
     expect(bodies.map((b) => b.segments.length)).toEqual([50, 50, 20])
@@ -56,7 +56,7 @@ describe('SyncService.run', () => {
 
   test('the envelope carries client_time and the reader time zone; articles carry metadata only', async () => {
     await seed(store, 1)
-    const api = new FakeApi()
+    const api = apiStub()
     await service(api).run()
     const body = api.calls[0]?.args[1] as PushBody
     expect(body.clientTime).toBe('2026-10-06T03:00:00.000Z')
@@ -69,12 +69,12 @@ describe('SyncService.run', () => {
 
   test('§2.8: accepted and duplicate are synced, rejected dropped with a log line, retry kept', async () => {
     await seed(store, 4)
-    const api = new FakeApi({
+    const api = apiStub({
       push: async () => ({ accepted: ['s000'], duplicate: ['s001'], retry: ['s002'], rejected: [{ id: 's003', reason: 'started_at_out_of_range' }] }),
     })
     expect(await service(api).run()).toBe('partial')
     expect((await store.unsyncedSegments(10)).map((s) => s.id)).toEqual(['s002'])
-    expect(store.segmentRows.has('s003')).toBe(false)
+    expect((await store.segmentsSince('')).some((s) => s.id === 's003')).toBe(false)
     expect(log.lines.some((l) => l.includes('s003') && l.includes('started_at_out_of_range'))).toBe(true)
     expect(api.count('push')).toBe(1)
   })
@@ -83,7 +83,7 @@ describe('SyncService.run', () => {
     await seed(store, 2)
     await store.setKv('device_id', 'd1')
     await store.setKv('installation', null)
-    const api = new FakeApi({ push: async () => { throw new ApiError(401, 'unauthorized', 'revoked') } })
+    const api = apiStub({ push: async () => { throw new ApiError(401, 'unauthorized', 'revoked') } })
     expect(await service(api).run()).toBe('disconnected')
     expect(await store.getKv('device_token')).toBeUndefined()
     expect(await store.getKv('device_id')).toBeUndefined()
@@ -95,14 +95,14 @@ describe('SyncService.run', () => {
     await seed(store, 1)
     await store.setKv('sync_failures', 5)
     await store.setKv('sync_backoff_until', new Date(clock.now().getTime() - MIN).toISOString()) // expired: this run goes through
-    const api = new FakeApi({ push: async () => { throw new ApiError(401, 'unauthorized', 'revoked') } })
+    const api = apiStub({ push: async () => { throw new ApiError(401, 'unauthorized', 'revoked') } })
     expect(await service(api).run()).toBe('disconnected')
     expect(await store.getKv('sync_failures')).toBeUndefined()
     expect(await store.getKv('sync_backoff_until')).toBeUndefined()
   })
 
   describe('oversized and refused batches', () => {
-    const rejectContaining = (bad: string, status = 413) => new FakeApi({
+    const rejectContaining = (bad: string, status = 413) => apiStub({
       push: async (_t, body) => {
         if (body.segments.some((s) => s.id === bad)) throw new ApiError(status, 'payload_too_large', 'too big')
         return { accepted: body.segments.map((s) => s.id), duplicate: [], retry: [], rejected: [] }
@@ -114,8 +114,9 @@ describe('SyncService.run', () => {
       const api = rejectContaining(ids[4]!)
       expect(await service(api).run()).toBe('synced')
       expect(await store.countUnsynced()).toBe(0)
-      expect(store.segmentRows.has(ids[4]!)).toBe(false)
-      for (const id of ids.filter((i) => i !== ids[4])) expect(store.segmentRows.get(id)?.synced).toBe(1)
+      expect((await store.segmentsSince('')).some((s) => s.id === ids[4])).toBe(false)
+      const rows = await store.segmentsSince('')
+      for (const id of ids.filter((i) => i !== ids[4])) expect(rows.find((s) => s.id === id)?.synced).toBe(1)
       expect(log.lines).toContain(`warn sync: dropped segment ${ids[4]} (413 payload_too_large)`)
       expect(await store.getKv('sync_backoff_until')).toBeUndefined()
     })
@@ -124,7 +125,7 @@ describe('SyncService.run', () => {
     // problems come back in `rejected`. So a 400 must never split the batch or drop data.
     test('a 400 on every push keeps every segment and backs off', async () => {
       await seed(store, 1)
-      const api = new FakeApi({ push: async () => { throw new ApiError(400, 'invalid_request', 'tz is not a known IANA time zone') } })
+      const api = apiStub({ push: async () => { throw new ApiError(400, 'invalid_request', 'tz is not a known IANA time zone') } })
       expect(await service(api).run()).toBe('failed')
       expect(api.count('push')).toBe(1)
       expect(await store.countUnsynced()).toBe(1)
@@ -135,7 +136,7 @@ describe('SyncService.run', () => {
     test('a 400 does not split a batch: the next run resends it whole', async () => {
       const ids = await seed(store, 3)
       let first = true
-      const api = new FakeApi({
+      const api = apiStub({
         push: async (_t, body) => {
           if (first) {
             first = false
@@ -150,13 +151,13 @@ describe('SyncService.run', () => {
       expect(await svc.run()).toBe('synced')
       const sizes = api.calls.filter((c) => c.method === 'push').map((c) => (c.args[1] as PushBody).segments.length)
       expect(sizes).toEqual([3, 3])
-      expect([...store.segmentRows.keys()].sort()).toEqual(ids)
+      expect((await store.segmentsSince('')).map((s) => s.id).sort()).toEqual(ids)
       expect(await store.countUnsynced()).toBe(0)
     })
 
     test('5xx and network errors are not poison: they back off and keep the segments', async () => {
       await seed(store, 3)
-      const api = new FakeApi({ push: async () => { throw new ApiError(500, 'internal', 'boom') } })
+      const api = apiStub({ push: async () => { throw new ApiError(500, 'internal', 'boom') } })
       expect(await service(api).run()).toBe('failed')
       expect(api.count('push')).toBe(1)
       expect(await store.countUnsynced()).toBe(3)
@@ -167,7 +168,7 @@ describe('SyncService.run', () => {
   test('T28: failures back off 1, 2, 4 … minutes, capped at 30, and success resets', async () => {
     await seed(store, 1)
     let online = false
-    const api = new FakeApi({
+    const api = apiStub({
       push: async (_t, body) => {
         if (!online) throw new NetworkError('Failed to fetch')
         return { accepted: body.segments.map((s) => s.id), duplicate: [], retry: [], rejected: [] }
@@ -191,7 +192,7 @@ describe('SyncService.run', () => {
 
   test('503 capacity_exceeded backs off too', async () => {
     await seed(store, 1)
-    const api = new FakeApi({ push: async () => { throw new ApiError(503, 'capacity_exceeded', 'busy') } })
+    const api = apiStub({ push: async () => { throw new ApiError(503, 'capacity_exceeded', 'busy') } })
     expect(await service(api).run()).toBe('failed')
     expect(await store.getKv('sync_failures')).toBe(1)
   })
@@ -200,7 +201,7 @@ describe('SyncService.run', () => {
     await seed(store, 3)
     let release!: () => void
     const gate = new Promise<void>((r) => { release = r })
-    const api = new FakeApi({
+    const api = apiStub({
       push: async (_t, body) => {
         await gate
         return { accepted: body.segments.map((s) => s.id), duplicate: [], retry: [], rejected: [] }
@@ -220,7 +221,7 @@ describe('SyncService.run', () => {
     const ids = await seed(store, 75)
     const committed = new Map<string, number>()
     let online = false
-    const api = new FakeApi({
+    const api = apiStub({
       push: async (_t, body) => {
         if (!online) throw new NetworkError('offline')
         const res: PushResult = { accepted: [], duplicate: [], retry: [], rejected: [] }
@@ -248,7 +249,7 @@ describe('SyncService.run', () => {
     const ids = await seed(store, 5)
     const committed = new Set<string>()
     let timeout = true
-    const api = new FakeApi({
+    const api = apiStub({
       push: async (_t, body) => {
         const res: PushResult = { accepted: [], duplicate: [], retry: [], rejected: [] }
         for (const s of body.segments) {
@@ -271,14 +272,14 @@ describe('SyncService.run', () => {
 
 describe('SyncService.prune', () => {
   test('§3.4: deletes synced segments older than 30 days only', async () => {
-    const store = new MemoryStore()
-    const clock = new FixedClock(new Date('2026-10-06T00:00:00.000Z'))
+    const store = testDb()
+    const clock = makeClock('2026-10-06T00:00:00.000Z')
     await record(store, segment('old', { startedAt: '2026-09-05T00:00:00.000Z' }))
     await record(store, segment('recent', { startedAt: '2026-09-07T00:00:00.000Z' }))
     await record(store, segment('old-unsynced', { startedAt: '2026-08-01T00:00:00.000Z' }))
     await store.markSynced(['old', 'recent'])
-    const svc = new SyncService({ store, api: new FakeApi(), clock, log: new MemoryLog() })
+    const svc = new SyncService({ db: store, api: apiStub(), clock, log: captureLog() })
     expect(await svc.prune()).toBe(1)
-    expect([...store.segmentRows.keys()].sort()).toEqual(['old-unsynced', 'recent'])
+    expect((await store.segmentsSince('')).map((s) => s.id).sort()).toEqual(['old-unsynced', 'recent'])
   })
 })
