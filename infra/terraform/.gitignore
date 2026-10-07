@@ -1,0 +1,7 @@
+.terraform/
+.build/
+*.tfplan
+*.tfstate
+*.tfstate.*
+*.tfvars
+!example.tfvars
