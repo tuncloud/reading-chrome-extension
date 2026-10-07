@@ -54,7 +54,7 @@ make build         # build/api/bootstrap and build/worker/bootstrap (linux/arm64
 | `internal/app` | production wiring (AWS clients, Notion client, deps) |
 | `internal/config` | env config, tracking config (`/v1/config`) |
 | `internal/httpapi` | Echo routes: OAuth, auth, setup, sync push, status, account |
-| `internal/syncsvc` | push validation and segment writes |
+| `internal/usecase/readsync` | push validation and segment writes |
 | `internal/setup` | template resolution, database creation, resync |
 | `internal/worker` | Notion page writes, token refresh, purge |
 | `internal/notion` (+ `notiontest`) | Notion client (+ in-memory fake) |

@@ -1,13 +1,24 @@
 package httpapi_test
 
 import (
+	"context"
+	"io"
+	"log/slog"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"reading-tracker/backend/internal/adapter/dynamo"
+	"reading-tracker/backend/internal/adapter/notion"
+	"reading-tracker/backend/internal/app"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
 func TestConfigEndpoint(t *testing.T) {
@@ -165,5 +176,28 @@ func TestRequestLogOmitsQueryAndToken(t *testing.T) {
 	logs := env.logs.String()
 	if !strings.Contains(logs, "/v1/me") || strings.Contains(logs, "abc123secret") || strings.Contains(logs, tok) {
 		t.Fatalf("log leak: %s", logs)
+	}
+}
+
+type throttledReadsDB struct{ dynamo.API }
+
+func (throttledReadsDB) GetItem(context.Context, *dynamodb.GetItemInput, ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
+	return nil, &types.ProvisionedThroughputExceededException{Message: aws.String("slow down")}
+}
+
+// Review focus 2: a DynamoDB throttle on the API path (auth reads the device token
+// first) is still 503 capacity_exceeded now that errors cross the use-case boundary.
+func TestThrottledReadIs503(t *testing.T) {
+	env := newTestEnv(t)
+	_, tok := env.seedUser()
+	e := app.NewAPI(app.APIDeps{Config: env.cfg, Store: dynamo.New(throttledReadsDB{env.db.DB}, env.db.Table),
+		Notion: &notion.Client{BaseURL: env.notion.URL, Version: "2025-09-03"}, Queue: env.queue,
+		Now: func() time.Time { return env.now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	req := httptest.NewRequest("GET", "/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != 503 || errorCode(t, rec) != "capacity_exceeded" {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }

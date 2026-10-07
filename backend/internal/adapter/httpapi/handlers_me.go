@@ -14,14 +14,13 @@ func (h *handlers) getConfig(c echo.Context) error {
 
 // getMe serves GET /v1/me (spec §2.5).
 func (h *handlers) getMe(c echo.Context) error {
-	p := principal(c)
-	inst, err := h.activeInstallation(c.Request().Context(), p)
+	me, err := h.Account.Me(c.Request().Context(), principal(c))
 	if err != nil {
 		return err
 	}
 	return c.JSON(http.StatusOK, map[string]any{
-		"user":         userView{ID: p.UserID, Name: p.User.Name},
-		"device":       deviceView{ID: p.Device.ID, Name: p.Device.Name},
-		"installation": viewInstallation(inst),
+		"user":         userView{ID: me.User.ID, Name: me.User.Name},
+		"device":       deviceView{ID: me.Device.ID, Name: me.Device.Name},
+		"installation": viewInstallation(me.Installation),
 	})
 }

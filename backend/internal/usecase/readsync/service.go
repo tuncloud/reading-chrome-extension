@@ -1,4 +1,4 @@
-package syncsvc
+package readsync
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 )
 
 // ErrAllThrottled means every valid segment hit DynamoDB throttling → 503.
-var ErrAllThrottled = errors.New("syncsvc: all segments throttled")
+var ErrAllThrottled = errors.New("readsync: all segments throttled")
 
 // Pusher applies one segment exactly once (*dynamo.Store).
 type Pusher interface {

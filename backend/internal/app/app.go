@@ -15,15 +15,18 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"reading-tracker/backend/internal/adapter/dynamo"
+	"reading-tracker/backend/internal/adapter/httpapi"
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/httpapi"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
+	"reading-tracker/backend/internal/usecase/account"
 	"reading-tracker/backend/internal/usecase/auth"
 	"reading-tracker/backend/internal/usecase/connect"
+	"reading-tracker/backend/internal/usecase/library"
 	"reading-tracker/backend/internal/usecase/notionsync"
+	"reading-tracker/backend/internal/usecase/readsync"
 	"reading-tracker/backend/internal/usecase/setup"
 )
 
@@ -71,8 +74,11 @@ func NewAPI(d APIDeps) *echo.Echo {
 			Pepper: d.Config.DeviceTokenPepper, Now: d.Now, Log: d.Log},
 		Connect: &connect.Service{Users: d.Store, Grants: d.Store, Installations: d.Store, Auth: gw, Workspace: gw,
 			Sealer: d.Config.Keys, Activator: activator, AllowedExtensionIDs: d.Config.AllowedExtensionIDs, Now: d.Now, Log: d.Log},
-		Setup: &setup.Service{Installations: d.Store, Workspace: gw, Sealer: d.Config.Keys, Activator: activator, Now: d.Now},
-		Store: d.Store, Queue: sq, Now: d.Now, Log: d.Log,
+		Setup:    &setup.Service{Installations: d.Store, Workspace: gw, Sealer: d.Config.Keys, Activator: activator, Now: d.Now},
+		ReadSync: &readsync.Service{Store: d.Store, Queue: sq, Now: d.Now},
+		Library:  &library.Service{Reading: d.Store},
+		Account:  &account.Service{Users: d.Store, Devices: d.Store, Installations: d.Store, Queue: sq, Now: d.Now},
+		Log:      d.Log,
 	})
 }
 

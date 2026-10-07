@@ -1,4 +1,4 @@
-package syncsvc
+package readsync
 
 import (
 	"fmt"

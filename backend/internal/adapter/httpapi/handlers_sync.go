@@ -6,7 +6,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"reading-tracker/backend/internal/syncsvc"
+	"reading-tracker/backend/internal/usecase/readsync"
 )
 
 // syncPush serves POST /v1/sync/push (spec §2.8). It is accepted whatever the
@@ -16,22 +16,22 @@ func (h *handlers) syncPush(c echo.Context) error {
 	if p.InstallationID() == "" {
 		return errNoInstallation()
 	}
-	var req syncsvc.PushRequest
+	var req pushRequestDTO
 	if err := decodeJSON(c, &req); err != nil {
 		return err
 	}
-	resp, err := h.sync.Push(c.Request().Context(), p.InstallationID(), p.Device.ID, req)
-	var env *syncsvc.EnvelopeError
+	resp, err := h.ReadSync.Push(c.Request().Context(), p.InstallationID(), p.Device.ID, req.toInput())
+	var env *readsync.EnvelopeError
 	switch {
 	case errors.As(err, &env):
 		if env.TooLarge {
 			return errTooLarge(env.Msg)
 		}
 		return errInvalid("%s", env.Msg)
-	case errors.Is(err, syncsvc.ErrAllThrottled):
+	case errors.Is(err, readsync.ErrAllThrottled):
 		return errCapacity()
 	case err != nil:
 		return err
 	}
-	return c.JSON(http.StatusOK, resp)
+	return c.JSON(http.StatusOK, pushResponse(resp))
 }

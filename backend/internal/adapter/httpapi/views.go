@@ -1,11 +1,7 @@
 package httpapi
 
 import (
-	"context"
-	"errors"
-
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/usecase/auth"
 )
 
 type userView struct {
@@ -37,17 +33,4 @@ func viewInstallation(i *domain.Installation) *installationView {
 		v.LibraryURL = &u
 	}
 	return v
-}
-
-// activeInstallation loads the principal's active installation, or nil if none.
-func (h *handlers) activeInstallation(ctx context.Context, p *auth.Principal) (*domain.Installation, error) {
-	id := p.InstallationID()
-	if id == "" {
-		return nil, nil
-	}
-	inst, err := h.Store.GetInstallation(ctx, id)
-	if errors.Is(err, domain.ErrNotFound) {
-		return nil, nil
-	}
-	return inst, err
 }

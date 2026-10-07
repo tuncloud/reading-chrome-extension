@@ -4,37 +4,32 @@ package httpapi
 
 import (
 	"log/slog"
-	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
-	"reading-tracker/backend/internal/adapter/dynamo"
-	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/platform/config"
-	"reading-tracker/backend/internal/syncsvc"
+	"reading-tracker/backend/internal/usecase/account"
 	"reading-tracker/backend/internal/usecase/auth"
 	"reading-tracker/backend/internal/usecase/connect"
+	"reading-tracker/backend/internal/usecase/library"
+	"reading-tracker/backend/internal/usecase/readsync"
 	"reading-tracker/backend/internal/usecase/setup"
 )
 
-// Deps are the use cases behind the routes. Store and Queue serve the handlers that
-// Task 7 moves to use cases.
+// Deps are the use cases behind the routes.
 type Deps struct {
-	Config  *config.Config
-	Auth    *auth.Service
-	Connect *connect.Service
-	Setup   *setup.Service
-	Store   *dynamo.Store
-	Queue   *queue.SyncQueue
-	Now     func() time.Time
-	Log     *slog.Logger
+	Config   *config.Config
+	Auth     *auth.Service
+	Connect  *connect.Service
+	Setup    *setup.Service
+	ReadSync *readsync.Service
+	Library  *library.Service
+	Account  *account.Service
+	Log      *slog.Logger
 }
 
-type handlers struct {
-	Deps
-	sync *syncsvc.Service
-}
+type handlers struct{ Deps }
 
 // New builds the app: /v1 routes, §2.0 JSON errors, 256 KB body limit and
 // path-only request logs. CORS is configured on the Function URL, not here.
@@ -46,7 +41,7 @@ func New(d Deps) *echo.Echo {
 	e.Use(requestLogger(d.Log))
 	e.Use(middleware.BodyLimit("256K"))
 
-	h := &handlers{Deps: d, sync: &syncsvc.Service{Store: d.Store, Queue: d.Queue, Now: d.Now}}
+	h := &handlers{Deps: d}
 	v1 := e.Group("/v1")
 	v1.GET("/config", h.getConfig)
 	v1.GET("/me", h.getMe, h.requireDevice)
