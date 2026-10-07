@@ -272,3 +272,14 @@ func TestOAuthCallbackResyncFailureNeedsSetupUntilReconnect(t *testing.T) {
 		t.Fatalf("resync enqueued %+v, want %+v", got, fullResync())
 	}
 }
+
+// Oversized or empty states never reach DynamoDB (keys are ≤ 2 KB): plain "Link expired".
+func TestOAuthCallbackOversizedOrEmptyStateRejected(t *testing.T) {
+	env := newTestEnv(t)
+	for _, state := range []string{strings.Repeat("s", 3000), strings.Repeat("s", 129), ""} {
+		rec := env.do("GET", "/v1/oauth/notion/callback?code=c&state="+state, nil, "")
+		if rec.Code != 400 || !strings.Contains(rec.Body.String(), "Link expired") {
+			t.Errorf("state of %d chars: %d %s", len(state), rec.Code, rec.Body)
+		}
+	}
+}

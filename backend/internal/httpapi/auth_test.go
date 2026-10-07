@@ -115,3 +115,14 @@ func TestAuthTokenMalformedBody(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }
+
+// Oversized or empty codes never reach DynamoDB (keys are ≤ 2 KB): plain invalid_grant.
+func TestAuthTokenOversizedOrEmptyCodeIsInvalidGrant(t *testing.T) {
+	env := newTestEnv(t)
+	for _, code := range []string{strings.Repeat("c", 3000), strings.Repeat("c", 129), ""} {
+		rec := env.do("POST", "/v1/auth/token", map[string]string{"code": code, "code_verifier": testVerifier}, "")
+		if rec.Code != 400 || errorCode(t, rec) != "invalid_grant" {
+			t.Errorf("code of %d chars: %d %s", len(code), rec.Code, rec.Body)
+		}
+	}
+}

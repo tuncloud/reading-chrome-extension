@@ -27,6 +27,9 @@ func (h *handlers) authToken(c echo.Context) error {
 	if err := decodeJSON(c, &req); err != nil {
 		return err
 	}
+	if !validKeyInput(req.Code) {
+		return errInvalidGrant()
+	}
 	now := h.Now()
 	ac, err := h.Store.ConsumeAuthCode(ctx, req.Code, now)
 	if errors.Is(err, store.ErrNotFound) {

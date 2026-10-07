@@ -121,7 +121,8 @@ func (s *Store) ListDevices(ctx context.Context, uid string) ([]Device, error) {
 		return nil, err
 	}
 	var out []Device
-	return out, attributevalue.UnmarshalListOfMaps(items, &out)
+	err = attributevalue.UnmarshalListOfMaps(items, &out)
+	return out, err
 }
 
 func (s *Store) DeleteDeviceToken(ctx context.Context, tokenHMAC string) error {

@@ -20,7 +20,14 @@ import (
 const (
 	oauthStateTTL = 10 * time.Minute
 	authCodeTTL   = 2 * time.Minute
+	// maxKeyInput bounds the unauthenticated state and auth code before they are used
+	// as DynamoDB keys: ours are 43 chars, and an oversized key is a DynamoDB error (500).
+	maxKeyInput = 128
+	linkExpired = "Link expired, try again"
 )
+
+// validKeyInput reports whether s can be one of our state or auth code values.
+func validKeyInput(s string) bool { return s != "" && len(s) <= maxKeyInput }
 
 // oauthStart serves GET /v1/oauth/notion/start (spec §2.1).
 func (h *handlers) oauthStart(c echo.Context) error {
@@ -67,9 +74,13 @@ func (h *handlers) redirectURI(c echo.Context) string {
 func (h *handlers) oauthCallback(c echo.Context) error {
 	ctx := c.Request().Context()
 	q := c.QueryParams()
-	st, err := h.Store.ConsumeOAuthState(ctx, q.Get("state"), h.Now())
+	state := q.Get("state")
+	if !validKeyInput(state) {
+		return c.String(http.StatusBadRequest, linkExpired)
+	}
+	st, err := h.Store.ConsumeOAuthState(ctx, state, h.Now())
 	if errors.Is(err, store.ErrNotFound) {
-		return c.String(http.StatusBadRequest, "Link expired, try again")
+		return c.String(http.StatusBadRequest, linkExpired)
 	}
 	if err != nil {
 		return err
