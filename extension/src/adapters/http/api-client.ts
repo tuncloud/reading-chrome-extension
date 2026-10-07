@@ -111,7 +111,12 @@ export class HttpApi implements Api {
     }
     if (!res.ok) throw await apiError(res)
     if (res.status === 202 || res.status === 204) return undefined as T
-    const text = await res.text()
+    let text: string
+    try {
+      text = await res.text()
+    } catch (e) {
+      throw new NetworkError(`${method} ${path.split('?')[0]}: ${e instanceof Error ? e.message : String(e)}`)
+    }
     if (!text) return undefined as T
     try {
       return JSON.parse(text) as T

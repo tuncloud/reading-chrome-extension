@@ -97,6 +97,12 @@ describe('HttpApi requests', () => {
     expect(res).toEqual({ accepted: ['s1'], duplicate: [], retry: ['s2'], rejected: [{ id: 's3', reason: 'started_at_out_of_range' }] })
   })
 
+  test('push maps null arrays to empty arrays', async () => {
+    const { api } = stub(() => json(200, { accepted: null, duplicate: null, retry: null, rejected: null }))
+    const res = await api.push('rt_x', { clientTime: '', tz: 'UTC', articles: [], segments: [] })
+    expect(res).toEqual({ accepted: [], duplicate: [], retry: [], rejected: [] })
+  })
+
   test('articlesStatus maps items keyed by URL (§2.9)', async () => {
     const { api, calls } = stub(() => json(200, { items: { 'https://e.com/a': {
       total_seconds: 734, max_progress: 0.97, sessions: 2, completed: true, last_read_at: '2026-10-06T03:20:00Z', notion_url: null,
@@ -136,6 +142,11 @@ describe('HttpApi errors', () => {
     expect(err).toMatchObject({ status: 409, code: 'no_installation', message: 'connect Notion first' })
   })
 
+  test('a 401 with §2.0 body becomes ApiError with code unauthorized', async () => {
+    const { api } = stub(() => json(401, { error: { code: 'unauthorized', message: 'invalid token' } }))
+    await expect(api.me('bad_token')).rejects.toMatchObject({ status: 401, code: 'unauthorized', message: 'invalid token' })
+  })
+
   test('a non-JSON 502 becomes ApiError(502, internal)', async () => {
     const { api } = stub(() => new Response('<html>bad gateway</html>', { status: 502 }))
     await expect(api.me('rt_x')).rejects.toMatchObject({ status: 502, code: 'internal' })
@@ -155,6 +166,14 @@ describe('HttpApi errors', () => {
     const api = new HttpApi({
       baseUrl: 'https://api.example.com', timeoutMs: 5,
       fetch: (_url, init) => new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))),
+    })
+    await expect(api.config()).rejects.toBeInstanceOf(NetworkError)
+  })
+
+  test('a body-read error becomes NetworkError', async () => {
+    const api = new HttpApi({
+      baseUrl: 'https://api.example.com',
+      fetch: () => Promise.resolve({ ok: true, status: 200, text: () => Promise.reject(new DOMException('aborted', 'AbortError')) } as unknown as Response),
     })
     await expect(api.config()).rejects.toBeInstanceOf(NetworkError)
   })
