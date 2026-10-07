@@ -7,7 +7,7 @@ export const SCRIPT_PREFIX = 'generic:'
 
 export type EnableResult =
   | { ok: true; domain: string }
-  | { ok: false; reason: 'invalid' | 'permission_denied' | 'already_enabled' }
+  | { ok: false; reason: 'invalid' | 'permission_denied' | 'already_enabled' | 'already_tracked' }
 
 export interface DomainDeps {
   store: LocalStore
@@ -28,6 +28,8 @@ export class DomainService {
   async enable(input: string): Promise<EnableResult> {
     const domain = normalizeDomain(input)
     if (!domain) return { ok: false, reason: 'invalid' }
+    // Medium hosts are tracked without enabling. Checked synchronously, before the prompt.
+    if (chooseAdapter(domain, [], { enabled: [], denied: [] }) === 'freedium-medium') return { ok: false, reason: 'already_tracked' }
     const origins = originPatterns(domain)
     if (!(await this.deps.permissions.request(origins))) return { ok: false, reason: 'permission_denied' }
     const { enabled } = await this.lists()
@@ -39,7 +41,11 @@ export class DomainService {
 
   async disable(domain: string): Promise<void> {
     await this.deps.scripts.unregister([SCRIPT_PREFIX + domain])
-    await this.deps.permissions.remove(originPatterns(domain))
+    try {
+      await this.deps.permissions.remove(originPatterns(domain))
+    } catch {
+      // The permission may already be gone; the list entry must be removed regardless.
+    }
     const { enabled } = await this.lists()
     await this.deps.store.setKv('enabled_domains', enabled.filter((d) => d !== domain))
   }

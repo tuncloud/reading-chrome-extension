@@ -23,6 +23,7 @@ const ENABLE_FAILURES = {
   invalid: 'Enter a domain like example.com.',
   permission_denied: 'Chrome permission was not granted.',
   already_enabled: 'That site is already tracked.',
+  already_tracked: 'Medium and Freedium are always tracked.',
 } as const
 
 function errorText(e: unknown): string {

@@ -56,6 +56,29 @@ describe('DomainService', () => {
     expect(await store.getKv('enabled_domains')).toEqual(['example.com'])
   })
 
+  test('I4: the permission prompt is requested synchronously, inside the user gesture', async () => {
+    const p = svc.enable('example.com') // deliberately not awaited
+    expect(events[0]).toBe('request https://example.com/* https://*.example.com/*')
+    await p
+  })
+
+  test('M3: Medium and Freedium hosts are always tracked, so enabling them is refused before any prompt', async () => {
+    const p = svc.enable('medium.com')
+    expect(events).toEqual([])
+    expect(await p).toEqual({ ok: false, reason: 'already_tracked' })
+    expect(await svc.enable('www.medium.com')).toEqual({ ok: false, reason: 'already_tracked' })
+    expect(events).toEqual([])
+    expect(await store.getKv('enabled_domains')).toBeUndefined()
+  })
+
+  test('M3: disabling removes the list entry even when removing the permission fails', async () => {
+    await svc.enable('example.com')
+    permissions.remove = async () => { throw new Error('boom') }
+    await svc.disable('example.com')
+    expect(await store.getKv('enabled_domains')).toEqual([])
+    expect(scripts.scripts.size).toBe(0)
+  })
+
   test('T31: disabling unregisters the script and drops the permission', async () => {
     await svc.enable('example.com')
     await svc.enable('other.org')

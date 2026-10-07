@@ -54,9 +54,17 @@ describe('options controller', () => {
   test('T31: enabling a domain prompts first and lists it', async () => {
     const c = controller()
     await c.load()
-    await c.actions.enableDomain('Example.com')
+    const p = c.actions.enableDomain('example.com') // not awaited: the prompt must already be requested
     expect(events[0]).toBe('request https://example.com/* https://*.example.com/*')
+    await p
     expect(c.state()).toMatchObject({ domains: { enabled: ['example.com'] }, note: 'Tracking example.com.' })
+  })
+
+  test('M3: a Medium host is explained as always tracked', async () => {
+    const c = controller()
+    await c.load()
+    await c.actions.enableDomain('medium.com')
+    expect(c.state().note).toBe('Medium and Freedium are always tracked.')
   })
 
   test('an invalid domain is explained', async () => {
