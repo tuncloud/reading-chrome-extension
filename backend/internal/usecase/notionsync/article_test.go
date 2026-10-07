@@ -398,6 +398,33 @@ func TestArticleWithoutDataSourceFallsBackToForget(t *testing.T) {
 	}
 }
 
+// R1: a transient Notion failure on a legacy row keeps the page link; the job fails and is retried.
+func TestArticleWithoutDataSourceKeepsLinkOnTransientFailure(t *testing.T) {
+	for name, f := range map[string]notiontest.Fail{
+		"429": {Status: 429, Code: "rate_limited", Message: "slow down"},
+		"503": {Status: 503, Code: "service_unavailable", Message: "down"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			e.seedInstallation("tok", "rt")
+			pg := e.ns.AddPage(e.tpl.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
+			e.read(artURL, 0, 120, 0.5)
+			must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), pg.ID, pg.URL, ""))
+			e.ns.FailNext("PATCH", "/v1/pages/"+pg.ID, f)
+
+			if fl := e.handle(articleMsg()); len(fl) != 1 {
+				t.Fatalf("want the job to fail for retry, failures %+v", fl)
+			}
+			if a := e.article(artURL); a.NotionPageID != pg.ID {
+				t.Fatalf("page link dropped on a transient failure: %+v", a)
+			}
+			if sent := e.q.Drain(); len(sent) != 0 {
+				t.Fatalf("requeued %+v", sent)
+			}
+		})
+	}
+}
+
 // R1: a recorded, different data source is stale: forget, requeue, then adopt or create in the current Library.
 func TestArticlePageInOtherDataSourceIsRelinked(t *testing.T) {
 	e := newEnv(t)

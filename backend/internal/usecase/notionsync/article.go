@@ -43,6 +43,9 @@ func (s *Service) syncArticle(ctx context.Context, job port.Job) error {
 		err := sess.call(ctx, func(tok string) error {
 			return s.Pages.UpdateArticlePage(ctx, tok, sess.db(), art.NotionPageID, *art, completed)
 		})
+		// A legacy row (no recorded data source) that Notion rejects is assumed to sit in an old
+		// database. Known cost: a 400 for another reason forgets the link, and an article whose URL
+		// is too long to look up (> 2000 chars) is then recreated rather than adopted.
 		legacy := art.NotionDataSourceID == ""
 		if port.IsNotionKind(err, port.NotionPageGone) || (legacy && isBadRequest(err)) {
 			return s.forgetArticlePage(ctx, inst.ID, job)
