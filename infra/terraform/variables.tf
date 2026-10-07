@@ -52,6 +52,11 @@ variable "tracking_config_json" {
   description = "Optional TRACKING_CONFIG_JSON override for /v1/config; empty uses the backend defaults."
   type        = string
   default     = ""
+
+  validation {
+    condition     = length(var.tracking_config_json) <= 2048
+    error_message = "keep TRACKING_CONFIG_JSON under 2 KB: Lambda caps all environment variables at 4 KB."
+  }
 }
 
 variable "budget_email" {

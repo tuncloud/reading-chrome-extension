@@ -24,7 +24,7 @@ test:
 	$(TF) test
 
 plan: build
-	$(TF) plan -var-file=$(ENV).tfvars -out=$(ENV).tfplan
+	$(TF) plan -var-file=$(ENV).tfvars -var backend_dir=$(BACKEND_DIR) -out=$(ENV).tfplan
 
 apply:
-	$(TF) apply $(ENV).tfplan
+	$(TF) apply $(ENV).tfplan && rm -f $(ENV).tfplan

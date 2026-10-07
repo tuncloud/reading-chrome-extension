@@ -75,3 +75,11 @@ run "equal_delay_and_bucket_is_accepted" {
     debounce_delay_seconds  = 300
   }
 }
+
+run "tracking_config_json_size_is_capped" {
+  command = plan
+  variables {
+    tracking_config_json = join("", [for i in range(700) : "xxx"])
+  }
+  expect_failures = [var.tracking_config_json]
+}
