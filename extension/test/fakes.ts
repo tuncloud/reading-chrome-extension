@@ -102,3 +102,90 @@ export class MemoryLog implements Log {
     this.lines.push(`warn ${message}`)
   }
 }
+
+import type { Api, Scheduler } from '../src/application/ports'
+import type { ArticleStatus, Installation, Me, NotionPage, PushBody, PushResult, TokenGrant } from '../src/application/types'
+import { parseRemoteConfig, type RemoteConfig } from '../src/domain/config'
+import { wireConfig } from './fixtures'
+
+export const INSTALLATION: Installation = {
+  id: 'b1', workspaceName: "Tuan's Notion", status: 'active', setupError: '', libraryUrl: 'https://www.notion.so/lib',
+}
+
+// FakeApi answers like a healthy backend unless a method is overridden.
+export class FakeApi implements Api {
+  readonly calls: { method: keyof Api; args: unknown[] }[] = []
+
+  constructor(private readonly over: Partial<Api> = {}) {}
+
+  private record(method: keyof Api, args: unknown[]): void {
+    this.calls.push({ method, args })
+  }
+
+  count(method: keyof Api): number {
+    return this.calls.filter((c) => c.method === method).length
+  }
+
+  oauthStartUrl(p: { extRedirect: string; codeChallenge: string }): string {
+    this.record('oauthStartUrl', [p])
+    return this.over.oauthStartUrl?.(p) ?? `https://api.example.com/v1/oauth/notion/start?code_challenge=${p.codeChallenge}`
+  }
+
+  async config(): Promise<RemoteConfig> {
+    this.record('config', [])
+    return this.over.config ? this.over.config() : parseRemoteConfig(wireConfig)
+  }
+
+  async exchangeCode(p: { code: string; codeVerifier: string; deviceName: string }): Promise<TokenGrant> {
+    this.record('exchangeCode', [p])
+    return this.over.exchangeCode
+      ? this.over.exchangeCode(p)
+      : { deviceToken: 'rt_new', deviceId: 'd1', user: { id: 'u1', name: 'Tuan Do' }, installation: INSTALLATION }
+  }
+
+  async me(token: string): Promise<Me> {
+    this.record('me', [token])
+    return this.over.me
+      ? this.over.me(token)
+      : { user: { id: 'u1', name: 'Tuan Do' }, device: { id: 'd1', name: 'Mac' }, installation: INSTALLATION }
+  }
+
+  async logout(token: string): Promise<void> {
+    this.record('logout', [token])
+    if (this.over.logout) await this.over.logout(token)
+  }
+
+  async deleteAccount(token: string): Promise<void> {
+    this.record('deleteAccount', [token])
+    if (this.over.deleteAccount) await this.over.deleteAccount(token)
+  }
+
+  async push(token: string, body: PushBody): Promise<PushResult> {
+    this.record('push', [token, body])
+    return this.over.push
+      ? this.over.push(token, body)
+      : { accepted: body.segments.map((s) => s.id), duplicate: [], retry: [], rejected: [] }
+  }
+
+  async articlesStatus(token: string, urls: readonly string[]): Promise<Record<string, ArticleStatus>> {
+    this.record('articlesStatus', [token, urls])
+    return this.over.articlesStatus ? this.over.articlesStatus(token, urls) : {}
+  }
+
+  async setupPages(token: string, query: string): Promise<NotionPage[]> {
+    this.record('setupPages', [token, query])
+    return this.over.setupPages ? this.over.setupPages(token, query) : []
+  }
+
+  async setup(token: string, parentPageId: string): Promise<Installation> {
+    this.record('setup', [token, parentPageId])
+    return this.over.setup ? this.over.setup(token, parentPageId) : INSTALLATION
+  }
+}
+
+export class FakeScheduler implements Scheduler {
+  readonly alarms = new Map<string, number>()
+  async every(name: string, periodMinutes: number): Promise<void> {
+    this.alarms.set(name, periodMinutes)
+  }
+}
