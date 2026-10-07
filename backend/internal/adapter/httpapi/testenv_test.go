@@ -144,7 +144,7 @@ func (env *testEnv) seedInstallation(uid, status string) *domain.Installation {
 	must(t, err)
 	refresh, err := env.cfg.Keys.Seal([]byte("secret-refresh-token"), []byte(testBotID))
 	must(t, err)
-	inst := &domain.Installation{UserID: uid, WorkspaceID: "ws-1", WorkspaceName: "Tuan's Notion", Status: status,
+	inst := &domain.Installation{ID: testBotID, UserID: uid, WorkspaceID: "ws-1", WorkspaceName: "Tuan's Notion", Status: status,
 		AccessTokenEnc: access, RefreshTokenEnc: refresh, TokenVersion: 1, CreatedAt: domain.Timestamp(env.now), UpdatedAt: domain.Timestamp(env.now)}
 	if status == domain.StatusActive {
 		inst.ApplyDatabases(tpl.DBConfig())

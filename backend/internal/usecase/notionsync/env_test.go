@@ -103,7 +103,7 @@ func (e *wenv) seedInstallationWith(kr *crypto.Keyring, access, refresh string) 
 		r, err = kr.Seal([]byte(refresh), []byte(testBot))
 		must(e.t, err)
 	}
-	inst := &domain.Installation{UserID: "u1", WorkspaceName: "WS", Status: domain.StatusActive, AccessTokenEnc: a,
+	inst := &domain.Installation{ID: testBot, UserID: "u1", WorkspaceName: "WS", Status: domain.StatusActive, AccessTokenEnc: a,
 		RefreshTokenEnc: r, TokenVersion: 1, CreatedAt: domain.Timestamp(e.now), UpdatedAt: domain.Timestamp(e.now)}
 	inst.ApplyDatabases(e.tpl.DBConfig())
 	must(e.t, e.db.Store.PutInstallation(ctx, testBot, inst))

@@ -9,7 +9,7 @@ import (
 )
 
 func newInstallation() *domain.Installation {
-	return &domain.Installation{UserID: "u1", WorkspaceID: "ws", WorkspaceName: "WS", Status: domain.StatusNeedsSetup,
+	return &domain.Installation{ID: "bot-1", UserID: "u1", WorkspaceID: "ws", WorkspaceName: "WS", Status: domain.StatusNeedsSetup,
 		SetupError: "template_not_found", AccessTokenEnc: "v1:a", RefreshTokenEnc: "v1:r", TokenVersion: 1,
 		CreatedAt: domain.Timestamp(testNow), UpdatedAt: domain.Timestamp(testNow)}
 }

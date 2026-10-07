@@ -152,6 +152,7 @@ func (s *Service) upsertInstallation(ctx context.Context, uid string, g *port.No
 	if err != nil {
 		return nil, err
 	}
+	inst.ID = g.BotID
 	prevLibrary, prevDaily, prevSetupError := inst.LibraryDSID, inst.DailyDSID, inst.SetupError
 	aad := []byte(g.BotID)
 	if inst.AccessTokenEnc, err = s.Sealer.Seal([]byte(g.AccessToken), aad); err != nil {

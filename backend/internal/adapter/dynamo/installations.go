@@ -23,7 +23,6 @@ func (s *Store) GetInstallation(ctx context.Context, botID string) (*domain.Inst
 
 // PutInstallation writes the whole META item (used by the OAuth callback upsert).
 func (s *Store) PutInstallation(ctx context.Context, botID string, inst *domain.Installation) error {
-	inst.ID = botID
 	return s.putItem(ctx, newInstallationRecord(botID, inst))
 }
 
