@@ -2,12 +2,14 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
 
 	"reading-tracker/backend/internal/notion"
+	"reading-tracker/backend/internal/setup"
 	"reading-tracker/backend/internal/store"
 )
 
@@ -85,6 +87,11 @@ func (h *handlers) postSetup(c echo.Context) error {
 	}
 	db, err := h.setup.CreateDatabases(ctx, token, req.ParentPageID)
 	if err != nil {
+		// A reused same-titled database may have a missing or wrong-typed property.
+		var se *setup.Error
+		if errors.As(err, &se) {
+			return errConflict("setup failed: " + se.Reason)
+		}
 		return notionErr(err)
 	}
 	if err := h.Store.SaveInstallationDatabases(ctx, inst.ID(), db, h.Now()); err != nil {
