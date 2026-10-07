@@ -13,6 +13,7 @@ import (
 	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/setup"
 	"reading-tracker/backend/internal/store"
+	"reading-tracker/backend/internal/syncsvc"
 )
 
 // Deps are the handlers' collaborators.
@@ -28,6 +29,7 @@ type Deps struct {
 type handlers struct {
 	Deps
 	setup *setup.Service
+	sync  *syncsvc.Service
 }
 
 // New builds the app: /v1 routes, §2.0 JSON errors, 256 KB body limit and
@@ -40,7 +42,11 @@ func New(d Deps) *echo.Echo {
 	e.Use(requestLogger(d.Log))
 	e.Use(middleware.BodyLimit("256K"))
 
-	h := &handlers{Deps: d, setup: &setup.Service{Notion: d.Notion, Store: d.Store, Queue: d.Queue, Bucket: d.Config.DebounceBucket, Now: d.Now}}
+	h := &handlers{
+		Deps:  d,
+		setup: &setup.Service{Notion: d.Notion, Store: d.Store, Queue: d.Queue, Bucket: d.Config.DebounceBucket, Now: d.Now},
+		sync:  &syncsvc.Service{Store: d.Store, Queue: d.Queue, Bucket: d.Config.DebounceBucket, Now: d.Now},
+	}
 	v1 := e.Group("/v1")
 	v1.GET("/config", h.getConfig)
 	v1.GET("/me", h.getMe, h.requireDevice)
@@ -51,5 +57,6 @@ func New(d Deps) *echo.Echo {
 	v1.GET("/setup/pages", h.setupPages, h.requireDevice)
 	v1.POST("/setup", h.postSetup, h.requireDevice)
 	v1.POST("/articles/status", h.articlesStatus, h.requireDevice)
+	v1.POST("/sync/push", h.syncPush, h.requireDevice)
 	return e
 }
