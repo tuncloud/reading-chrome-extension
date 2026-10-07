@@ -28,9 +28,6 @@ func errInvalid(format string, a ...any) *apiError {
 func errUnauthorized() *apiError {
 	return &apiError{http.StatusUnauthorized, "unauthorized", "missing, unknown or revoked device token"}
 }
-func errNoInstallation() *apiError {
-	return &apiError{http.StatusConflict, "no_installation", "connect Notion first"}
-}
 func errNotFound(msg string) *apiError { return &apiError{http.StatusNotFound, "not_found", msg} }
 func errTooLarge(msg string) *apiError {
 	return &apiError{http.StatusRequestEntityTooLarge, "payload_too_large", msg}

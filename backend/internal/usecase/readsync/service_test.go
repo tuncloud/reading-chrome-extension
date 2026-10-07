@@ -9,6 +9,8 @@ import (
 
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
+	"reading-tracker/backend/internal/usecase/apperr"
+	"reading-tracker/backend/internal/usecase/port"
 	"reading-tracker/backend/internal/usecase/readsync"
 )
 
@@ -24,9 +26,10 @@ const (
 
 // fakePusher remembers committed segment ids, like the real conditional put.
 type fakePusher struct {
-	seen     map[string]bool
-	throttle map[string]bool
-	got      []domain.SegmentWrite
+	port.Reading // only PushSegment is used
+	seen         map[string]bool
+	throttle     map[string]bool
+	got          []domain.SegmentWrite
 }
 
 func (f *fakePusher) PushSegment(_ context.Context, w domain.SegmentWrite) (domain.PushOutcome, error) {
@@ -47,7 +50,7 @@ func (f *fakePusher) PushSegment(_ context.Context, w domain.SegmentWrite) (doma
 func newService() (*readsync.Service, *fakePusher, *queue.Recorder) {
 	p, rec := &fakePusher{throttle: map[string]bool{}}, &queue.Recorder{}
 	q := &queue.SyncQueue{Sender: rec, Bucket: 120 * time.Second, Now: func() time.Time { return now }}
-	return &readsync.Service{Store: p, Queue: q, Now: q.Now}, p, rec
+	return &readsync.Service{Reading: p, Queue: q, Now: q.Now}, p, rec
 }
 
 func article(u string) readsync.Article {
@@ -173,8 +176,25 @@ func TestPushAllThrottled(t *testing.T) {
 	svc, p, _ := newService()
 	p.throttle[id(1)] = true
 	req := readsync.PushRequest{TZ: "UTC", Articles: []readsync.Article{article(artURL)}, Segments: []readsync.Segment{seg(id(1), artURL, now.Add(-time.Hour), 60)}}
-	if _, err := svc.Push(ctx, bot, "dev-1", req); !errors.Is(err, readsync.ErrAllThrottled) {
+	if _, err := svc.Push(ctx, bot, "dev-1", req); !isKind(err, apperr.Capacity) {
 		t.Fatalf("err %v", err)
+	}
+}
+
+func isKind(err error, k apperr.Kind) bool {
+	ae, ok := apperr.As(err)
+	return ok && ae.Kind == k
+}
+
+func TestPushWithoutInstallation(t *testing.T) {
+	svc, p, _ := newService()
+	_, err := svc.Push(ctx, "", "dev-1", readsync.PushRequest{TZ: "UTC"})
+	ae, ok := apperr.As(err)
+	if !ok || ae.Kind != apperr.NoInstallation || ae.Msg != "connect Notion first" {
+		t.Fatalf("err %v", err)
+	}
+	if len(p.got) != 0 {
+		t.Fatal("store reached")
 	}
 }
 
@@ -182,13 +202,12 @@ func TestPushEnvelopeErrors(t *testing.T) {
 	svc, _, _ := newService()
 	many := make([]readsync.Segment, 51)
 	_, err := svc.Push(ctx, bot, "dev-1", readsync.PushRequest{TZ: "UTC", Segments: many})
-	var env *readsync.EnvelopeError
-	if !errors.As(err, &env) || !env.TooLarge {
+	if !isKind(err, apperr.TooLarge) {
 		t.Fatalf("51 segments: %v", err)
 	}
 	for _, tz := range []string{"", "Mars/Olympus", "Local"} {
 		_, err = svc.Push(ctx, bot, "dev-1", readsync.PushRequest{TZ: tz})
-		if !errors.As(err, &env) || env.TooLarge {
+		if !isKind(err, apperr.Invalid) {
 			t.Fatalf("tz %q: %v", tz, err)
 		}
 	}

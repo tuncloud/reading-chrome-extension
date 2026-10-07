@@ -9,6 +9,7 @@ import (
 
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/textutil"
+	"reading-tracker/backend/internal/usecase/apperr"
 )
 
 // Segment rejection reasons.
@@ -45,24 +46,16 @@ var (
 	sourceRE = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 )
 
-// EnvelopeError fails the whole request: 413 when TooLarge, else 400.
-type EnvelopeError struct {
-	TooLarge bool
-	Msg      string
-}
-
-func (e *EnvelopeError) Error() string { return e.Msg }
-
 func checkEnvelope(req *PushRequest) (*time.Location, error) {
 	if len(req.Articles) > MaxArticles || len(req.Segments) > MaxSegments {
-		return nil, &EnvelopeError{TooLarge: true, Msg: fmt.Sprintf("at most %d articles and %d segments per push", MaxArticles, MaxSegments)}
+		return nil, apperr.NewTooLarge(fmt.Sprintf("at most %d articles and %d segments per push", MaxArticles, MaxSegments))
 	}
 	if req.TZ == "" || req.TZ == "Local" {
-		return nil, &EnvelopeError{Msg: "tz must be an IANA time zone name"}
+		return nil, apperr.NewInvalid("tz must be an IANA time zone name")
 	}
 	loc, err := time.LoadLocation(req.TZ)
 	if err != nil {
-		return nil, &EnvelopeError{Msg: "tz is not a known IANA time zone"}
+		return nil, apperr.NewInvalid("tz is not a known IANA time zone")
 	}
 	return loc, nil
 }

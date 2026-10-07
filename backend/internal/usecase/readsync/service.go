@@ -2,31 +2,27 @@ package readsync
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"time"
 
 	"reading-tracker/backend/internal/domain"
+	"reading-tracker/backend/internal/usecase/apperr"
 	"reading-tracker/backend/internal/usecase/port"
 )
 
-// ErrAllThrottled means every valid segment hit DynamoDB throttling → 503.
-var ErrAllThrottled = errors.New("readsync: all segments throttled")
-
-// Pusher applies one segment exactly once (*dynamo.Store).
-type Pusher interface {
-	PushSegment(ctx context.Context, w domain.SegmentWrite) (domain.PushOutcome, error)
-}
-
 type Service struct {
-	Store Pusher
-	Queue port.SyncQueue
-	Now   func() time.Time
+	Reading port.Reading
+	Queue   port.SyncQueue
+	Now     func() time.Time
 }
 
 // Push validates, writes each segment in its own transaction (C25), and enqueues
-// one article/day message per touched key.
+// one article/day message per touched key. It accepts any installation status; an empty
+// installationID means the device has none (apperr.NoInstallation).
 func (s *Service) Push(ctx context.Context, installationID, deviceID string, req PushRequest) (*PushResponse, error) {
+	if installationID == "" {
+		return nil, apperr.NewNoInstallation()
+	}
 	loc, err := checkEnvelope(&req)
 	if err != nil {
 		return nil, err
@@ -75,7 +71,7 @@ func (s *Service) Push(ctx context.Context, installationID, deviceID string, req
 
 	var touched touchedKeys
 	for _, w := range writes {
-		out, err := s.Store.PushSegment(ctx, w)
+		out, err := s.Reading.PushSegment(ctx, w)
 		if err != nil {
 			return nil, err
 		}
@@ -92,7 +88,7 @@ func (s *Service) Push(ctx context.Context, installationID, deviceID string, req
 		}
 	}
 	if len(writes) > 0 && len(resp.Retry) == len(writes) {
-		return nil, ErrAllThrottled
+		return nil, apperr.NewCapacity()
 	}
 	if len(touched.hashes)+len(touched.dates) > 0 {
 		if err := s.Queue.EnqueueSync(ctx, installationID, touched.hashes, touched.dates); err != nil {
