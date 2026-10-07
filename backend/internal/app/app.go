@@ -12,6 +12,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/labstack/echo/v4"
 
 	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/adapter/notion"
@@ -20,7 +21,10 @@ import (
 	"reading-tracker/backend/internal/httpapi"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
+	"reading-tracker/backend/internal/usecase/auth"
+	"reading-tracker/backend/internal/usecase/connect"
 	"reading-tracker/backend/internal/usecase/notionsync"
+	"reading-tracker/backend/internal/usecase/setup"
 )
 
 // Logger writes JSON logs to stdout (CloudWatch).
@@ -44,9 +48,37 @@ func NotionClient(cfg *config.Config, pacer notion.Pacer) *notion.Client {
 		ClientSecret: cfg.NotionClientSecret, HTTP: &http.Client{Timeout: 15 * time.Second}, Pacer: pacer}
 }
 
-// APIDeps assembles the api Lambda's dependencies. The API never paces or refreshes (C3, C8).
-func APIDeps(cfg *config.Config, st *dynamo.Store, q queue.Sender, log *slog.Logger) httpapi.Deps {
-	return httpapi.Deps{Config: cfg, Store: st, Notion: NotionClient(cfg, nil), Queue: q, Now: time.Now, Log: log}
+// APIDeps are the API's infrastructure; NewAPI builds the use cases on top of them.
+type APIDeps struct {
+	Config *config.Config
+	Store  *dynamo.Store
+	Notion *notion.Client
+	Queue  queue.Sender
+	Now    func() time.Time
+	Log    *slog.Logger
+	Sleep  func(time.Duration)
+}
+
+// NewAPI composes the HTTP adapter and its use cases. The API never paces or
+// refreshes Notion tokens (C3, C8).
+func NewAPI(d APIDeps) *echo.Echo {
+	gw := &notion.Gateway{Client: d.Notion}
+	sq := &queue.SyncQueue{Sender: d.Queue, Bucket: d.Config.DebounceBucket, Now: d.Now}
+	activator := &setup.Activator{Reading: d.Store, Installations: d.Store, Queue: sq, Now: d.Now, Sleep: d.Sleep, Log: d.Log}
+	return httpapi.New(httpapi.Deps{
+		Config: d.Config,
+		Auth: &auth.Service{Users: d.Store, Devices: d.Store, Grants: d.Store, Installations: d.Store,
+			Pepper: d.Config.DeviceTokenPepper, Now: d.Now, Log: d.Log},
+		Connect: &connect.Service{Users: d.Store, Grants: d.Store, Installations: d.Store, Auth: gw, Workspace: gw,
+			Sealer: d.Config.Keys, Activator: activator, AllowedExtensionIDs: d.Config.AllowedExtensionIDs, Now: d.Now, Log: d.Log},
+		Setup: &setup.Service{Installations: d.Store, Workspace: gw, Sealer: d.Config.Keys, Activator: activator, Now: d.Now},
+		Store: d.Store, Queue: sq, Now: d.Now, Log: d.Log,
+	})
+}
+
+// API is the production API: unpaced Notion client, real clock.
+func API(cfg *config.Config, st *dynamo.Store, q queue.Sender, log *slog.Logger) *echo.Echo {
+	return NewAPI(APIDeps{Config: cfg, Store: st, Notion: NotionClient(cfg, nil), Queue: q, Now: time.Now, Log: log})
 }
 
 // WorkerDeps are the notion-writer's collaborators.

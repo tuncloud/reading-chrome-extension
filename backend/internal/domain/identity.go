@@ -47,3 +47,10 @@ type AuthCode struct {
 	CodeChallenge  string
 	ExtRedirect    string
 }
+
+// maxOneTimeCodeLen bounds OAuth state and auth codes (ours are 43 chars) before they
+// are used as storage keys: an oversized key is a storage error, not "expired".
+const maxOneTimeCodeLen = 128
+
+// PlausibleOneTimeCode reports whether s could be one of our state or auth code values.
+func PlausibleOneTimeCode(s string) bool { return s != "" && len(s) <= maxOneTimeCodeLen }

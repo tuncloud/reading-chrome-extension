@@ -11,7 +11,6 @@ import (
 	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/app"
-	"reading-tracker/backend/internal/httpapi"
 	"reading-tracker/backend/internal/platform/config"
 )
 
@@ -29,6 +28,6 @@ func main() {
 	}
 	st := dynamo.New(app.DynamoDB(awsCfg), cfg.TableName)
 	q := &queue.SQS{API: app.SQS(awsCfg), QueueURL: cfg.QueueURL}
-	e := httpapi.New(app.APIDeps(cfg, st, q, log))
+	e := app.API(cfg, st, q, log)
 	lambda.Start(echoadapter.NewV2(e).ProxyWithContext)
 }

@@ -20,7 +20,7 @@ func (h *handlers) getMe(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusOK, map[string]any{
-		"user":         userView{ID: p.UserID, Name: p.Profile.Name},
+		"user":         userView{ID: p.UserID, Name: p.User.Name},
 		"device":       deviceView{ID: p.Device.ID, Name: p.Device.Name},
 		"installation": viewInstallation(inst),
 	})

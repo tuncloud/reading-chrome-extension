@@ -22,8 +22,8 @@ import (
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
 	"reading-tracker/backend/internal/adapter/queue"
+	"reading-tracker/backend/internal/app"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/httpapi"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
 )
@@ -63,7 +63,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	must(t, err)
 	env.cfg = cfg
 	nc := &notion.Client{BaseURL: cfg.NotionAPIBase, Version: cfg.NotionVersion, ClientID: cfg.NotionClientID, ClientSecret: cfg.NotionClientSecret}
-	env.e = httpapi.New(httpapi.Deps{Config: cfg, Store: env.db.Store, Notion: nc, Queue: env.queue,
+	env.e = app.NewAPI(app.APIDeps{Config: cfg, Store: env.db.Store, Notion: nc, Queue: env.queue,
 		Now: func() time.Time { return env.now }, Log: slog.New(slog.NewTextHandler(env.logs, nil)),
 		Sleep: func(d time.Duration) { env.sleeps = append(env.sleeps, d) }})
 	return env

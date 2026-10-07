@@ -1,4 +1,5 @@
-// Package httpapi is the Echo application behind the api Lambda's Function URL (spec §2).
+// Package httpapi is the Echo adapter behind the api Lambda's Function URL (spec §2).
+// Handlers decode requests, call use cases and encode responses; nothing else.
 package httpapi
 
 import (
@@ -9,30 +10,30 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 
 	"reading-tracker/backend/internal/adapter/dynamo"
-	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/platform/config"
-	"reading-tracker/backend/internal/setup"
 	"reading-tracker/backend/internal/syncsvc"
+	"reading-tracker/backend/internal/usecase/auth"
+	"reading-tracker/backend/internal/usecase/connect"
+	"reading-tracker/backend/internal/usecase/setup"
 )
 
-// Deps are the handlers' collaborators.
+// Deps are the use cases behind the routes. Store and Queue serve the handlers that
+// Task 7 moves to use cases.
 type Deps struct {
-	Config *config.Config
-	Store  *dynamo.Store
-	Notion *notion.Client
-	Queue  queue.Sender
-	Now    func() time.Time
-	Log    *slog.Logger
-	Sleep  func(time.Duration) // retry back-off; nil means time.Sleep
+	Config  *config.Config
+	Auth    *auth.Service
+	Connect *connect.Service
+	Setup   *setup.Service
+	Store   *dynamo.Store
+	Queue   *queue.SyncQueue
+	Now     func() time.Time
+	Log     *slog.Logger
 }
 
 type handlers struct {
 	Deps
-	gw    *notion.Gateway
-	sq    *queue.SyncQueue
-	setup *setup.Service
-	sync  *syncsvc.Service
+	sync *syncsvc.Service
 }
 
 // New builds the app: /v1 routes, §2.0 JSON errors, 256 KB body limit and
@@ -45,17 +46,7 @@ func New(d Deps) *echo.Echo {
 	e.Use(requestLogger(d.Log))
 	e.Use(middleware.BodyLimit("256K"))
 
-	if d.Sleep == nil {
-		d.Sleep = time.Sleep
-	}
-	sq := &queue.SyncQueue{Sender: d.Queue, Bucket: d.Config.DebounceBucket, Now: d.Now}
-	h := &handlers{
-		Deps:  d,
-		gw:    &notion.Gateway{Client: d.Notion},
-		sq:    sq,
-		setup: &setup.Service{Store: d.Store, Queue: sq},
-		sync:  &syncsvc.Service{Store: d.Store, Queue: sq, Now: d.Now},
-	}
+	h := &handlers{Deps: d, sync: &syncsvc.Service{Store: d.Store, Queue: d.Queue, Now: d.Now}}
 	v1 := e.Group("/v1")
 	v1.GET("/config", h.getConfig)
 	v1.GET("/me", h.getMe, h.requireDevice)

@@ -10,6 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"reading-tracker/backend/internal/domain"
+	"reading-tracker/backend/internal/usecase/apperr"
 )
 
 // apiError renders as {"error":{"code","message"}} (spec §2.0).
@@ -24,16 +25,12 @@ func (e *apiError) Error() string { return e.code + ": " + e.msg }
 func errInvalid(format string, a ...any) *apiError {
 	return &apiError{http.StatusBadRequest, "invalid_request", fmt.Sprintf(format, a...)}
 }
-func errInvalidGrant() *apiError {
-	return &apiError{http.StatusBadRequest, "invalid_grant", "authorization code is invalid, expired or already used"}
-}
 func errUnauthorized() *apiError {
 	return &apiError{http.StatusUnauthorized, "unauthorized", "missing, unknown or revoked device token"}
 }
 func errNoInstallation() *apiError {
 	return &apiError{http.StatusConflict, "no_installation", "connect Notion first"}
 }
-func errConflict(msg string) *apiError { return &apiError{http.StatusConflict, "conflict", msg} }
 func errNotFound(msg string) *apiError { return &apiError{http.StatusNotFound, "not_found", msg} }
 func errTooLarge(msg string) *apiError {
 	return &apiError{http.StatusRequestEntityTooLarge, "payload_too_large", msg}
@@ -46,6 +43,9 @@ func toAPIError(err error) *apiError {
 	var ae *apiError
 	if errors.As(err, &ae) {
 		return ae
+	}
+	if ae, ok := apperr.As(err); ok {
+		return fromApp(ae)
 	}
 	var he *echo.HTTPError
 	if errors.As(err, &he) {
@@ -63,6 +63,28 @@ func toAPIError(err error) *apiError {
 	}
 	if errors.Is(err, domain.ErrThrottled) {
 		return errCapacity()
+	}
+	return &apiError{http.StatusInternalServerError, "internal", "internal error"}
+}
+
+func fromApp(e *apperr.Error) *apiError {
+	switch e.Kind {
+	case apperr.Invalid:
+		return &apiError{http.StatusBadRequest, "invalid_request", e.Msg}
+	case apperr.InvalidGrant:
+		return &apiError{http.StatusBadRequest, "invalid_grant", e.Msg}
+	case apperr.Unauthorized:
+		return &apiError{http.StatusUnauthorized, "unauthorized", e.Msg}
+	case apperr.NotFound:
+		return &apiError{http.StatusNotFound, "not_found", e.Msg}
+	case apperr.Conflict:
+		return &apiError{http.StatusConflict, "conflict", e.Msg}
+	case apperr.NoInstallation:
+		return &apiError{http.StatusConflict, "no_installation", e.Msg}
+	case apperr.TooLarge:
+		return &apiError{http.StatusRequestEntityTooLarge, "payload_too_large", e.Msg}
+	case apperr.Capacity:
+		return &apiError{http.StatusServiceUnavailable, "capacity_exceeded", e.Msg}
 	}
 	return &apiError{http.StatusInternalServerError, "internal", "internal error"}
 }

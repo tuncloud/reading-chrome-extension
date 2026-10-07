@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reading-tracker/backend/internal/domain"
+	"reading-tracker/backend/internal/usecase/auth"
 )
 
 type userView struct {
@@ -38,7 +39,7 @@ func viewInstallation(i *domain.Installation) *installationView {
 }
 
 // activeInstallation loads the principal's active installation, or nil if none.
-func (h *handlers) activeInstallation(ctx context.Context, p *Principal) (*domain.Installation, error) {
+func (h *handlers) activeInstallation(ctx context.Context, p *auth.Principal) (*domain.Installation, error) {
 	id := p.InstallationID()
 	if id == "" {
 		return nil, nil

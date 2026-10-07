@@ -12,7 +12,6 @@ import (
 	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/app"
-	"reading-tracker/backend/internal/httpapi"
 	"reading-tracker/backend/internal/platform/config"
 )
 
@@ -42,7 +41,7 @@ func main() {
 	}
 	q := &queue.Local{Delay: delay, Log: log}
 	q.Handle = app.Worker(cfg, st, q, q, log).HandleSQS
-	e := httpapi.New(app.APIDeps(cfg, st, q, log))
+	e := app.API(cfg, st, q, log)
 	addr := os.Getenv("LISTEN_ADDR")
 	if addr == "" {
 		addr = ":8080"

@@ -208,3 +208,31 @@ func TestPostSetupResyncFailureNeedsSetupUntilRetried(t *testing.T) {
 		t.Fatalf("%d database creates across both attempts, want 2", n)
 	}
 }
+
+// Review focus 5 / R2: a push followed by setup in the same debounce bucket must not
+// lose the resync to SQS's 5-minute deduplication: every resync dedup id differs from
+// the push's bucket ids.
+func TestResyncAfterPushInSameBucketIsDelivered(t *testing.T) {
+	env := newTestEnv(t)
+	uid, tok := env.seedUser()
+	env.seedInstallation(uid, domain.StatusNeedsSetup)
+	if rec := env.do("POST", "/v1/sync/push", pushBody(env), tok); rec.Code != 200 {
+		t.Fatalf("push %d %s", rec.Code, rec.Body)
+	}
+	pushIDs := map[string]bool{}
+	for _, o := range env.queue.Drain() {
+		pushIDs[o.DedupID] = true
+	}
+	if rec := env.do("POST", "/v1/setup", map[string]string{"parent_page_id": "parent-1"}, tok); rec.Code != 200 {
+		t.Fatalf("setup %d %s", rec.Code, rec.Body)
+	}
+	resync := env.queue.Drain()
+	if len(resync) == 0 {
+		t.Fatal("setup enqueued no resync")
+	}
+	for _, o := range resync {
+		if pushIDs[o.DedupID] {
+			t.Fatalf("resync message %+v reuses push dedup id %q", o.Message, o.DedupID)
+		}
+	}
+}

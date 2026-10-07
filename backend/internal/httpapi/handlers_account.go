@@ -8,8 +8,7 @@ import (
 
 // logout serves POST /v1/auth/logout (spec §2.17).
 func (h *handlers) logout(c echo.Context) error {
-	p := principal(c)
-	if err := h.Store.RevokeDevice(c.Request().Context(), p.UserID, p.Device.ID, p.TokenHMAC, h.Now()); err != nil {
+	if err := h.Auth.Logout(c.Request().Context(), principal(c)); err != nil {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)
@@ -33,7 +32,7 @@ func (h *handlers) deleteMe(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := h.sq.EnqueuePurge(ctx, p.UserID, p.InstallationID()); err != nil {
+	if err := h.Queue.EnqueuePurge(ctx, p.UserID, p.InstallationID()); err != nil {
 		return err
 	}
 	if err := h.Store.MarkProfileDeleted(ctx, p.UserID, now); err != nil {
