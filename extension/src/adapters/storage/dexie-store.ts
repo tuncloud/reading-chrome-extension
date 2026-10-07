@@ -1,7 +1,7 @@
 // DexieStore is the LocalStore over IndexedDB (spec §3.4). Rows keep the spec's snake_case
 // names; the mapping to domain types lives here only.
 import Dexie, { type Table } from 'dexie'
-import type { LocalArticle, StoredSegment } from '../../domain/reading'
+import type { LocalArticle, StoredSegment } from '../../shared/reading'
 import type { KvKey, KvSchema, LocalStore } from '../../application/ports'
 
 interface ArticleRow {

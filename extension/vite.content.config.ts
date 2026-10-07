@@ -9,7 +9,7 @@ export default defineConfig({
     emptyOutDir: false,
     target: 'chrome120',
     lib: {
-      entry: resolve(root, 'src/entry/content.ts'),
+      entry: resolve(root, 'src/content/index.ts'),
       formats: ['iife'],
       name: 'readingTrackerContent',
       fileName: () => 'content.js',

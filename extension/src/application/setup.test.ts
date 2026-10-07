@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import { FakeApi, INSTALLATION, MemoryStore } from '../../test/fakes'
-import { NotConnectedError } from './errors'
+import { NotConnectedError } from '../shared/errors'
 import { SetupService } from './setup'
 
 test('searchPages needs a token and passes the query', async () => {

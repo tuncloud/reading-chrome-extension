@@ -1,9 +1,9 @@
 // Ports: what the use cases need from the outside world. Adapters implement them.
-import type { RemoteConfig } from '../domain/config'
-import type { LocalArticle, StoredSegment } from '../domain/reading'
+import type { RemoteConfig } from '../shared/config'
+import type { LocalArticle, StoredSegment } from '../shared/reading'
 import type {
   ArticleStatus, CachedConfig, Installation, Me, NotionPage, PushBody, PushResult, TokenGrant, User,
-} from './types'
+} from '../shared/types'
 
 // KvSchema is the kv table of spec §3.4.
 export interface KvSchema {
@@ -90,7 +90,4 @@ export interface Scheduler {
   every(name: string, periodMinutes: number): Promise<void>
 }
 
-export interface Log {
-  info(message: string, ...details: unknown[]): void
-  warn(message: string, ...details: unknown[]): void
-}
+export type { Log } from '../shared/log'

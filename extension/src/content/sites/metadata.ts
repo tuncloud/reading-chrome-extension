@@ -1,7 +1,7 @@
 // DOM readers shared by the site adapters.
-import type { RemoteConfig } from '../../domain/config'
-import type { ArticleMeta } from '../../domain/reading'
-import { normalizeUrl } from '../../domain/url'
+import type { RemoteConfig } from '../../shared/config'
+import type { ArticleMeta } from '../../shared/reading'
+import { normalizeUrl } from '../../shared/url'
 
 // Backend limits (backend/internal/usecase/readsync/validate.go).
 const MAX_URL = 2048

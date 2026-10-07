@@ -1,9 +1,8 @@
 // Messages between the content script / popup and the background service worker.
-import type { RemoteConfig } from '../domain/config'
-import type { AdapterName } from '../domain/domains'
-import type { ArticleMeta, Segment } from '../domain/reading'
-import type { ConnectResult } from './session'
-import type { SyncOutcome } from './sync'
+import type { RemoteConfig } from './config'
+import type { AdapterName } from './domains'
+import type { ArticleMeta, Segment } from './reading'
+import type { ConnectResult, SyncOutcome } from './types'
 
 export interface TrackingPlan {
   adapter: AdapterName

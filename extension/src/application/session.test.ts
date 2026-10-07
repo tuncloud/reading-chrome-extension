@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { FakeApi, FakeAuthFlow, FakePkce, INSTALLATION, MemoryLog, MemoryStore } from '../../test/fakes'
-import { ApiError, NetworkError } from './errors'
+import { ApiError, NetworkError } from '../shared/errors'
 import { SessionService } from './session'
 
 describe('SessionService', () => {

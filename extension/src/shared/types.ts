@@ -1,6 +1,6 @@
 // What the use cases exchange with the backend (spec §2), in camelCase.
-import type { RemoteConfig } from '../domain/config'
-import type { ArticleMeta, Segment } from '../domain/reading'
+import type { RemoteConfig } from './config'
+import type { ArticleMeta, Segment } from './reading'
 
 export type InstallationStatus = 'active' | 'needs_setup' | 'revoked'
 
@@ -63,3 +63,11 @@ export interface CachedConfig {
   fetchedAt: string
   value: RemoteConfig
 }
+
+export type SyncOutcome = 'disconnected' | 'backoff' | 'synced' | 'partial' | 'failed'
+
+export type ConnectResult = { ok: true; installation: Installation | null } | { ok: false; reason: string }
+
+export type SessionState =
+  | { kind: 'disconnected' }
+  | { kind: 'connected'; user: User | null; installation: Installation | null }

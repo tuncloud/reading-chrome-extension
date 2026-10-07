@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import { FakeContentScripts, FakePermissions, MemoryStore } from '../../test/fakes'
-import { parseRemoteConfig } from '../domain/config'
+import { parseRemoteConfig } from '../shared/config'
 import { wireConfig } from '../../test/fixtures'
 import type { KvKey, KvSchema } from './ports'
 import { DomainService, SCRIPT_PREFIX } from './domains'

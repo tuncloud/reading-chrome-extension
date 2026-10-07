@@ -1,8 +1,8 @@
 // The popup's view model (spec T30), built from local data plus the server's article status.
-import { roundMinutes, todaySeconds, type LocalArticle } from '../domain/reading'
+import { roundMinutes, todaySeconds, type LocalArticle } from '../shared/reading'
 import type { Api, Clock, LocalStore } from './ports'
 import type { SessionState } from './session'
-import type { ArticleStatus } from './types'
+import type { ArticleStatus } from '../shared/types'
 
 export interface ArticleView {
   url: string

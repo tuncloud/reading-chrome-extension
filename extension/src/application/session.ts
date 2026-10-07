@@ -1,13 +1,9 @@
 // SessionService owns the device's connection to the backend (spec §2.1–§2.5, §2.17, T29).
-import { isApiError, NetworkError, NotConnectedError } from './errors'
+import { isApiError, NetworkError, NotConnectedError } from '../shared/errors'
 import type { Api, AuthFlow, KvKey, LocalStore, Log, Pkce } from './ports'
-import type { Installation, User } from './types'
+import type { ConnectResult, SessionState } from '../shared/types'
 
-export type SessionState =
-  | { kind: 'disconnected' }
-  | { kind: 'connected'; user: User | null; installation: Installation | null }
-
-export type ConnectResult = { ok: true; installation: Installation | null } | { ok: false; reason: string }
+export type { ConnectResult, SessionState } from '../shared/types'
 
 export const AUTH_KEYS: readonly KvKey[] = ['device_token', 'device_id', 'user', 'installation']
 

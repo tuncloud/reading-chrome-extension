@@ -1,11 +1,11 @@
 // SyncService pushes the local outbox to POST /v1/sync/push (spec §2.8, T28).
-import type { ArticleMeta, LocalArticle, Segment, StoredSegment } from '../domain/reading'
-import { isApiError } from './errors'
+import type { ArticleMeta, LocalArticle, Segment, StoredSegment } from '../shared/reading'
+import { isApiError } from '../shared/errors'
 import { AUTH_KEYS } from './session'
 import type { Api, Clock, LocalStore, Log } from './ports'
-import type { PushResult } from './types'
+import type { PushResult, SyncOutcome } from '../shared/types'
 
-export type SyncOutcome = 'disconnected' | 'backoff' | 'synced' | 'partial' | 'failed'
+export type { SyncOutcome } from '../shared/types'
 
 // PUSH_LIMIT is the backend's per-request segment cap (C25).
 export const PUSH_LIMIT = 50

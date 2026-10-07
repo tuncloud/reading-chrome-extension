@@ -1,6 +1,6 @@
-import type { RemoteConfig } from '../../domain/config'
-import type { AdapterName } from '../../domain/domains'
-import type { ArticleMeta } from '../../domain/reading'
+import type { RemoteConfig } from '../../shared/config'
+import type { AdapterName } from '../../shared/domains'
+import type { ArticleMeta } from '../../shared/reading'
 
 export interface PageContext {
   doc: Document

@@ -1,7 +1,7 @@
 // SetupService finishes a needs_setup installation (spec §2.6, §2.7, T31).
-import { NotConnectedError } from './errors'
+import { NotConnectedError } from '../shared/errors'
 import type { Api, LocalStore } from './ports'
-import type { Installation, NotionPage } from './types'
+import type { Installation, NotionPage } from '../shared/types'
 
 export interface SetupDeps {
   store: LocalStore

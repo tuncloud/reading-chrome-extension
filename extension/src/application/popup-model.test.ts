@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import { FakeApi, FixedClock, INSTALLATION, MemoryStore } from '../../test/fakes'
 import { record, segment } from '../../test/store-contract'
-import { roundMinutes } from '../domain/reading'
-import { NetworkError } from './errors'
+import { roundMinutes } from '../shared/reading'
+import { NetworkError } from '../shared/errors'
 import { buildPopupModel } from './popup-model'
 import type { SessionState } from './session'
 

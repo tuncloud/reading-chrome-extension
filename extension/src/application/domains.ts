@@ -1,6 +1,6 @@
 // DomainService manages user-enabled and denied domains (spec T31, C24).
-import type { RemoteConfig } from '../domain/config'
-import { chooseAdapter, normalizeDomain, originPatterns, type AdapterName, type DomainLists } from '../domain/domains'
+import type { RemoteConfig } from '../shared/config'
+import { chooseAdapter, normalizeDomain, originPatterns, type AdapterName, type DomainLists } from '../shared/domains'
 import type { ContentScripts, LocalStore, Permissions } from './ports'
 
 export const SCRIPT_PREFIX = 'generic:'

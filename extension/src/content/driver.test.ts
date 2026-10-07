@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { TrackingConfig } from '../../domain/config'
-import type { ArticleMeta, Segment } from '../../domain/reading'
-import { claimPage, releasePage, startTracking, type Driver } from './tracker-driver'
+import type { TrackingConfig } from '../shared/config'
+import type { ArticleMeta, Segment } from '../shared/reading'
+import { claimPage, releasePage, startTracking, type Driver } from './driver'
 
 const config: TrackingConfig = {
   idleSeconds: 60, segmentSeconds: 60, minCreateSeconds: 30, completeProgress: 0.9, completeTimeRatio: 0.3,

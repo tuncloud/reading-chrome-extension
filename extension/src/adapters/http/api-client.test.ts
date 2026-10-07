@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { wireConfig } from '../../../test/fixtures'
-import { ApiError, NetworkError } from '../../application/errors'
+import { ApiError, NetworkError } from '../../shared/errors'
 import { HttpApi, type Fetch } from './api-client'
 
 interface Call {

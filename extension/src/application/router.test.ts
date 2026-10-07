@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
-import { parseRemoteConfig, type RemoteConfig } from '../domain/config'
+import { parseRemoteConfig, type RemoteConfig } from '../shared/config'
 import { wireConfig } from '../../test/fixtures'
 import { META } from '../../test/store-contract'
 import { createRouter, type RouterServices } from './router'

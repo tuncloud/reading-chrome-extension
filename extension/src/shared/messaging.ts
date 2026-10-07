@@ -1,6 +1,6 @@
 // chrome.runtime / chrome.tabs messaging with a { ok, value | error } reply envelope.
-import type { Log } from '../../application/ports'
-import type { BackgroundReply, BackgroundRequest, CurrentPage, TabRequest } from '../../application/protocol'
+import type { Log } from './log'
+import type { BackgroundReply, BackgroundRequest, CurrentPage, TabRequest } from './messages'
 
 export type Reply = { ok: true; value: unknown } | { ok: false; error: string }
 

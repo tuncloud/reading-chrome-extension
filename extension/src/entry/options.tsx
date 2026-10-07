@@ -2,7 +2,7 @@
 // popup) so the outbox sync after connecting runs in the service worker.
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { sendToBackground } from '../adapters/chrome/messaging'
+import { sendToBackground } from '../shared/messaging'
 import { OptionsApp } from '../ui/options/OptionsApp'
 import { compose } from './compose'
 

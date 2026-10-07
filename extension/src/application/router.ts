@@ -1,7 +1,7 @@
 // createRouter maps background messages to use cases; the entry point wires it to chrome.runtime.
 import type { ConfigService } from './config-service'
 import type { DomainService } from './domains'
-import { isBackgroundRequest } from './protocol'
+import { isBackgroundRequest } from '../shared/messages'
 import type { RecordService } from './record'
 import type { SessionService } from './session'
 import type { SyncService } from './sync'

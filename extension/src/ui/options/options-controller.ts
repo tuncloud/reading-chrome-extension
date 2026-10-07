@@ -1,6 +1,6 @@
 // The options page's state machine: run an action, keep the page busy meanwhile,
 // then re-read what changed and re-render with a short note.
-import { isApiError } from '../../application/errors'
+import { isApiError } from '../../shared/errors'
 import type { DomainService } from '../../application/domains'
 import type { ConnectResult, SessionService } from '../../application/session'
 import type { SetupService } from '../../application/setup'

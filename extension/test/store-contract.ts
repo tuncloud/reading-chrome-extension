@@ -1,6 +1,6 @@
 // storeContract is the behaviour every LocalStore must have (spec §3.4).
 import { beforeEach, describe, expect, test } from 'vitest'
-import { mergeArticle, type ArticleMeta, type Segment, type StoredSegment } from '../src/domain/reading'
+import { mergeArticle, type ArticleMeta, type Segment, type StoredSegment } from '../src/shared/reading'
 import type { LocalStore } from '../src/application/ports'
 
 export const META: ArticleMeta = {

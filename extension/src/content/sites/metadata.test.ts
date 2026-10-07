@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, test } from 'vitest'
 import { wireConfig } from '../../../test/fixtures'
-import { parseRemoteConfig } from '../../domain/config'
+import { parseRemoteConfig } from '../../shared/config'
 import { canonicalFromDocument, countWords, defaultContentRoot, finishMeta, jsonLdArticle } from './metadata'
 
 const config = parseRemoteConfig(wireConfig)

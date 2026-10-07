@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import { FakeApi, FakeScheduler, FixedClock, MemoryLog, MemoryStore } from '../../test/fakes'
 import { wireConfig } from '../../test/fixtures'
-import { parseRemoteConfig } from '../domain/config'
+import { parseRemoteConfig } from '../shared/config'
 import { ConfigService } from './config-service'
-import { NetworkError } from './errors'
+import { NetworkError } from '../shared/errors'
 
 const HOUR = 3_600_000
 

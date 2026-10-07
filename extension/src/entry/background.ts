@@ -1,6 +1,6 @@
 // Background service worker composition root (spec T28): the only place that syncs.
 import { ChromeScheduler, onAlarm } from '../adapters/chrome/alarms'
-import { serveBackground } from '../adapters/chrome/messaging'
+import { serveBackground } from '../shared/messaging'
 import { SYNC_ALARM } from '../application/config-service'
 import { createRouter } from '../application/router'
 import { compose } from './compose'

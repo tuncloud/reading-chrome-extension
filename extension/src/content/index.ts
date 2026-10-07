@@ -1,9 +1,9 @@
 // Content script composition root: ask the background whether and how to track this
 // page, then run the tracker driver with the chosen site adapter.
-import { ExtensionGoneError, sendToBackground, serveTabRequests } from '../adapters/chrome/messaging'
-import { claimPage, releasePage, startTracking, type Driver } from '../adapters/page/tracker-driver'
-import { adapterFor } from '../adapters/site/registry'
-import type { ArticleMeta, Segment } from '../domain/reading'
+import { ExtensionGoneError, sendToBackground, serveTabRequests } from '../shared/messaging'
+import { claimPage, releasePage, startTracking, type Driver } from './driver'
+import { adapterFor } from './sites/registry'
+import type { ArticleMeta, Segment } from '../shared/reading'
 
 async function main(): Promise<void> {
   if (!claimPage(window)) return

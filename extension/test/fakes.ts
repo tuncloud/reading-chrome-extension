@@ -1,5 +1,5 @@
 // Test doubles for the application ports. MemoryStore passes the same contract as DexieStore.
-import type { LocalArticle, StoredSegment } from '../src/domain/reading'
+import type { LocalArticle, StoredSegment } from '../src/shared/reading'
 import type { Clock, KvKey, KvSchema, LocalStore, Log } from '../src/application/ports'
 
 export class MemoryStore implements LocalStore {
@@ -104,8 +104,8 @@ export class MemoryLog implements Log {
 }
 
 import type { Api, Scheduler } from '../src/application/ports'
-import type { ArticleStatus, Installation, Me, NotionPage, PushBody, PushResult, TokenGrant } from '../src/application/types'
-import { parseRemoteConfig, type RemoteConfig } from '../src/domain/config'
+import type { ArticleStatus, Installation, Me, NotionPage, PushBody, PushResult, TokenGrant } from '../src/shared/types'
+import { parseRemoteConfig, type RemoteConfig } from '../src/shared/config'
 import { wireConfig } from './fixtures'
 
 export const INSTALLATION: Installation = {

@@ -1,6 +1,6 @@
 // ConfigService keeps GET /v1/config cached in kv.config, refreshes it daily (T28) and keeps
 // the sync alarm on its sync_interval_minutes.
-import type { RemoteConfig } from '../domain/config'
+import type { RemoteConfig } from '../shared/config'
 import type { Api, Clock, LocalStore, Log, Scheduler } from './ports'
 
 export const CONFIG_MAX_AGE_MS = 24 * 60 * 60 * 1000

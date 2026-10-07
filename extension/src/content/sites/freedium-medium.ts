@@ -1,5 +1,5 @@
 // The Freedium/Medium adapter (spec T26): Medium posts and their Freedium mirrors.
-import { mediumCanonical } from '../../domain/medium'
+import { mediumCanonical } from '../../shared/medium'
 import { canonicalFromDocument, countWords, defaultContentRoot, finishMeta, firstText, metaContent } from './metadata'
 import type { SiteAdapter } from './types'
 

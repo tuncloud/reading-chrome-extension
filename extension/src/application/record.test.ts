@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi, type Mock } from 'vitest'
 import { FixedClock, MemoryLog, MemoryStore } from '../../test/fakes'
 import { META, segment } from '../../test/store-contract'
-import { parseRemoteConfig, type RemoteConfig } from '../domain/config'
+import { parseRemoteConfig, type RemoteConfig } from '../shared/config'
 import { wireConfig } from '../../test/fixtures'
 import { RecordService } from './record'
 

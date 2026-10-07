@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { expect, test } from 'vitest'
 import { wireConfig } from '../../../test/fixtures'
-import { parseRemoteConfig } from '../../domain/config'
+import { parseRemoteConfig } from '../../shared/config'
 import { generic } from './generic'
 import { adapterFor } from './registry'
 

@@ -1,8 +1,8 @@
 // The DOM side of the tracker (spec T27): browser events and a 1 s tick in, segments out.
-import type { TrackingConfig } from '../../domain/config'
-import { readingProgress } from '../../domain/progress'
-import type { ArticleMeta, Segment } from '../../domain/reading'
-import { Tracker, type SegmentDraft } from '../../domain/tracker'
+import type { TrackingConfig } from '../shared/config'
+import { readingProgress } from './progress'
+import type { ArticleMeta, Segment } from '../shared/reading'
+import { Tracker, type SegmentDraft } from './tracker'
 
 export interface DriverDeps {
   win: Window

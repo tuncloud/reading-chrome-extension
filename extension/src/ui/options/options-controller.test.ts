@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   FakeApi, FakeAuthFlow, FakeContentScripts, FakePermissions, FakePkce, INSTALLATION, MemoryLog, MemoryStore,
 } from '../../../test/fakes'
-import { ApiError } from '../../application/errors'
+import { ApiError } from '../../shared/errors'
 import { DomainService } from '../../application/domains'
 import { SessionService } from '../../application/session'
 import { SetupService } from '../../application/setup'

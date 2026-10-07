@@ -1,8 +1,8 @@
 // HttpApi is the backend over fetch (spec §2). It only moves JSON; decisions stay in use cases.
-import { parseRemoteConfig, type RemoteConfig } from '../../domain/config'
-import { ApiError, NetworkError } from '../../application/errors'
+import { parseRemoteConfig, type RemoteConfig } from '../../shared/config'
+import { ApiError, NetworkError } from '../../shared/errors'
 import type { Api } from '../../application/ports'
-import type { ArticleStatus, Installation, Me, NotionPage, PushBody, PushResult, TokenGrant } from '../../application/types'
+import type { ArticleStatus, Installation, Me, NotionPage, PushBody, PushResult, TokenGrant } from '../../shared/types'
 import * as wire from './wire'
 
 export type Fetch = (url: string, init?: RequestInit) => Promise<Response>

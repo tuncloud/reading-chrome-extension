@@ -1,7 +1,7 @@
 // RecordService stores one tracked segment and its article (spec T28: "on segment message
 // upsert article + put segment (synced=0)") and asks for a sync past the threshold.
-import type { RemoteConfig } from '../domain/config'
-import { mergeArticle, type ArticleMeta, type Segment } from '../domain/reading'
+import type { RemoteConfig } from '../shared/config'
+import { mergeArticle, type ArticleMeta, type Segment } from '../shared/reading'
 import type { Clock, LocalStore, Log } from './ports'
 
 export interface RecordDeps {
