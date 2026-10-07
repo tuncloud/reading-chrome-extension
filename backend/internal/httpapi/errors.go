@@ -8,6 +8,8 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+
+	"reading-tracker/backend/internal/store"
 )
 
 // apiError renders as {"error":{"code","message"}} (spec §2.0).
@@ -58,6 +60,9 @@ func toAPIError(err error) *apiError {
 		if he.Code < 500 {
 			return &apiError{he.Code, "invalid_request", http.StatusText(he.Code)}
 		}
+	}
+	if store.IsThrottle(err) {
+		return errCapacity()
 	}
 	return &apiError{http.StatusInternalServerError, "internal", "internal error"}
 }

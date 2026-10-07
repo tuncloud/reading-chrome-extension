@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/labstack/echo/v4"
 
 	"reading-tracker/backend/internal/config"
@@ -147,4 +150,25 @@ func (env *testEnv) seedInstallation(uid, status string) *store.Installation {
 	must(t, env.db.Store.PutUserInstallation(ctx, uid, testBotID, env.now))
 	must(t, env.db.Store.SetActiveInstallation(ctx, uid, testBotID))
 	return inst
+}
+
+// setDeviceAttr overwrites one attribute of the device item in place, leaving every other
+// item (notably the DEVTOKEN lookup) untouched.
+func (env *testEnv) setDeviceAttr(uid, deviceID, attr, value string) {
+	env.t.Helper()
+	_, err := env.db.DB.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(env.db.Table),
+		Key:                       map[string]types.AttributeValue{"pk": &types.AttributeValueMemberS{Value: store.UserPK(uid)}, "sk": &types.AttributeValueMemberS{Value: store.DeviceSK(deviceID)}},
+		UpdateExpression:          aws.String("SET #a = :v"),
+		ExpressionAttributeNames:  map[string]string{"#a": attr},
+		ExpressionAttributeValues: map[string]types.AttributeValue{":v": &types.AttributeValueMemberS{Value: value}},
+	})
+	must(env.t, err)
+}
+
+func (env *testEnv) lastSeen(uid, deviceID string) string {
+	env.t.Helper()
+	dev, err := env.db.Store.GetDevice(context.Background(), uid, deviceID)
+	must(env.t, err)
+	return dev.LastSeenAt
 }

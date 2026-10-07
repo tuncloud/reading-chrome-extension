@@ -3,8 +3,10 @@ package httpapi_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"reading-tracker/backend/internal/config"
+	"reading-tracker/backend/internal/crypto"
 	"reading-tracker/backend/internal/store"
 )
 
@@ -28,6 +30,65 @@ func TestMeRequiresDeviceToken(t *testing.T) {
 		if rec.Code != 401 || errorCode(t, rec) != "unauthorized" {
 			t.Fatalf("token %q: %d %s", tok, rec.Code, rec.Body)
 		}
+	}
+}
+
+// §2.4: a revoked device is rejected even if its DEVTOKEN lookup still exists (the
+// RevokeDevice transaction deletes both, so this isolates the revoked_at check).
+func TestMeRejectsRevokedDeviceWithTokenLookupIntact(t *testing.T) {
+	env := newTestEnv(t)
+	uid, tok := env.seedUser()
+	if rec := env.do("GET", "/v1/me", nil, tok); rec.Code != 200 {
+		t.Fatalf("before revoke: %d %s", rec.Code, rec.Body)
+	}
+	env.setDeviceAttr(uid, "dev-1", "revoked_at", store.Timestamp(env.now))
+	rec := env.do("GET", "/v1/me", nil, tok)
+	if rec.Code != 401 || errorCode(t, rec) != "unauthorized" {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestMeRejectsRevokedDeviceAfterRevokeDevice(t *testing.T) {
+	env := newTestEnv(t)
+	uid, tok := env.seedUser()
+	must(t, env.db.Store.RevokeDevice(t.Context(), uid, "dev-1", crypto.TokenHMAC(env.cfg.DeviceTokenPepper, tok), env.now))
+	rec := env.do("GET", "/v1/me", nil, tok)
+	if rec.Code != 401 || errorCode(t, rec) != "unauthorized" {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestMeRejectsDeletedProfile(t *testing.T) {
+	env := newTestEnv(t)
+	uid, tok := env.seedUser()
+	must(t, env.db.Store.MarkProfileDeleted(t.Context(), uid, env.now))
+	rec := env.do("GET", "/v1/me", nil, tok)
+	if rec.Code != 401 || errorCode(t, rec) != "unauthorized" {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+// §2.4 step 3: last_seen_at is refreshed at most hourly.
+func TestAuthTouchesLastSeenOnlyWhenOverAnHourOld(t *testing.T) {
+	env := newTestEnv(t)
+	uid, tok := env.seedUser()
+
+	stale := store.Timestamp(env.now.Add(-2 * time.Hour))
+	env.setDeviceAttr(uid, "dev-1", "last_seen_at", stale)
+	if rec := env.do("GET", "/v1/me", nil, tok); rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if got := env.lastSeen(uid, "dev-1"); got != store.Timestamp(env.now) {
+		t.Fatalf("2h-old last_seen_at not refreshed: %s", got)
+	}
+
+	recent := store.Timestamp(env.now.Add(-30 * time.Minute))
+	env.setDeviceAttr(uid, "dev-1", "last_seen_at", recent)
+	if rec := env.do("GET", "/v1/me", nil, tok); rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if got := env.lastSeen(uid, "dev-1"); got != recent {
+		t.Fatalf("30m-old last_seen_at must be left alone: %s", got)
 	}
 }
 
