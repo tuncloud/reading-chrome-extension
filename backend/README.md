@@ -52,14 +52,17 @@ Clean architecture: dependencies point inward, enforced by `internal/archtest`.
 | Layer | Packages | May import |
 |---|---|---|
 | Domain | `internal/domain` — entities and business rules | standard library only |
-| Use cases | `internal/usecase/{auth,connect,setup,readsync,library,account,notionsync}`; interfaces in `usecase/port`; error kinds in `usecase/apperr` | domain, other use cases, `platform/{crypto,textutil}` |
+| Use cases | `internal/usecase/{auth,connect,setup,readsync,library,account,notionsync}`; all ports (the interfaces use cases need) live centrally in `usecase/port`, owned by this layer; error kinds in `usecase/apperr` | domain, other use cases, `platform/{crypto,textutil}`, stdlib, `oklog/ulid` (id generation) |
 | Adapters | `internal/adapter/dynamo` (DynamoDB), `adapter/notion` (Notion API), `adapter/queue` (SQS/local queue, consumer), `adapter/httpapi` (Echo) | domain, use cases, platform — never another adapter |
 | Platform | `internal/platform/{crypto,config,textutil}` | platform only |
-| Composition | `internal/wire`, used by `cmd/{api,worker,local}` | everything |
+| Composition | `internal/wire` (the composition root), used by `cmd/{api,worker,local}` (Lambda API, Lambda worker, and the all-in-one local server) | everything |
+| Test-only | `internal/archtest` (enforces this table), `internal/e2e` (API + worker against DynamoDB Local and a fake Notion) | — |
+| Test helpers | `adapter/dynamo/dynamotest` (DynamoDB Local store), `adapter/notion/notiontest` (fake Notion server) | live inside their adapter |
 
 Flow of a read: extension → `adapter/httpapi` → `usecase/readsync` → `port.Reading` (`adapter/dynamo`) +
 `port.SyncQueue` (`adapter/queue`) → SQS → `adapter/queue.Consumer` → `usecase/notionsync` →
-`port.NotionPages` (`adapter/notion`).
+`port.Reading` (`adapter/dynamo`) + `port.NotionPages` (`adapter/notion`).
 
-Adding a feature: put rules in `domain`, orchestration in a `usecase` package that declares the
-ports it needs, implement those ports in an adapter, and connect them in `wire`.
+Adding a feature: put rules in `domain`, orchestration in a `usecase` package that depends on the
+ports in `usecase/port` (add a method there if one is missing), implement those ports in an adapter,
+and connect them in `wire`.
