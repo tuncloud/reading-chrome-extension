@@ -58,6 +58,7 @@ export class SessionService {
       await store.setKv('device_id', grant.deviceId)
       await store.setKv('user', grant.user)
       await store.setKv('installation', grant.installation)
+      await store.deleteKv('sync_failures', 'sync_backoff_until') // a fresh token must not wait out an old backoff
       const after = await this.refresh() // T29: GET /v1/me after the exchange; best-effort, it never throws
       if (after.kind === 'disconnected') return { ok: false, reason: 'unauthorized' }
       this.deps.afterConnect?.()
@@ -109,7 +110,11 @@ export class SessionService {
     const { store, api } = this.deps
     const token = await store.getKv('device_token')
     if (!token) throw new NotConnectedError()
-    await api.deleteAccount(token)
+    try {
+      await api.deleteAccount(token)
+    } catch (e) {
+      if (!isApiError(e, 401)) throw e // 401: the server already revoked the token, the account is gone
+    }
     await this.forget()
     await store.clearReading()
   }

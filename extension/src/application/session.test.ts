@@ -42,6 +42,14 @@ describe('SessionService', () => {
       expect(afterConnect).toHaveBeenCalledTimes(1)
     })
 
+    test('I2: connecting clears stale sync backoff', async () => {
+      await store.setKv('sync_failures', 6)
+      await store.setKv('sync_backoff_until', '2099-01-01T00:00:00.000Z')
+      await service(new FakeApi()).connect()
+      expect(await store.getKv('sync_failures')).toBeUndefined()
+      expect(await store.getKv('sync_backoff_until')).toBeUndefined()
+    })
+
     test('user closes the window → cancelled, nothing stored', async () => {
       flow.respond = async () => { throw new Error('The user did not approve access.') }
       const api = new FakeApi()
@@ -165,6 +173,13 @@ describe('SessionService', () => {
       await nothingStored()
       expect(store.articleRows.size).toBe(0)
       expect(await store.getKv('enabled_domains')).toEqual(['example.com'])
+    })
+
+    test('M2: deleteAccount treats a 401 as the account already gone', async () => {
+      const api = new FakeApi({ deleteAccount: async () => { throw new ApiError(401, 'unauthorized', 'revoked') } })
+      await service(api).deleteAccount()
+      await nothingStored()
+      expect(store.articleRows.size).toBe(0)
     })
 
     test('deleteAccount keeps everything when the server call fails', async () => {

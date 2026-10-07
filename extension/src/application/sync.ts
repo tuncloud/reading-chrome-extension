@@ -1,6 +1,7 @@
 // SyncService pushes the local outbox to POST /v1/sync/push (spec §2.8, T28).
 import type { ArticleMeta, LocalArticle, Segment, StoredSegment } from '../domain/reading'
 import { isApiError } from './errors'
+import { AUTH_KEYS } from './session'
 import type { Api, Clock, LocalStore, Log } from './ports'
 import type { PushResult } from './types'
 
@@ -35,6 +36,14 @@ function plain(s: StoredSegment): Segment {
   }
 }
 
+// POISON are the statuses that mean "this batch itself is unacceptable", not "try again later".
+const POISON = [400, 413]
+
+interface Progress {
+  settled: number
+  retry: boolean
+}
+
 export class SyncService {
   private inflight: Promise<SyncOutcome> | null = null
 
@@ -66,38 +75,63 @@ export class SyncService {
     for (;;) {
       const segments = await store.unsyncedSegments(PUSH_LIMIT)
       if (segments.length === 0) break
-      const articles = await store.articles([...new Set(segments.map((s) => s.canonicalUrl))])
-      let res: PushResult
+      let progress: Progress
       try {
-        res = await api.push(token, {
-          clientTime: clock.now().toISOString(),
-          tz: clock.timeZone(),
-          articles: articles.map(meta),
-          segments: segments.map(plain),
-        })
+        progress = await this.push(token, segments)
       } catch (e) {
         return this.fail(e)
       }
-      await store.markSynced([...res.accepted, ...res.duplicate])
-      if (res.rejected.length > 0) {
-        await store.deleteSegments(res.rejected.map((r) => r.id))
-        for (const r of res.rejected) log.warn(`sync: server rejected segment ${r.id}: ${r.reason}`)
-      }
-      if (res.retry.length > 0) {
+      if (progress.retry) {
         await this.clearBackoff()
         return 'partial'
       }
       // The server settled nothing: stop rather than resend the same batch in a loop.
-      if (res.accepted.length + res.duplicate.length + res.rejected.length === 0) break
+      if (progress.settled === 0) break
     }
     await this.clearBackoff()
     return 'synced'
   }
 
+  // push sends one batch and settles the answer. A batch the server refuses as a whole (413/400)
+  // is poison: it is retried in halves, and a single segment that is still refused is dropped,
+  // so one bad segment cannot block the outbox. Other failures propagate.
+  private async push(token: string, segments: StoredSegment[]): Promise<Progress> {
+    const { store, api, clock, log } = this.deps
+    const articles = await store.articles([...new Set(segments.map((s) => s.canonicalUrl))])
+    let res: PushResult
+    try {
+      res = await api.push(token, {
+        clientTime: clock.now().toISOString(),
+        tz: clock.timeZone(),
+        articles: articles.map(meta),
+        segments: segments.map(plain),
+      })
+    } catch (e) {
+      if (!isApiError(e) || !POISON.includes(e.status)) throw e
+      const only = segments[0]!
+      if (segments.length === 1) {
+        await store.deleteSegments([only.id])
+        log.warn(`sync: dropped segment ${only.id} (${e.status} ${e.code})`)
+        return { settled: 1, retry: false }
+      }
+      const mid = Math.ceil(segments.length / 2)
+      const first = await this.push(token, segments.slice(0, mid))
+      if (first.retry) return first
+      const rest = await this.push(token, segments.slice(mid))
+      return { settled: first.settled + rest.settled, retry: rest.retry }
+    }
+    await store.markSynced([...res.accepted, ...res.duplicate])
+    if (res.rejected.length > 0) {
+      await store.deleteSegments(res.rejected.map((r) => r.id))
+      for (const r of res.rejected) log.warn(`sync: server rejected segment ${r.id}: ${r.reason}`)
+    }
+    return { settled: res.accepted.length + res.duplicate.length + res.rejected.length, retry: res.retry.length > 0 }
+  }
+
   private async fail(e: unknown): Promise<SyncOutcome> {
     const { store, clock, log } = this.deps
     if (isApiError(e, 401)) {
-      await store.deleteKv('device_token', 'device_id', 'user', 'installation')
+      await store.deleteKv(...AUTH_KEYS, 'sync_failures', 'sync_backoff_until')
       log.warn('sync: device token rejected; disconnected')
       return 'disconnected'
     }

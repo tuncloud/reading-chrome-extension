@@ -91,6 +91,64 @@ describe('SyncService.run', () => {
     expect(await store.countUnsynced()).toBe(2)
   })
 
+  test('I2: 401 also clears stale backoff so a reconnect syncs at once', async () => {
+    await seed(store, 1)
+    await store.setKv('sync_failures', 5)
+    await store.setKv('sync_backoff_until', new Date(clock.now().getTime() - MIN).toISOString()) // expired: this run goes through
+    const api = new FakeApi({ push: async () => { throw new ApiError(401, 'unauthorized', 'revoked') } })
+    expect(await service(api).run()).toBe('disconnected')
+    expect(await store.getKv('sync_failures')).toBeUndefined()
+    expect(await store.getKv('sync_backoff_until')).toBeUndefined()
+  })
+
+  describe('I1: poison batches', () => {
+    const rejectContaining = (bad: string, status = 413) => new FakeApi({
+      push: async (_t, body) => {
+        if (body.segments.some((s) => s.id === bad)) throw new ApiError(status, 'payload_too_large', 'too big')
+        return { accepted: body.segments.map((s) => s.id), duplicate: [], retry: [], rejected: [] }
+      },
+    })
+
+    test('a segment the server always refuses with 413 is dropped, the rest sync in one run', async () => {
+      const ids = await seed(store, 7)
+      const api = rejectContaining(ids[4]!)
+      expect(await service(api).run()).toBe('synced')
+      expect(await store.countUnsynced()).toBe(0)
+      expect(store.segmentRows.has(ids[4]!)).toBe(false)
+      for (const id of ids.filter((i) => i !== ids[4])) expect(store.segmentRows.get(id)?.synced).toBe(1)
+      expect(log.lines).toContain(`warn sync: dropped segment ${ids[4]} (413 payload_too_large)`)
+      expect(await store.getKv('sync_backoff_until')).toBeUndefined()
+    })
+
+    test('a 400 once on a batch of 3, then success, syncs everything in halves', async () => {
+      const ids = await seed(store, 3)
+      let first = true
+      const api = new FakeApi({
+        push: async (_t, body) => {
+          if (first) {
+            first = false
+            throw new ApiError(400, 'invalid_request', 'bad')
+          }
+          return { accepted: body.segments.map((s) => s.id), duplicate: [], retry: [], rejected: [] }
+        },
+      })
+      expect(await service(api).run()).toBe('synced')
+      const sizes = api.calls.filter((c) => c.method === 'push').map((c) => (c.args[1] as PushBody).segments.length)
+      expect(sizes).toEqual([3, 2, 1])
+      expect(await store.countUnsynced()).toBe(0)
+      expect([...store.segmentRows.keys()].sort()).toEqual(ids)
+    })
+
+    test('5xx and network errors are not poison: they back off and keep the segments', async () => {
+      await seed(store, 3)
+      const api = new FakeApi({ push: async () => { throw new ApiError(500, 'internal', 'boom') } })
+      expect(await service(api).run()).toBe('failed')
+      expect(api.count('push')).toBe(1)
+      expect(await store.countUnsynced()).toBe(3)
+      expect(await store.getKv('sync_backoff_until')).toBeDefined()
+    })
+  })
+
   test('T28: failures back off 1, 2, 4 … minutes, capped at 30, and success resets', async () => {
     await seed(store, 1)
     let online = false
