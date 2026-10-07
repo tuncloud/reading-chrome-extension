@@ -24,7 +24,7 @@ export default defineConfig(({ mode }) => {
   return {
     build: {
       outDir: 'dist',
-      emptyOutDir: true,
+      emptyOutDir: !process.argv.includes('--watch'),
       target: 'chrome120',
       // Chrome supports modulepreload natively; the polyfill would only add a chunk.
       modulePreload: { polyfill: false },
