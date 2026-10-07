@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -20,7 +21,7 @@ func TestPendingSync(t *testing.T) {
 	push(t, s, segment("00000000-0000-4000-8000-000000000002", other, 0, 60, 0.5, testNow))
 	must(t, s.MarkArticleSynced(ctx, "bot-1", store.URLHash(articleURL), 1, false, testNow))
 
-	hashes, dates, err := s.PendingSync(ctx, "bot-1")
+	hashes, dates, err := s.PendingSync(ctx, "bot-1", false)
 	must(t, err)
 	if len(hashes) != 1 || hashes[0] != store.URLHash(other) {
 		t.Fatalf("hashes = %v", hashes)
@@ -29,8 +30,30 @@ func TestPendingSync(t *testing.T) {
 		t.Fatalf("dates = %v", dates)
 	}
 	must(t, s.MarkDaySynced(ctx, "bot-1", "2026-10-06", 2))
-	if _, dates, _ = s.PendingSync(ctx, "bot-1"); len(dates) != 0 {
+	if _, dates, _ = s.PendingSync(ctx, "bot-1", false); len(dates) != 0 {
 		t.Fatalf("synced day still pending: %v", dates)
+	}
+}
+
+// I1: after the target databases change, the "all" mode lists synced items too.
+func TestPendingSyncAllIncludesSynced(t *testing.T) {
+	s := storetest.New(t).Store
+	other := "https://example.com/post"
+	push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow))
+	push(t, s, segment("00000000-0000-4000-8000-000000000002", other, 0, 60, 0.5, testNow))
+	must(t, s.MarkArticleSynced(ctx, "bot-1", store.URLHash(articleURL), 1, false, testNow))
+	must(t, s.MarkDaySynced(ctx, "bot-1", "2026-10-06", 2))
+
+	hashes, dates, err := s.PendingSync(ctx, "bot-1", true)
+	must(t, err)
+	want := []string{store.URLHash(articleURL), store.URLHash(other)}
+	slices.Sort(want)
+	slices.Sort(hashes)
+	if !slices.Equal(hashes, want) {
+		t.Fatalf("hashes = %v, want %v", hashes, want)
+	}
+	if len(dates) != 1 || dates[0] != "2026-10-06" {
+		t.Fatalf("dates = %v", dates)
 	}
 }
 

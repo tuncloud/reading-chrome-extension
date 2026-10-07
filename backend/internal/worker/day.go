@@ -39,7 +39,7 @@ func (w *Worker) handleDay(ctx context.Context, m queue.Message) error {
 			return w.dataSourceError(ctx, inst, setup.DailyTitle, err)
 		}
 	} else {
-		err := sess.call(ctx, func(tok string) error { return w.updatePage(ctx, tok, day.NotionPageID, props) })
+		err := sess.call(ctx, func(tok string) error { return w.updatePage(ctx, tok, day.NotionPageID, inst.DailyDSID, props) })
 		if isPageGone(err) {
 			if err := w.Store.ClearDayPage(ctx, inst.ID(), m.Date); err != nil {
 				return err
@@ -101,9 +101,9 @@ func (w *Worker) createDayPage(ctx context.Context, sess *session, day *store.Da
 		return err
 	}
 	if page != nil {
-		err := sess.call(ctx, func(tok string) error { return w.updatePage(ctx, tok, page.ID, metrics) })
+		err := sess.call(ctx, func(tok string) error { return w.updatePage(ctx, tok, page.ID, inst.DailyDSID, metrics) })
 		if isPageGone(err) {
-			page = nil // vanished between the query and the PATCH: create a fresh page below
+			page = nil // vanished (or moved) between the query and the PATCH: create a fresh page below
 		} else if err != nil {
 			return err
 		}

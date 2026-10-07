@@ -2,13 +2,37 @@ package httpapi_test
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"reading-tracker/backend/internal/notion/notiontest"
+	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/setup"
 	"reading-tracker/backend/internal/store"
 )
+
+const readURL = "https://a.example/1"
+
+// seedSyncedRead stores one read of readURL on 2026-10-06 whose article and day are
+// already synced to Notion, as if the worker had processed them.
+func (env *testEnv) seedSyncedRead() {
+	t, ctx := env.t, context.Background()
+	_, err := env.db.Store.PushSegment(ctx, store.SegmentWrite{InstallationID: testBotID, DeviceID: "d",
+		SegmentID: "00000000-0000-4000-8000-000000000001", SessionID: "s", URLHash: store.URLHash(readURL), Date: "2026-10-06",
+		StartedAt: env.now, EndedAt: env.now.Add(time.Minute), ActiveSeconds: 60, MaxProgress: 0.5,
+		Article: store.ArticleMeta{CanonicalURL: readURL, Source: "generic"}})
+	must(t, err)
+	must(t, env.db.Store.SetArticlePage(ctx, testBotID, store.URLHash(readURL), "page-old", "https://www.notion.so/page-old"))
+	must(t, env.db.Store.MarkArticleSynced(ctx, testBotID, store.URLHash(readURL), 1, false, env.now))
+	must(t, env.db.Store.MarkDaySynced(ctx, testBotID, "2026-10-06", 1))
+}
+
+// fullResync is what a resync must enqueue for seedSyncedRead once the databases changed.
+func fullResync() []queue.Message {
+	return []queue.Message{queue.Article(testBotID, store.URLHash(readURL)), queue.Day(testBotID, "2026-10-06")}
+}
 
 func TestSetupPagesSearchesNotionWithDecryptedToken(t *testing.T) {
 	env := newTestEnv(t)
@@ -119,5 +143,24 @@ func TestPostSetupBrokenExistingDatabaseIsConflict(t *testing.T) {
 	must(t, err)
 	if inst.Status != store.StatusNeedsSetup {
 		t.Fatalf("installation status %q", inst.Status)
+	}
+}
+
+// I1 / scenario 10: the Library was deleted, so setup runs again; the resync re-sends every
+// article and day, including ones already synced into the deleted database.
+func TestPostSetupAfterDeletedLibraryResyncsEverything(t *testing.T) {
+	env := newTestEnv(t)
+	uid, tok := env.seedUser()
+	inst := env.seedInstallation(uid, store.StatusActive)
+	env.seedSyncedRead()
+	env.notion.DeleteDataSource(inst.LibraryDSID)
+	must(t, env.db.Store.SetInstallationStatus(context.Background(), testBotID, store.StatusNeedsSetup, "database_missing:Reading Library", env.now))
+
+	rec := env.do("POST", "/v1/setup", map[string]string{"parent_page_id": "parent-2"}, tok)
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if got := env.queue.Messages(); !reflect.DeepEqual(got, fullResync()) {
+		t.Fatalf("resync enqueued %+v, want %+v", got, fullResync())
 	}
 }

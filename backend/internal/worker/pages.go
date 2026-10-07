@@ -13,13 +13,19 @@ import (
 
 var errPageGone = errors.New("worker: notion page archived")
 
-// updatePage PATCHes properties; a page that comes back archived counts as gone.
-func (w *Worker) updatePage(ctx context.Context, token, pageID string, props map[string]any) error {
+// updatePage PATCHes properties of a row of data source dsID. A page that comes back
+// archived counts as gone, and so does one whose parent is another data source: the
+// installation moved to new databases (setup or a new template) and the page was left
+// in the old ones, so it must be re-created in dsID (scenario 10).
+func (w *Worker) updatePage(ctx context.Context, token, pageID, dsID string, props map[string]any) error {
 	p, err := w.Notion.UpdatePage(ctx, token, pageID, props)
-	if err == nil && (p.Archived || p.InTrash) {
+	if err != nil {
+		return err
+	}
+	if p.Archived || p.InTrash || (p.Parent.DataSourceID != "" && !notion.SameID(p.Parent.DataSourceID, dsID)) {
 		return errPageGone
 	}
-	return err
+	return nil
 }
 
 // isPageGone: 404, or Notion's 400 "Can't edit block that is archived" (spec §2.15).

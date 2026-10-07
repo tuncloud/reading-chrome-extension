@@ -121,3 +121,31 @@ func TestDayDeletedDailyLogNeedsSetup(t *testing.T) {
 		t.Fatalf("installation %+v", inst)
 	}
 }
+
+// I1: a day page still in a previous Daily Log is re-created in the current one.
+func TestDayPageInOldDailyLogIsRecreated(t *testing.T) {
+	e := newEnv(t)
+	e.seedInstallation("tok", "rt")
+	old := e.ns.AddTemplate("old-tpl")
+	stale := e.ns.AddPage(old.DailyDS, map[string]any{pid("Date"): map[string]any{"date": map[string]any{"start": today}}})
+	e.read(artURL, 0, 60, 0.5)
+	must(t, e.db.Store.SetDayPage(ctx, testBot, today, stale.ID))
+
+	if f := e.handle(dayMsg()); len(f) != 0 {
+		t.Fatalf("failures %+v", f)
+	}
+	d, err := e.db.Store.GetDay(ctx, testBot, today)
+	must(t, err)
+	if d.NotionPageID != "" || d.NotionSyncedVersion != 0 {
+		t.Fatalf("page in the old Daily Log kept: %+v", d)
+	}
+	sent := e.q.Drain()
+	if len(sent) != 1 || sent[0].Message != dayMsg() {
+		t.Fatalf("requeue %+v", sent)
+	}
+	e.handle(sent[0].Message)
+	pg := e.onlyDayPage()
+	if d, _ = e.db.Store.GetDay(ctx, testBot, today); d.NotionPageID != pg.ID || num(pg, "Minutes") != 1 {
+		t.Fatalf("day %+v, new page %s", d, pg.ID)
+	}
+}

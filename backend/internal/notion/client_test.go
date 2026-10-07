@@ -155,3 +155,26 @@ func TestMinIntervalPacer(t *testing.T) {
 		t.Fatalf("slept %v, want [250ms]", slept)
 	}
 }
+
+// I1: the worker compares a page's parent data source with the installation's.
+func TestUpdatePageDecodesParentDataSource(t *testing.T) {
+	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"object":"page","id":"p","parent":{"type":"data_source_id","data_source_id":"1f2e3d4c-5b6a-4789-8abc-def012345678","database_id":"db"}}`))
+	})
+	p, err := c.UpdatePage(ctx, "tok", "p", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Parent.Type != "data_source_id" || p.Parent.DataSourceID != "1f2e3d4c-5b6a-4789-8abc-def012345678" {
+		t.Fatalf("parent %+v", p.Parent)
+	}
+}
+
+func TestSameIDIgnoresDashesAndCase(t *testing.T) {
+	if !SameID("1f2e3d4c-5b6a-4789-8abc-def012345678", "1F2E3D4C5B6A47898ABCDEF012345678") {
+		t.Error("dashed and undashed forms of one id differ")
+	}
+	if SameID("1f2e3d4c-5b6a-4789-8abc-def012345678", "1f2e3d4c-5b6a-4789-8abc-def012345679") {
+		t.Error("different ids compare equal")
+	}
+}

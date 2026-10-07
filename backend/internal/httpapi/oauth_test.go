@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -205,5 +206,40 @@ func TestOAuthReconnectWithoutTemplateKeepsDatabases(t *testing.T) {
 	}
 	if msgs := env.queue.Messages(); len(msgs) != 2 {
 		t.Fatalf("resync enqueued %+v", msgs)
+	}
+}
+
+// I1 / §2.2 step 6: reconnecting with a newly duplicated template switches databases, so
+// the resync re-sends already-synced items too.
+func TestOAuthReconnectWithNewTemplateResyncsEverything(t *testing.T) {
+	env := newTestEnv(t)
+	env.notion.AddTemplate("tpl-1")
+	env.connect(t, tokenResponse("tpl-1"))
+	env.seedSyncedRead()
+	env.queue.Drain()
+
+	tpl2 := env.notion.AddTemplate("tpl-2")
+	env.connect(t, tokenResponse("tpl-2"))
+	inst, _ := env.db.Store.GetInstallation(context.Background(), testBotID)
+	if inst.Status != store.StatusActive || inst.LibraryDSID != tpl2.LibraryDS {
+		t.Fatalf("installation %+v", inst)
+	}
+	if got := env.queue.Messages(); !reflect.DeepEqual(got, fullResync()) {
+		t.Fatalf("resync enqueued %+v, want %+v", got, fullResync())
+	}
+}
+
+// Reconnecting with the same databases only resends what is behind Notion.
+func TestOAuthReconnectSameDatabasesSkipsSyncedItems(t *testing.T) {
+	env := newTestEnv(t)
+	env.notion.AddTemplate("tpl-1")
+	env.connect(t, tokenResponse("tpl-1"))
+	env.seedSyncedRead()
+	must(t, env.db.Store.SetInstallationStatus(context.Background(), testBotID, store.StatusRevoked, "", env.now))
+	env.queue.Drain()
+
+	env.connect(t, tokenResponse(nil))
+	if got := env.queue.Messages(); len(got) != 0 {
+		t.Fatalf("resync enqueued %+v, want nothing", got)
 	}
 }

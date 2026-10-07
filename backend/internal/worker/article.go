@@ -38,7 +38,7 @@ func (w *Worker) handleArticle(ctx context.Context, m queue.Message) error {
 		}
 	} else {
 		err := sess.call(ctx, func(tok string) error {
-			return w.updatePage(ctx, tok, art.NotionPageID, articleMetrics(inst.Props, art, completed))
+			return w.updatePage(ctx, tok, art.NotionPageID, inst.LibraryDSID, articleMetrics(inst.Props, art, completed))
 		})
 		if isPageGone(err) {
 			if err := w.Store.ClearArticlePage(ctx, inst.ID(), m.URLHash); err != nil {
@@ -74,10 +74,10 @@ func (w *Worker) createArticlePage(ctx context.Context, sess *session, hash stri
 	}
 	if page != nil {
 		err := sess.call(ctx, func(tok string) error {
-			return w.updatePage(ctx, tok, page.ID, articleMetrics(inst.Props, art, completed))
+			return w.updatePage(ctx, tok, page.ID, inst.LibraryDSID, articleMetrics(inst.Props, art, completed))
 		})
 		if isPageGone(err) {
-			page = nil // vanished between the query and the PATCH: create a fresh page below
+			page = nil // vanished (or moved) between the query and the PATCH: create a fresh page below
 		} else if err != nil {
 			return err
 		}

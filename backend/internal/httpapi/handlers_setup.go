@@ -99,7 +99,9 @@ func (h *handlers) postSetup(c echo.Context) error {
 	}
 	inst.ApplyDatabases(db)
 	inst.Status, inst.SetupError = store.StatusActive, ""
-	if err := h.setup.Resync(ctx, inst.ID()); err != nil {
+	// Setup always points the installation at (possibly) different databases, so pages
+	// synced into the old ones must be written again: full resync (scenario 10).
+	if err := h.setup.Resync(ctx, inst.ID(), true); err != nil {
 		h.Log.WarnContext(ctx, "setup: resync enqueue failed", "err", err)
 	}
 	return c.JSON(http.StatusOK, viewInstallation(inst))

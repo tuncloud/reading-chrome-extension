@@ -12,18 +12,20 @@ import (
 )
 
 // PendingSync lists ART hashes and DAY dates whose version is ahead of
-// notion_synced_version, i.e. never synced or changed since (T22).
-func (s *Store) PendingSync(ctx context.Context, inst string) (hashes, dates []string, err error) {
-	if hashes, err = s.pending(ctx, inst, "ART#"); err != nil {
+// notion_synced_version, i.e. never synced or changed since (T22). With all set it
+// lists every ART and DAY regardless of synced version: after the target databases
+// change, already-synced items must be written again (scenario 10).
+func (s *Store) PendingSync(ctx context.Context, inst string, all bool) (hashes, dates []string, err error) {
+	if hashes, err = s.pending(ctx, inst, "ART#", all); err != nil {
 		return nil, nil, err
 	}
-	if dates, err = s.pending(ctx, inst, "DAY#"); err != nil {
+	if dates, err = s.pending(ctx, inst, "DAY#", all); err != nil {
 		return nil, nil, err
 	}
 	return hashes, dates, nil
 }
 
-func (s *Store) pending(ctx context.Context, inst, prefix string) ([]string, error) {
+func (s *Store) pending(ctx context.Context, inst, prefix string, all bool) ([]string, error) {
 	items, err := s.queryAll(ctx, &dynamodb.QueryInput{
 		KeyConditionExpression:    aws.String("pk = :pk AND begins_with(sk, :prefix)"),
 		ProjectionExpression:      aws.String("sk, #v, #sv"),
@@ -43,7 +45,7 @@ func (s *Store) pending(ctx context.Context, inst, prefix string) ([]string, err
 		if err := attributevalue.UnmarshalMap(it, &row); err != nil {
 			return nil, err
 		}
-		if row.Ver > row.Synced {
+		if all || row.Ver > row.Synced {
 			out = append(out, strings.TrimPrefix(row.SK, prefix))
 		}
 	}

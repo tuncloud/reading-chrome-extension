@@ -165,6 +165,7 @@ func (h *handlers) upsertInstallation(ctx context.Context, uid string, tok *noti
 	inst.TokenVersion++
 	inst.UserID, inst.WorkspaceID, inst.WorkspaceName, inst.WorkspaceIcon = uid, tok.WorkspaceID, tok.WorkspaceName, tok.WorkspaceIcon
 	inst.UpdatedAt, inst.SetupError = store.Timestamp(now), ""
+	prevLibrary, prevDaily := inst.LibraryDSID, inst.DailyDSID
 
 	switch {
 	case tok.DuplicatedTemplateID != "":
@@ -193,7 +194,9 @@ func (h *handlers) upsertInstallation(ctx context.Context, uid string, tok *noti
 		return nil, err
 	}
 	if inst.Status == store.StatusActive {
-		if err := h.setup.Resync(ctx, tok.BotID); err != nil {
+		// New databases (e.g. a newly duplicated template) → re-send everything (scenario 10).
+		full := inst.LibraryDSID != prevLibrary || inst.DailyDSID != prevDaily
+		if err := h.setup.Resync(ctx, tok.BotID, full); err != nil {
 			h.Log.WarnContext(ctx, "oauth: resync enqueue failed", "err", err)
 		}
 	}

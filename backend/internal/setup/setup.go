@@ -158,9 +158,11 @@ func (s *Service) resolveDatabase(ctx context.Context, token, dbID, title string
 }
 
 // Resync enqueues every ART/DAY whose version is ahead of Notion (T22). Call it
-// whenever an installation becomes active.
-func (s *Service) Resync(ctx context.Context, installationID string) error {
-	hashes, dates, err := s.Store.PendingSync(ctx, installationID)
+// whenever an installation becomes active. full re-sends every ART/DAY: use it when
+// the installation's data sources changed, so pages left in the old databases are
+// re-created in the new ones (scenario 10).
+func (s *Service) Resync(ctx context.Context, installationID string, full bool) error {
+	hashes, dates, err := s.Store.PendingSync(ctx, installationID, full)
 	if err != nil {
 		return err
 	}

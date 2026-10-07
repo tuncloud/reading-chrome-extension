@@ -139,10 +139,24 @@ func (c *Client) GetDataSource(ctx context.Context, token, id string) (*DataSour
 }
 
 type Page struct {
-	ID       string `json:"id"`
-	URL      string `json:"url"`
-	Archived bool   `json:"archived"`
-	InTrash  bool   `json:"in_trash"`
+	ID       string     `json:"id"`
+	URL      string     `json:"url"`
+	Archived bool       `json:"archived"`
+	InTrash  bool       `json:"in_trash"`
+	Parent   PageParent `json:"parent"`
+}
+
+// PageParent is where a page lives; DataSourceID is set for database rows.
+type PageParent struct {
+	Type         string `json:"type"`
+	DataSourceID string `json:"data_source_id"`
+}
+
+// SameID reports whether two Notion ids are equal, ignoring dashes and case
+// (Notion accepts and returns both forms).
+func SameID(a, b string) bool {
+	norm := func(s string) string { return strings.ToLower(strings.ReplaceAll(s, "-", "")) }
+	return norm(a) == norm(b)
 }
 
 type QueryResult struct {

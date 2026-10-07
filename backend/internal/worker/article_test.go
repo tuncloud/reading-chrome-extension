@@ -261,3 +261,32 @@ func TestCompletedRule(t *testing.T) {
 		}
 	}
 }
+
+// I1 / scenario 10: a page still in a previous Library (the databases were replaced by
+// setup) counts as gone: the id is cleared, the message requeued, and the page re-created
+// in the current Library.
+func TestArticlePageInOldLibraryIsRecreated(t *testing.T) {
+	e := newEnv(t)
+	e.seedInstallation("tok", "rt")
+	old := e.ns.AddTemplate("old-tpl")
+	stale := e.ns.AddPage(old.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
+	e.ns.DeleteDataSource(old.LibraryDS)
+	e.read(artURL, 0, 120, 0.5)
+	must(t, e.db.Store.SetArticlePage(ctx, testBot, store.URLHash(artURL), stale.ID, stale.URL))
+
+	if f := e.handle(articleMsg()); len(f) != 0 {
+		t.Fatalf("failures %+v", f)
+	}
+	if a := e.article(artURL); a.NotionPageID != "" || a.NotionSyncedVersion != 0 {
+		t.Fatalf("page in the old Library kept: %+v", a)
+	}
+	sent := e.q.Drain()
+	if len(sent) != 1 || sent[0].Message != articleMsg() {
+		t.Fatalf("requeue %+v", sent)
+	}
+	e.handle(sent[0].Message)
+	pg := e.onlyLibraryPage()
+	if a := e.article(artURL); a.NotionPageID != pg.ID || a.NotionURL != pg.URL || a.NotionSyncedVersion != 1 {
+		t.Fatalf("article %+v, new page %s", a, pg.ID)
+	}
+}

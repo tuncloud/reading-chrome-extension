@@ -47,7 +47,8 @@ type Page struct {
 }
 
 func (p *Page) json() map[string]any {
-	return map[string]any{"object": "page", "id": p.ID, "url": p.URL, "archived": p.Archived, "in_trash": p.Archived, "properties": p.Properties}
+	return map[string]any{"object": "page", "id": p.ID, "url": p.URL, "archived": p.Archived, "in_trash": p.Archived,
+		"parent": map[string]any{"type": "data_source_id", "data_source_id": p.DataSource}, "properties": p.Properties}
 }
 
 // LibrarySchema and DailySchema are the template's columns (name → type) per spec §3.3.

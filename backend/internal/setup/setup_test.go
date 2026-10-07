@@ -3,6 +3,7 @@ package setup_test
 import (
 	"context"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -211,10 +212,17 @@ func TestResyncEnqueuesPending(t *testing.T) {
 	}
 	must(t, f.db.Store.MarkArticleSynced(ctx, "bot-1", store.URLHash("https://a.example/1"), 1, false, testNow))
 
-	must(t, f.svc.Resync(ctx, "bot-1"))
+	must(t, f.svc.Resync(ctx, "bot-1", false))
 	got := f.rec.Messages()
 	want := []queue.Message{queue.Article("bot-1", store.URLHash("https://b.example/2")), queue.Day("bot-1", "2026-10-06")}
-	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
+	}
+
+	// I1: a full resync (databases changed) also re-sends the synced article.
+	f.rec.Drain()
+	must(t, f.svc.Resync(ctx, "bot-1", true))
+	if got := f.rec.Messages(); len(got) != 3 || !slices.Contains(got, queue.Article("bot-1", store.URLHash("https://a.example/1"))) {
+		t.Fatalf("full resync got %+v", got)
 	}
 }
