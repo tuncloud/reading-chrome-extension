@@ -2,11 +2,12 @@ package httpapi
 
 import (
 	"log/slog"
-	"reading-tracker/backend/internal/usecase/auth"
 	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
+
+	"reading-tracker/backend/internal/usecase/auth"
 )
 
 const principalKey = "principal"

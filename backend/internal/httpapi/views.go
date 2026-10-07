@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/usecase/auth"
 )

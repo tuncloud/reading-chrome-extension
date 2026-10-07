@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
@@ -62,7 +63,19 @@ func TestActivateFullResendsSyncedItems(t *testing.T) {
 	a, db, rec := newActivator(t)
 	pushTwo(t, db)
 	must(t, a.Activate(ctx, &domain.Installation{ID: "bot-1", Status: domain.StatusActive}, true))
-	if got := rec.Messages(); len(got) != 3 {
-		t.Fatalf("full resync enqueued %+v", got)
+	// I1: a full resync (databases changed) also re-sends the already-synced article.
+	got := rec.Messages()
+	want := []queue.Message{
+		queue.Article("bot-1", domain.URLHash("https://a.example/1")),
+		queue.Article("bot-1", domain.URLHash("https://b.example/2")),
+		queue.Day("bot-1", "2026-10-06"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("full resync enqueued %+v, want %+v", got, want)
+	}
+	for _, w := range want {
+		if !slices.Contains(got, w) {
+			t.Fatalf("full resync enqueued %+v, missing %+v", got, w)
+		}
 	}
 }
