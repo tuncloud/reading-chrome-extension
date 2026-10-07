@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Describe every AWS resource the Reading Tracker needs in Terraform (spec T1–T7): a private encrypted state bucket, SSM-sourced secrets, the DynamoDB table, the SQS FIFO queue and DLQ, the two Go Lambdas with a public Function URL and an SQS trigger, least-privilege IAM, 7-day logs, a $1 budget and SAM CLI metadata. Each piece is verified offline by `terraform test`, and a runbook covers the one-time apply and the T32 cloud smoke test.
+**Goal:** Describe every AWS resource the Reading Tracker needs in Terraform (spec T2–T7): SSM-sourced secrets, the DynamoDB table, the SQS FIFO queue and DLQ, the two Go Lambdas with a public Function URL and an SQS trigger, least-privilege IAM, 7-day logs, a $1 budget and SAM CLI metadata. Each piece is verified offline by `terraform test`, and a runbook covers the one-time apply and the T32 cloud smoke test.
 
-**Architecture:** There are two stacks.
-- `infra/bootstrap` uses local state and creates only the S3 state bucket (T1).
-- `infra/terraform` is the application stack. It uses that bucket as its S3 backend with native locking (`use_lockfile`).
+**Architecture:** One stack in `infra/terraform`, using Terraform's default **local state** (`terraform.tfstate`).
+- This replaces spec T1's S3 backend, at the user's request.
+- The repository is pushed to GitHub, and the state contains the SSM secret values, so the state file is gitignored and must never be committed.
 - The Lambda zips are built by the backend's `make build`. The infra Makefile's `plan` target runs it first, and `archive_file` zips the bootstraps.
 - Secrets are never in `.tf` or `.tfvars`. They are read from SSM parameters that are created by hand.
 - Every behavioural requirement is pinned by a `terraform test` run against mocked providers, so CI and reviews need no AWS account.
@@ -16,15 +16,15 @@
 **Spec:** `docs/reading-tracker-agent-spec.md` §1 decisions D3–D8, §3.1, §3.5, §4.2 T1–T7 and T32, constraints C5, C10, C11, C14, C16, C17, C21, C26 and C27, and §7.
 
 **Pre-validated:** every file in this plan was written and run in a scratch copy with Terraform 1.16.5 and the real provider schemas before the plan was written.
-- **Main stack:** `fmt -check` and `validate` are clean, and `terraform test` passes 16 runs (8 behaviour, 8 validation). Breaking the CORS methods and the memory size made 2 runs fail, which shows the assertions bite.
-- **Bootstrap stack:** `terraform test` passes 2 runs.
+- `fmt -check` and `validate` are clean, and `terraform test` passes 16 runs (8 behaviour, 8 validation).
+- Breaking the CORS methods and the memory size made 2 runs fail, which shows the assertions bite.
 
 ## Global Constraints
 
 - **Tools.** Terraform ≥ 1.10 on PATH; on macOS, `brew install hashicorp/tap/terraform`. Every Makefile target also accepts `TF=/path/to/terraform`.
   - Use pnpm, never npm/npx/yarn (extension), and podman, never docker (DynamoDB Local).
-- **Offline is the default.** `make check` and `make test` need no AWS credentials and no backend. Only `make init/plan/apply` and the runbook touch AWS.
-- **Secrets.** No secret literal appears in any `.tf`, `.tfvars` or committed file (T2, C17). `backend.hcl` and `*.tfvars` are gitignored, except `example.tfvars`.
+- **Offline is the default.** `make check` and `make test` need no AWS credentials. Only `make plan/apply` and the runbook touch AWS.
+- **Secrets.** No secret literal appears in any `.tf`, `.tfvars` or committed file (T2, C17). The state file holds the secret values, so it is never committed: `git check-ignore` must match it.
 - **Naming.**
   - Table: `reading-<env>`.
   - Queue: `notion-sync-<env>.fifo`, DLQ `notion-sync-dlq-<env>.fifo`.
@@ -53,205 +53,39 @@
   - api: DynamoDB `GetItem PutItem UpdateItem DeleteItem Query BatchGetItem TransactWriteItems`, plus `sqs:SendMessage`.
   - worker: the same DynamoDB actions plus `BatchWriteItem`, and SQS `ReceiveMessage DeleteMessage ChangeMessageVisibility GetQueueAttributes SendMessage`. `SendMessage` also authorizes the backend's `SendMessageBatch`.
 - **Logs and budget.** Log groups are created explicitly with 7-day retention (T5). The budget is $1 monthly COST, with an alert at 80% ACTUAL to `budget_email` (T6).
-- **State** (T1). An S3 backend with `encrypt = true` and `use_lockfile = true`, and no DynamoDB lock table. The state bucket blocks all public access, uses SSE-S3 and is versioned.
+- **State** (replaces T1, user decision).
+  - Local state, with no `backend` block. `terraform.tfstate`, `terraform.tfstate.backup`, `*.tfplan` and `*.tfvars` (except `example.tfvars`) are gitignored, because state and saved plans contain the secret values.
+  - `.terraform.lock.hcl` **is** committed, to pin provider versions.
+  - The runbook tells the operator to keep a private backup of the state, because losing it orphans the resources.
 
 ## Review Focus
 
-1. **D < B in someone's tfvars.** The last updates in a bucket would silently never reach Notion, and the backend's deleteMe ordering relies on D exceeding the handler runtime. `plan` must fail with a clear message (Task 2 test `delay_below_bucket_is_rejected`).
-2. **CORS without DELETE or Authorization.** Account deletion (`DELETE /v1/me`) and every authenticated call would fail from the extension's pages (Task 3 test `function_url_is_public_with_extension_cors`).
-3. **A secret leaking into tfvars or an api-only secret reaching the worker.** The worker must not get `DEVICE_TOKEN_PEPPER` or `ALLOWED_EXTENSION_IDS`, and secrets must come from SSM data (Task 3 test `lambdas_are_arm64_al2023_with_the_right_env`).
-4. **A wildcard sneaking into IAM** (Task 3 test `iam_is_least_privilege`, which also asserts that no `"*"` appears in either policy).
-5. **Planning without built bootstraps.** `archive_file` reads `backend/build/*/bootstrap` at plan time. `make plan` must build first (Task 3 Makefile `plan: build`), and the README says so.
+1. **State committed to GitHub.** Local `terraform.tfstate` holds `NOTION_CLIENT_SECRET`, `TOKEN_ENC_KEYS` and `DEVICE_TOKEN_PEPPER` in plain text. It must be ignored by git (Task 1 and Task 3 verification: `git check-ignore infra/terraform/terraform.tfstate infra/terraform/terraform.tfstate.backup infra/terraform/dev.tfplan infra/terraform/dev.tfvars` prints all four paths).
+2. **D < B in someone's tfvars.** The last updates in a bucket would silently never reach Notion, and the backend's deleteMe ordering relies on D exceeding the handler runtime. `plan` must fail with a clear message (Task 1 test `delay_below_bucket_is_rejected`).
+3. **CORS without DELETE or Authorization.** Account deletion (`DELETE /v1/me`) and every authenticated call would fail from the extension's pages (Task 2 test `function_url_is_public_with_extension_cors`).
+4. **A secret leaking into tfvars or an api-only secret reaching the worker.** The worker must not get `DEVICE_TOKEN_PEPPER` or `ALLOWED_EXTENSION_IDS`, and secrets must come from SSM data (Task 2 test `lambdas_are_arm64_al2023_with_the_right_env`).
+5. **A wildcard sneaking into IAM** (Task 2 test `iam_is_least_privilege`, which also asserts that no `"*"` appears in either policy).
 
 ## File Structure
 
 ```
 infra/
-├── README.md                    # runbook: bootstrap, secrets, apply, extension wiring, T32 smoke
-├── bootstrap/                   # local-state stack: the S3 state bucket (T1)
-│   ├── main.tf
-│   └── tests/bootstrap.tftest.hcl
-└── terraform/                   # the application stack
-    ├── Makefile  .gitignore  example.tfvars  backend.hcl.example
-    ├── versions.tf  backend.tf  providers.tf  variables.tf  locals.tf
-    ├── ssm.tf  dynamodb.tf  sqs.tf            # Task 2
-    ├── logs.tf  iam.tf  lambda.tf             # Task 3
-    ├── budget.tf  sam-metadata.tf  outputs.tf # Task 4
+├── README.md                    # runbook: secrets, apply, local state safety, extension wiring, T32 smoke
+└── terraform/                   # the stack (local state, gitignored)
+    ├── Makefile  .gitignore  example.tfvars  .terraform.lock.hcl (committed)
+    ├── versions.tf  providers.tf  variables.tf  locals.tf
+    ├── ssm.tf  dynamodb.tf  sqs.tf            # Task 1
+    ├── logs.tf  iam.tf  lambda.tf             # Task 2
+    ├── budget.tf  sam-metadata.tf  outputs.tf # Task 3
     └── tests/stack.tftest.hcl  tests/validation.tftest.hcl
 ```
 
 ---
 
-### Task 1: State bucket bootstrap stack
+### Task 1: Application stack foundation: providers, variables, SSM, DynamoDB, SQS
 
 **Files:**
-- Create: `infra/bootstrap/main.tf`, `infra/bootstrap/tests/bootstrap.tftest.hcl`
-
-**Interfaces:**
-- **Consumes:** nothing.
-- **Produces:** output `bucket`, the state bucket name that `infra/terraform/backend.hcl` uses. The bootstrap stack uses local state. Its `terraform.tfstate` is gitignored by the root `.gitignore`.
-
-- [ ] **Step 1: Write the failing test**
-
-`infra/bootstrap/tests/bootstrap.tftest.hcl`:
-
-```hcl
-mock_provider "aws" {
-  mock_resource "aws_s3_bucket" {
-    defaults = {
-      arn = "arn:aws:s3:::reading-tracker-tfstate-test"
-    }
-  }
-}
-
-variables {
-  bucket_name = "reading-tracker-tfstate-test"
-}
-
-run "state_bucket_is_private_and_encrypted" {
-  command = apply
-
-  assert {
-    condition = alltrue([aws_s3_bucket_public_access_block.state.block_public_acls, aws_s3_bucket_public_access_block.state.block_public_policy,
-    aws_s3_bucket_public_access_block.state.ignore_public_acls, aws_s3_bucket_public_access_block.state.restrict_public_buckets])
-    error_message = "T1: the bucket denies public access"
-  }
-  assert {
-    condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.state.rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256"
-    error_message = "T1: SSE-S3"
-  }
-  assert {
-    condition     = one(aws_s3_bucket_versioning.state.versioning_configuration).status == "Enabled"
-    error_message = "state history is kept"
-  }
-  assert {
-    condition     = jsondecode(aws_s3_bucket_policy.tls_only.policy).Statement[0].Condition.Bool["aws:SecureTransport"] == "false"
-    error_message = "plain-HTTP access is denied"
-  }
-}
-
-run "bad_bucket_name_is_rejected" {
-  command = plan
-  variables {
-    bucket_name = "Bad_Name"
-  }
-  expect_failures = [var.bucket_name]
-}
-```
-
-- [ ] **Step 2: Run it to see it fail**
-
-Run: `cd infra/bootstrap && terraform init -input=false && terraform test`
-Expected: FAIL. With no `main.tf` yet, Terraform reports undeclared resources and an undeclared input variable `bucket_name`.
-
-- [ ] **Step 3: Write the stack**
-
-`infra/bootstrap/main.tf`:
-
-```hcl
-# One-time stack (local state) that creates the S3 bucket holding the main stack's state (spec T1).
-terraform {
-  required_version = ">= 1.10"
-  required_providers {
-    aws = { source = "hashicorp/aws", version = "~> 6.0" }
-  }
-}
-
-provider "aws" {
-  region = var.region
-}
-
-variable "region" {
-  description = "AWS region for the state bucket."
-  type        = string
-  default     = "ap-southeast-1"
-}
-
-variable "bucket_name" {
-  description = "Globally unique state bucket name, e.g. reading-tracker-tfstate-<account-id>."
-  type        = string
-  validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.bucket_name))
-    error_message = "bucket_name must be a valid S3 bucket name."
-  }
-}
-
-resource "aws_s3_bucket" "state" {
-  bucket = var.bucket_name
-}
-
-resource "aws_s3_bucket_public_access_block" "state" {
-  bucket                  = aws_s3_bucket.state.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
-  bucket = aws_s3_bucket.state.id
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-resource "aws_s3_bucket_versioning" "state" {
-  bucket = aws_s3_bucket.state.id
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_ownership_controls" "state" {
-  bucket = aws_s3_bucket.state.id
-  rule {
-    object_ownership = "BucketOwnerEnforced"
-  }
-}
-
-resource "aws_s3_bucket_policy" "tls_only" {
-  bucket = aws_s3_bucket.state.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Sid       = "DenyInsecureTransport"
-      Effect    = "Deny"
-      Principal = "*"
-      Action    = "s3:*"
-      Resource  = [aws_s3_bucket.state.arn, "${aws_s3_bucket.state.arn}/*"]
-      Condition = { Bool = { "aws:SecureTransport" = "false" } }
-    }]
-  })
-  depends_on = [aws_s3_bucket_public_access_block.state]
-}
-
-output "bucket" {
-  description = "Put this in infra/terraform/backend.hcl as bucket."
-  value       = aws_s3_bucket.state.bucket
-}
-```
-
-- [ ] **Step 4: Run the tests**
-
-Run: `cd infra/bootstrap && terraform fmt -check && terraform validate && terraform test`
-Expected: `Success! 2 passed, 0 failed.`
-
-- [ ] **Step 5: Commit**
-
-```bash
-cd /Users/tuandoquoc/personal/reading-chrome-extension
-git add infra/bootstrap
-git commit -m "feat(infra): bootstrap stack for the private encrypted Terraform state bucket"
-```
-
----
-
-### Task 2: Application stack foundation: providers, variables, SSM, DynamoDB, SQS
-
-**Files:**
-- Create: `infra/terraform/{versions,backend,providers,variables,locals,ssm,dynamodb,sqs}.tf`, `backend.hcl.example`, `.gitignore`
+- Create: `infra/terraform/{versions,providers,variables,locals,ssm,dynamodb,sqs}.tf`, `.gitignore`, `.terraform.lock.hcl` (generated by `terraform init`, committed)
 - Create: `infra/terraform/tests/stack.tftest.hcl` (mocks + DynamoDB/SQS runs), `infra/terraform/tests/validation.tftest.hcl`
 
 **Interfaces:**
@@ -264,7 +98,7 @@ git commit -m "feat(infra): bootstrap stack for the private encrypted Terraform 
 
 - [ ] **Step 1: Write the failing tests**
 
-`infra/terraform/tests/stack.tftest.hcl` starts with the mocks and the shared variables, followed by the first two runs. Tasks 3 and 4 append further runs to this file:
+`infra/terraform/tests/stack.tftest.hcl` starts with the mocks and the shared variables, followed by the first two runs. Tasks 2 and 3 append further runs to this file:
 
 ```hcl
 # Offline tests: every provider is mocked, so `terraform test` needs no AWS account.
@@ -450,7 +284,7 @@ run "equal_delay_and_bucket_is_accepted" {
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `cd infra/terraform && terraform init -backend=false -input=false && terraform test`
+Run: `cd infra/terraform && terraform init -input=false && terraform test`
 Expected: FAIL. Terraform reports undeclared resources and variables.
 
 - [ ] **Step 3: Write the foundation**
@@ -466,27 +300,6 @@ terraform {
     null    = { source = "hashicorp/null", version = "~> 3.2" }
   }
 }
-```
-
-`infra/terraform/backend.tf`:
-
-```hcl
-# Remote state in the bootstrap bucket (spec T1). Bucket, key and region come from a
-# partial config: terraform init -backend-config=backend.hcl (see backend.hcl.example).
-terraform {
-  backend "s3" {
-    encrypt      = true
-    use_lockfile = true
-  }
-}
-```
-
-`infra/terraform/backend.hcl.example`:
-
-```hcl
-bucket = "reading-tracker-tfstate-<account-id>"
-key    = "reading/dev/terraform.tfstate"
-region = "ap-southeast-1"
 ```
 
 `infra/terraform/providers.tf`:
@@ -575,7 +388,7 @@ variable "backend_dir" {
 }
 ```
 
-`locals.tf` names the two functions. Their resources arrive in Task 3, and it is the single source for every name:
+`locals.tf` is the single source for every name, including the two functions whose resources arrive in Task 2:
 
 `infra/terraform/locals.tf`:
 
@@ -681,41 +494,53 @@ resource "aws_sqs_queue" "sync" {
 *.tfplan
 *.tfstate
 *.tfstate.*
-backend.hcl
 *.tfvars
 !example.tfvars
 ```
 
 - [ ] **Step 4: Run the checks**
 
-Run: `cd infra/terraform && terraform fmt -check -recursive && terraform validate && terraform test`
-Expected: `Success! 10 passed, 0 failed.` That is the 2 stack runs plus the 8 validation runs.
+Run:
+
+```bash
+cd /Users/tuandoquoc/personal/reading-chrome-extension/infra/terraform
+terraform fmt -check -recursive && terraform validate && terraform test
+touch terraform.tfstate terraform.tfstate.backup dev.tfplan dev.tfvars
+git check-ignore terraform.tfstate terraform.tfstate.backup dev.tfplan dev.tfvars; git check-ignore -q example.tfvars || echo "example.tfvars is tracked"
+rm terraform.tfstate terraform.tfstate.backup dev.tfplan dev.tfvars
+```
+
+Expected:
+- `Success! 10 passed, 0 failed.` That is the 2 stack runs plus the 8 validation runs.
+- `git check-ignore` prints all four paths.
+- The last check prints `example.tfvars is tracked`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd /Users/tuandoquoc/personal/reading-chrome-extension
 git add infra/terraform
-git commit -m "feat(infra): providers, S3 backend, variables with C5 validation, SSM secrets, DynamoDB and the SQS FIFO queue"
+git diff --cached --name-only | grep -E 'tfstate|tfplan|\.tfvars$' && { echo 'STOP: state, a plan or tfvars is staged'; exit 1; }
+git commit -m "feat(infra): providers, local gitignored state, variables with C5 validation, SSM secrets, DynamoDB and the SQS FIFO queue"
 ```
 
 ---
 
-### Task 3: Lambdas, Function URL, SQS trigger, IAM and logs
+### Task 2: Lambdas, Function URL, SQS trigger, IAM and logs
 
 **Files:**
 - Create: `infra/terraform/{logs,iam,lambda}.tf`, `infra/terraform/Makefile`, `infra/terraform/example.tfvars`
 - Modify: `infra/terraform/tests/stack.tftest.hcl` (append the five runs below)
 
 **Interfaces:**
-- **Consumes** from Task 2: the table, the queues, the SSM data sources, the locals and the variables.
+- **Consumes** from Task 1: the table, the queues, the SSM data sources, the locals and the variables.
 - **Produces:**
   - `aws_lambda_function.api` and `aws_lambda_function.worker`;
   - `aws_lambda_function_url.api` (`function_url`);
   - `aws_lambda_event_source_mapping.worker`;
   - `aws_iam_role(_policy).api/worker`;
   - `aws_cloudwatch_log_group.api/worker`;
-  - `data.archive_file.api/worker` (`output_path`, used by Task 4's SAM metadata).
+  - `data.archive_file.api/worker` (`output_path`, used by Task 3's SAM metadata).
 - **Produces** the Makefile targets `build init check test plan apply`.
 
 - [ ] **Step 1: Append the failing tests**
@@ -1054,7 +879,8 @@ resource "aws_lambda_event_source_mapping" "worker" {
 
 ```make
 # Reading Tracker infrastructure. Needs terraform >= 1.10 on PATH (override with TF=...),
-# Go for the Lambda build, and AWS credentials for plan/apply.
+# Go for the Lambda build, and AWS credentials for plan/apply. State is local
+# (terraform.tfstate, gitignored): it contains secrets, never commit it.
 TF          ?= terraform
 BACKEND_DIR ?= ../../backend
 ENV         ?= dev
@@ -1065,16 +891,16 @@ build:
 	$(MAKE) -C $(BACKEND_DIR) build
 
 init:
-	$(TF) init -backend-config=backend.hcl
+	$(TF) init
 
-# check and test run offline: no backend, no AWS account.
+# check and test run offline: no AWS account needed.
 check:
 	$(TF) fmt -check -recursive
-	$(TF) init -backend=false -input=false > /dev/null
+	$(TF) init -input=false > /dev/null
 	$(TF) validate
 
 test:
-	$(TF) init -backend=false -input=false > /dev/null
+	$(TF) init -input=false > /dev/null
 	$(TF) test
 
 plan: build
@@ -1121,14 +947,14 @@ git commit -m "feat(infra): api and worker Lambdas with Function URL, SQS trigge
 
 ---
 
-### Task 4: Budget, SAM metadata, outputs and the runbook
+### Task 3: Budget, SAM metadata, outputs and the runbook
 
 **Files:**
 - Create: `infra/terraform/{budget,sam-metadata,outputs}.tf`, `infra/README.md`
 - Modify: `infra/terraform/tests/stack.tftest.hcl` (append the final run)
 
 **Interfaces:**
-- **Consumes** from Task 3: `data.archive_file.api/worker`, `aws_lambda_function_url.api`, and the log groups and functions.
+- **Consumes** from Task 2: `data.archive_file.api/worker`, `aws_lambda_function_url.api`, and the log groups and functions.
 - **Produces** the outputs `function_url`, `table_name`, `queue_url` and `dlq_url`. `function_url` is the extension's `VITE_API_BASE`, without the trailing slash.
 
 - [ ] **Step 1: Append the failing test**
@@ -1236,7 +1062,7 @@ output "dlq_url" {
 ````markdown
 # Reading Tracker — infrastructure
 
-Terraform for the AWS side of the system (spec T1–T7). `make check` and `make test` run offline. Everything else needs AWS credentials for the target account (`aws configure` or `AWS_PROFILE`).
+Terraform for the AWS side of the system (spec T2–T7). State is local and gitignored: see section 2. `make check` and `make test` run offline. Everything else needs AWS credentials for the target account (`aws configure` or `AWS_PROFILE`).
 
 ## Prerequisites
 
@@ -1245,17 +1071,7 @@ Terraform for the AWS side of the system (spec T1–T7). `make check` and `make 
 - AWS CLI v2, for the one-time secret setup below.
 - Optional, for T7: AWS SAM CLI. `sam local invoke` needs a container runtime. With Podman, start the machine and export `DOCKER_HOST=unix://$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}')`.
 
-## 1. Bootstrap the state bucket (once per account)
-
-```bash
-cd infra/bootstrap
-terraform init
-terraform apply -var bucket_name=reading-tracker-tfstate-<account-id>
-```
-
-Then create `infra/terraform/backend.hcl` from `backend.hcl.example`, using that bucket and a key per environment, e.g. `reading/dev/terraform.tfstate`.
-
-## 2. Create the secrets (once per environment)
+## 1. Create the secrets (once per environment)
 
 Standard-tier SSM parameters (T2). Never put these values in `.tf` or `.tfvars`.
 
@@ -1269,7 +1085,14 @@ aws ssm put-parameter --tier Standard --type SecureString --name /reading/$ENV/D
 
 **Key rotation** (scenario 19): prepend a new key, `v2:<b64>,v1:<b64>`, with `--overwrite`, then `make plan apply`.
 
-**C17:** the values end up in Lambda environment variables and in Terraform state. Keep the state bucket private (the bootstrap does this), and restrict `lambda:GetFunctionConfiguration` to administrators in your account's IAM.
+**C17:** the values end up in Lambda environment variables and in the local Terraform state. Restrict `lambda:GetFunctionConfiguration` to administrators in your account's IAM.
+
+## 2. Local state: keep it out of git, keep a backup
+
+State lives in `infra/terraform/terraform.tfstate`, on the machine that runs `apply`.
+- **Never commit it.** It holds the secret values in plain text. It is gitignored together with `terraform.tfstate.backup`, `*.tfplan` and `*.tfvars`. `git check-ignore infra/terraform/terraform.tfstate` must print the path.
+- **Back it up privately** after each apply, for example in an encrypted password-manager attachment or an encrypted disk. Losing it means Terraform no longer knows about the resources, and you have to `terraform import` them or delete them by hand.
+- **Run apply from one machine at a time.** Local state has no locking.
 
 ## 3. Plan and apply
 
@@ -1326,7 +1149,6 @@ Use a dev account and a test Notion workspace.
 |---|---|
 | `make check` | `fmt -check`, then `init -backend=false` and `validate` (offline) |
 | `make test` | `terraform test` against mocked providers (offline): table shape, queue, Lambdas, CORS, IAM, logs, budget, input validation |
-| `cd ../bootstrap && terraform test` | the state bucket stays private, encrypted and versioned |
 ````
 
 - [ ] **Step 4: Full verification**
@@ -1334,15 +1156,16 @@ Use a dev account and a test Notion workspace.
 ```bash
 cd /Users/tuandoquoc/personal/reading-chrome-extension/infra/terraform
 make check && make test
-cd ../bootstrap && terraform fmt -check && terraform validate && terraform test
-cd /Users/tuandoquoc/personal/reading-chrome-extension && git status --short infra | grep -E 'tfstate|backend.hcl$|\.tfvars$|\.build' || echo "no state, secrets or build output staged"
+git check-ignore terraform.tfstate terraform.tfstate.backup dev.tfplan dev.tfvars .build/api.zip
+cd /Users/tuandoquoc/personal/reading-chrome-extension && git status --short --untracked-files=all infra | grep -E 'tfstate|tfplan|\.tfvars$|\.build/' || echo "no state, plans, tfvars or build output staged"
 ```
 
 Expected:
 - `make check` reports the configuration as valid.
 - `make test` prints `Success! 16 passed, 0 failed.`
-- The bootstrap tests print `2 passed`.
-- The last command prints `no state, secrets or build output staged`.
+- `git check-ignore` prints all five paths.
+- The last command prints `no state, plans, tfvars or build output staged`.
+- `infra/terraform/.terraform.lock.hcl` is tracked (`git ls-files infra/terraform/.terraform.lock.hcl` prints it).
 
 - [ ] **Step 5: Commit**
 
@@ -1358,14 +1181,14 @@ git commit -m "feat(infra): budget, SAM metadata, outputs and the deploy runbook
 
 | Spec item | Task |
 |---|---|
-| T1: S3 backend with `encrypt` and `use_lockfile`, private SSE-S3 bucket, no lock table | 1, 2 |
-| T2: SSM Standard parameters read by data sources, no secret literals | 2, 4 (README) |
-| T3: DynamoDB PROVISIONED 25/25, TTL, no GSIs, PITR off | 2 |
-| T4: FIFO queue and DLQ, redrive 10, visibility 360, D ≥ B and B ≤ 300 validation | 2 |
-| T5: arm64 bootstrap Lambdas, Function URL with CORS, event source mapping, log retention 7, least-privilege IAM | 3 |
-| T6: $1 budget with an 80% alert | 4 |
-| T7: SAM metadata (`null_resource sam_metadata_*`) and runbook commands | 4 |
-| T32: cloud smoke checklist | 4 (README) |
-| C14: `PUBLIC_BASE_URL` as a variable, no self-reference | 2, 3 |
-| C26: public Function URL resource policy | 3 |
-| C27: `maximum_concurrency` instead of reserved concurrency | 3 |
+| T1: replaced by local, gitignored state (user decision); backup and single-runner guidance | 1, 3 (README) |
+| T2: SSM Standard parameters read by data sources, no secret literals | 1, 3 (README) |
+| T3: DynamoDB PROVISIONED 25/25, TTL, no GSIs, PITR off | 1 |
+| T4: FIFO queue and DLQ, redrive 10, visibility 360, D ≥ B and B ≤ 300 validation | 1 |
+| T5: arm64 bootstrap Lambdas, Function URL with CORS, event source mapping, log retention 7, least-privilege IAM | 2 |
+| T6: $1 budget with an 80% alert | 3 |
+| T7: SAM metadata (`null_resource sam_metadata_*`) and runbook commands | 3 |
+| T32: cloud smoke checklist | 3 (README) |
+| C14: `PUBLIC_BASE_URL` as a variable, no self-reference | 1, 2 |
+| C26: public Function URL resource policy | 2 |
+| C27: `maximum_concurrency` instead of reserved concurrency | 2 |
