@@ -62,8 +62,12 @@ const (
 )
 
 func (k NotionErrorKind) String() string {
-	return [...]string{"transient", "rate_limited", "unauthorized", "invalid_grant", "conflict", "not_found",
-		"page_gone", "data_source_missing", "rejected"}[k]
+	names := [...]string{"transient", "rate_limited", "unauthorized", "invalid_grant", "conflict", "not_found",
+		"page_gone", "data_source_missing", "rejected"}
+	if k < 0 || int(k) >= len(names) {
+		return fmt.Sprintf("NotionErrorKind(%d)", int(k))
+	}
+	return names[k]
 }
 
 // NotionError is a classified Notion failure.

@@ -108,7 +108,7 @@ func newSystem(t *testing.T) *system {
 	nc := &notion.Client{BaseURL: sys.ns.URL, Version: cfg.NotionVersion, ClientID: cfg.NotionClientID, ClientSecret: cfg.NotionClientSecret}
 	sys.api = wire.NewAPI(wire.APIDeps{Config: cfg, Store: sys.db.Store, Notion: nc, Queue: sys.q, Now: clock, Log: log})
 	sys.wk = wire.NewWorker(wire.WorkerDeps{Store: sys.db.Store, Notion: nc, Keys: cfg.Keys, Queue: sys.q, Visibility: noVisibility{},
-		Tracking: cfg.Public.Tracking, Now: clock, Log: log})
+		Tracking: cfg.Public.Tracking, DebounceBucket: cfg.DebounceBucket, Now: clock, Log: log})
 	return sys
 }
 

@@ -158,13 +158,6 @@ type PageParent struct {
 	DataSourceID string `json:"data_source_id"`
 }
 
-// SameID reports whether two Notion ids are equal, ignoring dashes and case
-// (Notion accepts and returns both forms).
-func SameID(a, b string) bool {
-	norm := func(s string) string { return strings.ToLower(strings.ReplaceAll(s, "-", "")) }
-	return norm(a) == norm(b)
-}
-
 type QueryResult struct {
 	Results []Page `json:"results"`
 }

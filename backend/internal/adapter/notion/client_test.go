@@ -169,12 +169,3 @@ func TestUpdatePageDecodesParentDataSource(t *testing.T) {
 		t.Fatalf("parent %+v", p.Parent)
 	}
 }
-
-func TestSameIDIgnoresDashesAndCase(t *testing.T) {
-	if !SameID("1f2e3d4c-5b6a-4789-8abc-def012345678", "1F2E3D4C5B6A47898ABCDEF012345678") {
-		t.Error("dashed and undashed forms of one id differ")
-	}
-	if SameID("1f2e3d4c-5b6a-4789-8abc-def012345678", "1f2e3d4c-5b6a-4789-8abc-def012345679") {
-		t.Error("different ids compare equal")
-	}
-}

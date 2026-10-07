@@ -3,7 +3,6 @@ package setup
 import (
 	"context"
 	"errors"
-	"net/http"
 	"strings"
 	"time"
 
@@ -101,7 +100,7 @@ func notionErr(err error) error {
 		return apperr.NewConflict("Notion authorization expired; reconnect")
 	case e.Kind == port.NotionNotFound:
 		return apperr.NewNotFound("Notion object not found or not shared with the integration")
-	case e.Kind == port.NotionRejected && e.Status == http.StatusBadRequest:
+	case e.Kind == port.NotionRejected && e.Status == 400:
 		return apperr.NewInvalid("Notion rejected the request: %s", e.Message)
 	}
 	return err

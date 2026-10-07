@@ -97,10 +97,12 @@ type WorkerDeps struct {
 	Queue      queue.Sender
 	Visibility queue.VisibilityChanger
 	Tracking   config.Tracking
-	Now        func() time.Time
-	Jitter     func() time.Duration
-	Sleep      func(time.Duration)
-	Log        *slog.Logger
+	// DebounceBucket sizes the requeue dedup bucket; the API uses the same value.
+	DebounceBucket time.Duration
+	Now            func() time.Time
+	Jitter         func() time.Duration
+	Sleep          func(time.Duration)
+	Log            *slog.Logger
 }
 
 // NewWorker assembles the Notion sync behind the SQS consumer.
@@ -109,7 +111,7 @@ func NewWorker(d WorkerDeps) *queue.Consumer {
 	svc := &notionsync.Service{
 		Installations: d.Store, Reading: d.Store, Users: d.Store, Devices: d.Store, Purger: d.Store,
 		Pages: gw, Auth: gw, Sealer: d.Keys,
-		Queue: &queue.SyncQueue{Sender: d.Queue, Now: d.Now},
+		Queue: &queue.SyncQueue{Sender: d.Queue, Bucket: d.DebounceBucket, Now: d.Now},
 		Policy: domain.SyncPolicy{MinCreateSeconds: d.Tracking.MinCreateSeconds, CompleteProgress: d.Tracking.CompleteProgress,
 			CompleteTimeRatio: d.Tracking.CompleteTimeRatio, WordsPerMinute: d.Tracking.WordsPerMinute},
 		Now: d.Now, Jitter: d.Jitter, Sleep: d.Sleep, Log: d.Log,
@@ -120,5 +122,5 @@ func NewWorker(d WorkerDeps) *queue.Consumer {
 // Worker is the production notion-writer: paced Notion client (C22).
 func Worker(cfg *config.Config, st *dynamo.Store, q queue.Sender, vis queue.VisibilityChanger, log *slog.Logger) *queue.Consumer {
 	return NewWorker(WorkerDeps{Store: st, Notion: NotionClient(cfg, notion.NewMinInterval(350*time.Millisecond)),
-		Keys: cfg.Keys, Queue: q, Visibility: vis, Tracking: cfg.Public.Tracking, Now: time.Now, Log: log})
+		Keys: cfg.Keys, Queue: q, Visibility: vis, Tracking: cfg.Public.Tracking, DebounceBucket: cfg.DebounceBucket, Now: time.Now, Log: log})
 }
