@@ -95,3 +95,116 @@ run "queue_is_fifo_debounced_with_dlq" {
     error_message = "T4: FIFO DLQ kept 14 days"
   }
 }
+
+run "lambdas_are_arm64_al2023_with_the_right_env" {
+  command = apply
+
+  assert {
+    condition     = alltrue([for f in [aws_lambda_function.api, aws_lambda_function.worker] : f.runtime == "provided.al2023" && f.handler == "bootstrap" && f.architectures == tolist(["arm64"]) && f.memory_size == 128])
+    error_message = "T5/C16: provided.al2023, bootstrap, arm64, 128 MB"
+  }
+  assert {
+    condition     = aws_lambda_function.api.timeout == 10 && aws_lambda_function.worker.timeout == 60
+    error_message = "T5: api 10 s, worker 60 s"
+  }
+  assert {
+    condition     = aws_lambda_function.api.environment[0].variables["NOTION_VERSION"] == "2025-09-03" && aws_lambda_function.worker.environment[0].variables["NOTION_VERSION"] == "2025-09-03"
+    error_message = "C10: Notion version pinned"
+  }
+  assert {
+    condition = alltrue([for k in ["APP_ENV", "TABLE_NAME", "QUEUE_URL", "NOTION_CLIENT_ID", "NOTION_CLIENT_SECRET", "NOTION_VERSION", "TOKEN_ENC_KEYS",
+    "DEVICE_TOKEN_PEPPER", "ALLOWED_EXTENSION_IDS", "PUBLIC_BASE_URL", "DEBOUNCE_BUCKET_SECONDS"] : contains(keys(aws_lambda_function.api.environment[0].variables), k)])
+    error_message = "§3.5: api gets every variable it requires"
+  }
+  assert {
+    condition     = !contains(keys(aws_lambda_function.worker.environment[0].variables), "DEVICE_TOKEN_PEPPER") && !contains(keys(aws_lambda_function.worker.environment[0].variables), "ALLOWED_EXTENSION_IDS")
+    error_message = "worker does not receive api-only secrets"
+  }
+  assert {
+    condition     = aws_lambda_function.api.environment[0].variables["TOKEN_ENC_KEYS"] == "mock-secret" && aws_lambda_function.api.environment[0].variables["DEBOUNCE_BUCKET_SECONDS"] == "120"
+    error_message = "T2: secrets come from SSM data sources"
+  }
+  assert {
+    condition     = !contains(keys(aws_lambda_function.api.environment[0].variables), "TRACKING_CONFIG_JSON")
+    error_message = "TRACKING_CONFIG_JSON is omitted when empty"
+  }
+}
+
+run "function_url_is_public_with_extension_cors" {
+  command = apply
+
+  assert {
+    condition     = aws_lambda_function_url.api.authorization_type == "NONE"
+    error_message = "C26: NONE auth; the device token is checked in the app"
+  }
+  assert {
+    condition     = aws_lambda_function_url.api.cors[0].allow_origins == toset(["chrome-extension://abcdefghijklmnopabcdefghijklmnop"])
+    error_message = "T5: CORS allows only the extension origins"
+  }
+  assert {
+    condition     = contains(aws_lambda_function_url.api.cors[0].allow_methods, "DELETE") && contains(aws_lambda_function_url.api.cors[0].allow_headers, "authorization")
+    error_message = "DELETE /v1/me and the Authorization header must pass CORS"
+  }
+  assert {
+    condition     = aws_lambda_permission.url_public.action == "lambda:InvokeFunctionUrl" && aws_lambda_permission.url_public.function_url_auth_type == "NONE" && aws_lambda_permission.url_invoke.invoked_via_function_url
+    error_message = "C26: resource policy allows unauthenticated Function URL calls"
+  }
+}
+
+run "worker_consumes_the_queue_in_order" {
+  command = apply
+
+  assert {
+    condition     = aws_lambda_event_source_mapping.worker.batch_size == 10 && aws_lambda_event_source_mapping.worker.function_response_types == toset(["ReportBatchItemFailures"])
+    error_message = "T5/C21: batch 10 with partial batch responses"
+  }
+  assert {
+    condition     = aws_lambda_event_source_mapping.worker.scaling_config[0].maximum_concurrency == 2
+    error_message = "C27: SQS maximum_concurrency 2"
+  }
+  assert {
+    condition     = aws_lambda_event_source_mapping.worker.event_source_arn == aws_sqs_queue.sync.arn
+    error_message = "worker reads the sync queue"
+  }
+}
+
+run "iam_is_least_privilege" {
+  command = apply
+
+  assert {
+    condition = toset(jsondecode(aws_iam_role_policy.api.policy).Statement[0].Action) == toset([
+      "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem",
+    "dynamodb:Query", "dynamodb:BatchGetItem", "dynamodb:TransactWriteItems"])
+    error_message = "T5: api DynamoDB actions"
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role_policy.api.policy).Statement[0].Resource == aws_dynamodb_table.main.arn && jsondecode(aws_iam_role_policy.api.policy).Statement[1].Resource == aws_sqs_queue.sync.arn
+    error_message = "T5: api policy references only this table and queue"
+  }
+  assert {
+    condition     = contains(jsondecode(aws_iam_role_policy.worker.policy).Statement[0].Action, "dynamodb:BatchWriteItem") && !contains(jsondecode(aws_iam_role_policy.api.policy).Statement[0].Action, "dynamodb:BatchWriteItem")
+    error_message = "only the worker may BatchWrite (purge)"
+  }
+  assert {
+    condition = toset(jsondecode(aws_iam_role_policy.worker.policy).Statement[1].Action) == toset([
+    "sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:GetQueueAttributes", "sqs:SendMessage"])
+    error_message = "T5: worker SQS actions"
+  }
+  assert {
+    condition     = !strcontains(aws_iam_role_policy.api.policy, "\"*\"") && !strcontains(aws_iam_role_policy.worker.policy, "\"*\"")
+    error_message = "no wildcard resources or actions"
+  }
+}
+
+run "tracking_config_override_reaches_both_lambdas" {
+  command = apply
+
+  variables {
+    tracking_config_json = "{\"version\":2}"
+  }
+
+  assert {
+    condition     = aws_lambda_function.api.environment[0].variables["TRACKING_CONFIG_JSON"] == "{\"version\":2}" && aws_lambda_function.worker.environment[0].variables["TRACKING_CONFIG_JSON"] == "{\"version\":2}"
+    error_message = "TRACKING_CONFIG_JSON is passed through when set"
+  }
+}
