@@ -102,9 +102,17 @@ export function jsonLdArticle(doc: Document): LdArticle {
   return { headline: '', author: '', datePublished: '', wordCount: 0 }
 }
 
+const MAX_DATE = 64
+
 function cut(s: string, max: number): string {
   const t = s.replace(/\s+/g, ' ').trim()
   return [...t].slice(0, max).join('')
+}
+
+// cleanPublishedAt keeps a date the backend can parse; anything else would get the whole batch rejected.
+function cleanPublishedAt(raw: string): string {
+  const t = raw.trim()
+  return t.length <= MAX_DATE && Number.isFinite(Date.parse(t)) ? t : ''
 }
 
 // finishMeta applies the backend's limits so neither the article nor its segments get rejected.
@@ -118,7 +126,7 @@ export function finishMeta(m: ArticleMeta): ArticleMeta | null {
     author: cut(m.author, MAX_NAME),
     siteName: cut(m.siteName, MAX_NAME),
     wordCount: Math.min(MAX_WORDS, Math.max(0, words)),
-    publishedAt: m.publishedAt.trim(),
+    publishedAt: cleanPublishedAt(m.publishedAt),
     originalUrl: m.originalUrl.length > MAX_URL ? m.canonicalUrl : m.originalUrl,
   }
 }

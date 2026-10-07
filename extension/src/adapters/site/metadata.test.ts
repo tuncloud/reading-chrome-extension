@@ -72,6 +72,14 @@ describe('finishMeta', () => {
     expect(finishMeta(base)?.title).toBe('T')
   })
 
+  test('I1: publishedAt is kept only when short and parseable', () => {
+    expect(finishMeta(base)?.publishedAt).toBe('2026-09-30')
+    expect(finishMeta({ ...base, publishedAt: '  2026-09-30T10:00:00Z ' })?.publishedAt).toBe('2026-09-30T10:00:00Z')
+    expect(finishMeta({ ...base, publishedAt: 'yesterday-ish' })?.publishedAt).toBe('')
+    expect(finishMeta({ ...base, publishedAt: '2026-09-30' + ' '.repeat(10) + 'x'.repeat(70) })?.publishedAt).toBe('')
+    expect(finishMeta({ ...base, publishedAt: '' })?.publishedAt).toBe('')
+  })
+
   test('clamps word count to 0…200000', () => {
     expect(finishMeta({ ...base, wordCount: 999_999 })?.wordCount).toBe(200_000)
     expect(finishMeta({ ...base, wordCount: -3 })?.wordCount).toBe(0)
