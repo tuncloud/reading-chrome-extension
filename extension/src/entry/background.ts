@@ -1,1 +1,39 @@
-export {}
+// Background service worker composition root (spec T28): the only place that syncs.
+import { ChromeScheduler, onAlarm } from '../adapters/chrome/alarms'
+import { serveBackground } from '../adapters/chrome/messaging'
+import { SYNC_ALARM } from '../application/config-service'
+import { createRouter } from '../application/router'
+import { compose } from './compose'
+
+const DAILY_ALARM = 'daily'
+const DAY_MINUTES = 24 * 60
+
+const s = compose('background')
+
+serveBackground(createRouter(s), s.log)
+
+async function startup(): Promise<void> {
+  await s.config.refreshIfStale()
+  await s.config.ensureSchedule()
+  await new ChromeScheduler().every(DAILY_ALARM, DAY_MINUTES)
+  await s.domains.reconcile()
+  await s.sync.run()
+}
+
+function run(task: () => Promise<unknown>, what: string): void {
+  task().catch((e: unknown) => s.log.warn(`${what} failed: ${e instanceof Error ? e.message : String(e)}`))
+}
+
+chrome.runtime.onInstalled.addListener(() => run(startup, 'startup'))
+chrome.runtime.onStartup.addListener(() => run(startup, 'startup'))
+
+onAlarm((name) => {
+  if (name === SYNC_ALARM) run(() => s.sync.run(), 'sync')
+  if (name === DAILY_ALARM) {
+    run(async () => {
+      await s.config.refreshIfStale()
+      await s.sync.prune()
+      await s.session.refresh()
+    }, 'daily')
+  }
+})
