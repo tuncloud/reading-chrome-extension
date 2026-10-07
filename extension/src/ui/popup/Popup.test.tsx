@@ -57,6 +57,25 @@ describe('<Popup>', () => {
     expect(actions.openUrl).toHaveBeenNthCalledWith(2, 'https://e.com/b')
   })
 
+  test('M5: only https URLs are opened; others do nothing and the library button is hidden', () => {
+    const bad = (url: string, notionUrl: string | null): PopupModel => ({
+      ...active, libraryUrl: url, current: null,
+      recent: [{ url: 'http://e.com/plain', title: 'Plain http', minutes: 1, progressPercent: 1, completed: null, notionUrl }],
+    })
+    for (const url of ['javascript:alert(1)', 'http://www.notion.so/x', 'file:///etc/passwd', 'not a url']) {
+      const { unmount } = render(<Popup model={bad(url, url)} actions={actions} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Plain http' }))
+      expect(actions.openUrl).not.toHaveBeenCalled()
+      expect(screen.queryByRole('button', { name: 'Open library in Notion' })).toBeNull()
+      unmount()
+    }
+    render(<Popup model={bad('https://www.notion.so/lib', null)} actions={actions} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Plain http' }))
+    expect(actions.openUrl).not.toHaveBeenCalled() // the article's own http URL is refused too
+    fireEvent.click(screen.getByRole('button', { name: 'Open library in Notion' }))
+    expect(actions.openUrl).toHaveBeenCalledWith('https://www.notion.so/lib')
+  })
+
   test('the library button opens library_url and is hidden without one', () => {
     const { rerender } = render(<Popup model={active} actions={actions} />)
     fireEvent.click(screen.getByRole('button', { name: 'Open library in Notion' }))

@@ -1,5 +1,6 @@
 // <Popup> draws one PopupModel (spec T30). It holds no state: PopupApp owns loading.
 import type { ArticleView, PopupModel } from '../../application/popup-model'
+import { isHttpsUrl } from './https-url'
 
 export interface PopupActions {
   connect(): void
@@ -12,6 +13,9 @@ function articleLine(a: ArticleView): string {
 }
 
 function Body({ model, actions }: { model: PopupModel; actions: PopupActions }) {
+  const open = (url: string) => {
+    if (isHttpsUrl(url)) actions.openUrl(url)
+  }
   switch (model.kind) {
     case 'disconnected':
       return (
@@ -36,7 +40,7 @@ function Body({ model, actions }: { model: PopupModel; actions: PopupActions }) 
         </>
       )
     case 'active': {
-      const library = model.libraryUrl
+      const library = model.libraryUrl && isHttpsUrl(model.libraryUrl) ? model.libraryUrl : null
       return (
         <>
           <section className="today">
@@ -58,14 +62,14 @@ function Body({ model, actions }: { model: PopupModel; actions: PopupActions }) 
               <ul data-role="recent">
                 {model.recent.map((a) => (
                   <li key={a.url}>
-                    <button className="link" title={a.url} onClick={() => actions.openUrl(a.notionUrl ?? a.url)}>{a.title}</button>
+                    <button className="link" title={a.url} onClick={() => open(a.notionUrl ?? a.url)}>{a.title}</button>
                     <span className="muted">{articleLine(a)}</span>
                   </li>
                 ))}
               </ul>
             </section>
           )}
-          {library && <button onClick={() => actions.openUrl(library)}>Open library in Notion</button>}
+          {library && <button onClick={() => open(library)}>Open library in Notion</button>}
           {model.unsynced > 0 && <p className="muted small">{model.unsynced} segments waiting to sync</p>}
         </>
       )
