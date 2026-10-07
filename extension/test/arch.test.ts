@@ -116,9 +116,13 @@ export function globalViolation(fromRel: string, code: string): string | null {
 describe('layer rule', () => {
   const files = sourceFiles()
 
-  test('the walk finds the composition roots (not vacuous)', () => {
-    expect(files).toContain('entry/background.ts')
-    expect(files).toContain('entry/content.ts')
+  test('the walk finds every layer (not vacuous)', () => {
+    for (const f of [
+      'domain/tracker.ts', 'application/sync.ts', 'adapters/storage/dexie-store.ts',
+      'adapters/chrome/messaging.ts', 'ui/popup/Popup.tsx', 'ui/options/OptionsView.tsx', 'entry/background.ts', 'entry/content.ts',
+    ]) {
+      expect(files).toContain(f)
+    }
   })
 
   test('every import points inward', () => {
