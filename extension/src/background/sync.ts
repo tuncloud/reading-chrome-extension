@@ -2,7 +2,7 @@
 import type { ArticleMeta, LocalArticle, Segment, StoredSegment } from '../shared/reading'
 import { isApiError } from '../shared/errors'
 import type { Log } from '../shared/log'
-import { AUTH_KEYS } from '../application/session'
+import { AUTH_KEYS } from './session'
 import type { ApiClient } from './api'
 import type { Db } from './db'
 import type { PushResult, SyncOutcome } from '../shared/types'

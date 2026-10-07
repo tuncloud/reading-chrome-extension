@@ -46,8 +46,7 @@ export function segment(id: string, over: Partial<StoredSegment> = {}): StoredSe
   }
 }
 
-// Application tests still pass MemoryStore until Task 3, so only applyRead is required.
-export async function record(db: Pick<Db, 'applyRead'>, seg: StoredSegment, meta: ArticleMeta = META): Promise<boolean> {
+export async function record(db: Db, seg: StoredSegment, meta: ArticleMeta = META): Promise<boolean> {
   const plain: Segment = { ...seg }
   return db.applyRead(seg, (prev) => mergeArticle(prev, { ...meta, canonicalUrl: seg.canonicalUrl }, plain))
 }

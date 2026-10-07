@@ -1,7 +1,8 @@
 // The popup's view model (spec T30), built from local data plus the server's article status.
 import { roundMinutes, todaySeconds, type LocalArticle } from '../shared/reading'
-import type { Api, Clock, LocalStore } from './ports'
-import type { SessionState } from './session'
+import type { ApiClient } from '../background/api'
+import type { Db } from '../background/db'
+import type { SessionState } from '../background/session'
 import type { ArticleStatus } from '../shared/types'
 
 export interface ArticleView {
@@ -28,9 +29,9 @@ export type PopupModel =
     }
 
 export interface PopupDeps {
-  store: LocalStore
-  api: Api
-  clock: Clock
+  db: Db
+  api: Pick<ApiClient, 'articlesStatus'>
+  clock: { now(): Date; timeZone(): string }
 }
 
 const RECENT = 5
@@ -56,15 +57,15 @@ export async function buildPopupModel(deps: PopupDeps, session: SessionState, cu
   if (inst.status === 'revoked') return { kind: 'revoked', workspaceName: inst.workspaceName }
   if (inst.status !== 'active') return { kind: 'needs_setup', workspaceName: inst.workspaceName, setupError: inst.setupError }
 
-  const { store, api, clock } = deps
+  const { db, api, clock } = deps
   const now = clock.now()
-  const todays = await store.segmentsSince(new Date(now.getTime() - TODAY_WINDOW_MS).toISOString())
-  const recent = await store.recentArticles(RECENT)
-  const current = currentUrl ? (await store.articles([currentUrl]))[0] : undefined
+  const todays = await db.segmentsSince(new Date(now.getTime() - TODAY_WINDOW_MS).toISOString())
+  const recent = await db.recentArticles(RECENT)
+  const current = currentUrl ? (await db.articles([currentUrl]))[0] : undefined
   const urls = [...new Set([...(currentUrl ? [currentUrl] : []), ...recent.map((a) => a.canonicalUrl)])]
 
   let status: Record<string, ArticleStatus> = {}
-  const token = await store.getKv('device_token')
+  const token = await db.getKv('device_token')
   if (token && urls.length > 0) {
     try {
       status = await api.articlesStatus(token, urls)
@@ -81,6 +82,6 @@ export async function buildPopupModel(deps: PopupDeps, session: SessionState, cu
     current: currentView,
     recent: recent.map((a) => view(a.canonicalUrl, a, status[a.canonicalUrl])),
     libraryUrl: inst.libraryUrl,
-    unsynced: await store.countUnsynced(),
+    unsynced: await db.countUnsynced(),
   }
 }

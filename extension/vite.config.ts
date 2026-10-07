@@ -30,7 +30,7 @@ export default defineConfig(({ mode }) => {
       modulePreload: { polyfill: false },
       rollupOptions: {
         input: {
-          background: resolve(root, 'src/entry/background.ts'),
+          background: resolve(root, 'src/background/index.ts'),
           popup: resolve(root, 'popup.html'),
           options: resolve(root, 'options.html'),
         },

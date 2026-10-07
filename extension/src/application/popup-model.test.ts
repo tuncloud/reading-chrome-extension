@@ -1,27 +1,27 @@
 import { beforeEach, describe, expect, test } from 'vitest'
-import { FakeApi, FixedClock, INSTALLATION, MemoryStore } from '../../test/fakes'
-import { record, segment } from '../../test/helpers'
+import { apiStub, clock as makeClock, INSTALLATION, record, segment, testDb } from '../../test/helpers'
+import type { Db } from '../background/db'
 import { roundMinutes } from '../shared/reading'
 import { NetworkError } from '../shared/errors'
 import { buildPopupModel } from './popup-model'
-import type { SessionState } from './session'
+import type { SessionState } from '../background/session'
 
 const connected = (status: string, extra: object = {}): SessionState => ({
   kind: 'connected', user: { id: 'u1', name: 'T' }, installation: { ...INSTALLATION, status, ...extra },
 })
 
 describe('buildPopupModel', () => {
-  let store: MemoryStore
+  let store: Db
   // 10:00 UTC is 17:00 in Ho Chi Minh, so "today" is 2026-10-06 local.
-  const clock = new FixedClock(new Date('2026-10-06T10:00:00.000Z'), 'Asia/Ho_Chi_Minh')
+  const clock = makeClock('2026-10-06T10:00:00.000Z', 'Asia/Ho_Chi_Minh')
 
   beforeEach(async () => {
-    store = new MemoryStore()
+    store = testDb()
     await store.setKv('device_token', 'rt_x')
   })
 
-  const build = (session: SessionState, current: string | null = null, api = new FakeApi()) =>
-    buildPopupModel({ store, api, clock }, session, current)
+  const build = (session: SessionState, current: string | null = null, api = apiStub()) =>
+    buildPopupModel({ db: store, api, clock }, session, current)
 
   test('T30: each installation status has its own state', async () => {
     expect(await build({ kind: 'disconnected' })).toEqual({ kind: 'disconnected' })
@@ -48,7 +48,7 @@ describe('buildPopupModel', () => {
         endedAt: `2026-10-06T0${i}:00:00.000Z`,
       }), { canonicalUrl: '', source: 'web', title: `Article ${i}`, author: '', siteName: '', wordCount: 0, publishedAt: '', originalUrl: '' })
     }
-    const api = new FakeApi({
+    const api = apiStub({
       articlesStatus: async () => ({
         'https://e.com/6': { totalSeconds: 900, maxProgress: 0.95, sessions: 3, completed: true, lastReadAt: '', notionUrl: 'https://www.notion.so/6' },
       }),
@@ -69,14 +69,14 @@ describe('buildPopupModel', () => {
 
   test('offline: local values only', async () => {
     await record(store, segment('a'))
-    const api = new FakeApi({ articlesStatus: async () => { throw new NetworkError('offline') } })
+    const api = apiStub({ articlesStatus: async () => { throw new NetworkError('offline') } })
     const m = await build(connected('active'), 'https://medium.com/p/8f3c2a1b9d4e', api)
     if (m.kind !== 'active') throw new Error(m.kind)
     expect(m.current).toMatchObject({ minutes: 1, progressPercent: 50, completed: null })
   })
 
   test('a page read only on another device still shows from the server', async () => {
-    const api = new FakeApi({
+    const api = apiStub({
       articlesStatus: async () => ({ 'https://e.com/x': { totalSeconds: 120, maxProgress: 0.2, sessions: 1, completed: false, lastReadAt: '', notionUrl: null } }),
     })
     const m = await build(connected('active'), 'https://e.com/x', api)
@@ -86,7 +86,7 @@ describe('buildPopupModel', () => {
   })
 
   test('no current page → no current view, and no status call when nothing is listed', async () => {
-    const api = new FakeApi()
+    const api = apiStub()
     const m = await build(connected('active'), null, api)
     expect(m.kind === 'active' && m.current).toBeNull()
     expect(api.count('articlesStatus')).toBe(0)

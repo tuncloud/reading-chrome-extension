@@ -1,43 +1,46 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import {
-  FakeApi, FakeAuthFlow, FakeContentScripts, FakePermissions, FakePkce, INSTALLATION, MemoryLog, MemoryStore,
-} from '../../../test/fakes'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { installChrome, type ChromeMock } from '../../../test/chrome'
+import { apiStub, captureLog, INSTALLATION, testDb } from '../../../test/helpers'
 import { ApiError } from '../../shared/errors'
-import { DomainService } from '../../application/domains'
-import { SessionService } from '../../application/session'
+import { DomainService } from '../../background/domains'
+import { SessionService } from '../../background/session'
 import type { Db } from '../../background/db'
 import { SetupService } from '../../background/setup'
-import type { ConnectResult } from '../../application/session'
+import type { ConnectResult } from '../../background/session'
 import { createOptionsController } from './options-controller'
 import type { OptionsState } from './OptionsView'
 
 describe('options controller', () => {
-  let store: MemoryStore
-  let api: FakeApi
-  let events: string[]
+  let store: Db
+  let api: ReturnType<typeof apiStub>
+  let ch: ChromeMock
   let confirmAnswer: boolean
   let rendered: OptionsState[]
   let connect: () => Promise<ConnectResult>
 
   beforeEach(async () => {
-    store = new MemoryStore()
+    store = testDb()
+    ch = installChrome()
     await store.setKv('device_token', 'rt_x')
     await store.setKv('installation', { ...INSTALLATION, status: 'needs_setup', libraryUrl: null })
-    api = new FakeApi()
-    events = []
+    api = apiStub()
     confirmAnswer = false
     rendered = []
     connect = async () => ({ ok: false, reason: 'cancelled' })
   })
 
+  afterEach(() => vi.unstubAllGlobals())
+
+  afterEach(() => vi.unstubAllGlobals())
+
   function controller() {
-    const session = new SessionService({ store, api, authFlow: new FakeAuthFlow(), pkce: new FakePkce(), deviceName: () => 'x', log: new MemoryLog() })
+    const session = new SessionService({ db: store, api, log: captureLog() })
     return createOptionsController(
       {
         session,
-        setup: new SetupService({ db: store as unknown as Db, api }), // MemoryStore stands in for Db until Task 4
-        domains: new DomainService({ store, permissions: new FakePermissions(true, events), scripts: new FakeContentScripts() }),
+        setup: new SetupService({ db: store, api }),
+        domains: new DomainService({ db: store }),
         connect: () => connect(),
       },
       { render: (s) => rendered.push(structuredClone(s)), confirm: () => confirmAnswer },
@@ -56,7 +59,7 @@ describe('options controller', () => {
     const c = controller()
     await c.load()
     const p = c.actions.enableDomain('example.com') // not awaited: the prompt must already be requested
-    expect(events[0]).toBe('request https://example.com/* https://*.example.com/*')
+    expect(ch.events[0]).toBe('request https://example.com/* https://*.example.com/*')
     await p
     expect(c.state()).toMatchObject({ domains: { enabled: ['example.com'] }, note: 'Tracking example.com.' })
   })
@@ -87,7 +90,7 @@ describe('options controller', () => {
   })
 
   test('a failed delete keeps the session and says so', async () => {
-    api = new FakeApi({ deleteAccount: async () => { throw new ApiError(500, 'internal', 'boom') } })
+    api = apiStub({ deleteAccount: async () => { throw new ApiError(500, 'internal', 'boom') } })
     confirmAnswer = true
     const c = controller()
     await c.load()
@@ -96,7 +99,7 @@ describe('options controller', () => {
   })
 
   test('T31: setup search then choose activates the installation', async () => {
-    api = new FakeApi({ setupPages: async () => [{ id: 'p1', title: 'Reading', url: 'https://www.notion.so/p1' }] })
+    api = apiStub({ setupPages: async () => [{ id: 'p1', title: 'Reading', url: 'https://www.notion.so/p1' }] })
     const c = controller()
     await c.load()
     await c.actions.searchPages('Read')
@@ -107,7 +110,7 @@ describe('options controller', () => {
   })
 
   test('a setup conflict shows the server message', async () => {
-    api = new FakeApi({ setup: async () => { throw new ApiError(409, 'conflict', 'setup failed: property_missing:Progress') } })
+    api = apiStub({ setup: async () => { throw new ApiError(409, 'conflict', 'setup failed: property_missing:Progress') } })
     const c = controller()
     await c.load()
     await c.actions.choosePage('p1')

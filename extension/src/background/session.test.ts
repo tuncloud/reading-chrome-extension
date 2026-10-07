@@ -1,22 +1,28 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { FakeApi, FakeAuthFlow, FakePkce, INSTALLATION, MemoryLog, MemoryStore } from '../../test/fakes'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { installChrome, type ChromeMock } from '../../test/chrome'
+import { apiStub, captureLog, INSTALLATION, record, segment, testDb } from '../../test/helpers'
 import { ApiError, NetworkError } from '../shared/errors'
+import type { Db } from './db'
+import { deviceName } from './device'
+import { challengeFor } from './pkce'
 import { SessionService } from './session'
 
 describe('SessionService', () => {
-  let store: MemoryStore
-  let flow: FakeAuthFlow
+  let store: Db
+  let ch: ChromeMock
   let afterConnect: () => void
 
   beforeEach(() => {
-    store = new MemoryStore()
-    flow = new FakeAuthFlow()
+    store = testDb()
+    ch = installChrome()
     afterConnect = vi.fn<() => void>()
   })
 
-  const service = (api: FakeApi) => new SessionService({
-    store, api, authFlow: flow, pkce: new FakePkce(), deviceName: () => 'Chrome on macOS', log: new MemoryLog(), afterConnect,
-  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const service = (api: ReturnType<typeof apiStub>, log = captureLog()) => new SessionService({ db: store, api, log, afterConnect })
+
+  const articleCount = async () => (await store.recentArticles(10)).length
 
   const nothingStored = async () => {
     for (const k of ['device_token', 'device_id', 'user', 'installation'] as const) expect(await store.getKv(k)).toBeUndefined()
@@ -24,15 +30,19 @@ describe('SessionService', () => {
 
   describe('connect (T29)', () => {
     test('PKCE start → redirect code → token exchange → stored', async () => {
-      const api = new FakeApi()
+      const api = apiStub()
       const res = await service(api).connect()
       expect(res).toEqual({ ok: true, installation: INSTALLATION })
+      const exchange = api.calls.find((c) => c.method === 'exchangeCode')?.args[0] as { code: string; codeVerifier: string; deviceName: string }
+      expect(exchange.codeVerifier).toMatch(/^[A-Za-z0-9\-._~]{64}$/)
+      expect(exchange).toEqual({ code: 'one-time', codeVerifier: exchange.codeVerifier, deviceName: deviceName(navigator) })
+      const challenge = await challengeFor(exchange.codeVerifier)
       expect(api.calls[0]).toEqual({
-        method: 'oauthStartUrl', args: [{ extRedirect: 'https://ext.chromiumapp.org/', codeChallenge: 'challenge-of-v' }],
+        method: 'oauthStartUrl', args: [{ extRedirect: 'https://ext.chromiumapp.org/', codeChallenge: challenge }],
       })
-      expect(flow.launched).toEqual(['https://api.example.com/v1/oauth/notion/start?code_challenge=challenge-of-v'])
-      expect(api.calls.find((c) => c.method === 'exchangeCode')?.args[0]).toEqual({
-        code: 'one-time', codeVerifier: 'v'.repeat(64), deviceName: 'Chrome on macOS',
+      expect(ch.events).toEqual([`launch https://api.example.com/v1/oauth/notion/start?code_challenge=${challenge}`])
+      expect(ch.chrome.identity.launchWebAuthFlow).toHaveBeenCalledWith({
+        url: `https://api.example.com/v1/oauth/notion/start?code_challenge=${challenge}`, interactive: true,
       })
       expect(await store.getKv('device_token')).toBe('rt_new')
       expect(await store.getKv('device_id')).toBe('d1')
@@ -45,14 +55,14 @@ describe('SessionService', () => {
     test('I2: connecting clears stale sync backoff', async () => {
       await store.setKv('sync_failures', 6)
       await store.setKv('sync_backoff_until', '2099-01-01T00:00:00.000Z')
-      await service(new FakeApi()).connect()
+      await service(apiStub()).connect()
       expect(await store.getKv('sync_failures')).toBeUndefined()
       expect(await store.getKv('sync_backoff_until')).toBeUndefined()
     })
 
     test('user closes the window → cancelled, nothing stored', async () => {
-      flow.respond = async () => { throw new Error('The user did not approve access.') }
-      const api = new FakeApi()
+      ch.redirect = async () => { throw new Error('The user did not approve access.') }
+      const api = apiStub()
       expect(await service(api).connect()).toEqual({ ok: false, reason: 'cancelled' })
       expect(api.count('exchangeCode')).toBe(0)
       await nothingStored()
@@ -60,41 +70,37 @@ describe('SessionService', () => {
     })
 
     test('error=access_denied → that reason, nothing stored', async () => {
-      flow.respond = async () => 'https://ext.chromiumapp.org/?error=access_denied'
-      expect(await service(new FakeApi()).connect()).toEqual({ ok: false, reason: 'access_denied' })
+      ch.redirect = async () => 'https://ext.chromiumapp.org/?error=access_denied'
+      expect(await service(apiStub()).connect()).toEqual({ ok: false, reason: 'access_denied' })
       await nothingStored()
     })
 
     test('a redirect without a code → invalid_response', async () => {
-      flow.respond = async () => 'https://ext.chromiumapp.org/'
-      expect(await service(new FakeApi()).connect()).toEqual({ ok: false, reason: 'invalid_response' })
+      ch.redirect = async () => 'https://ext.chromiumapp.org/'
+      expect(await service(apiStub()).connect()).toEqual({ ok: false, reason: 'invalid_response' })
       await nothingStored()
     })
 
     test('a failed exchange → the API error code, nothing stored', async () => {
-      const api = new FakeApi({ exchangeCode: async () => { throw new ApiError(400, 'invalid_grant', 'bad code') } })
+      const api = apiStub({ exchangeCode: async () => { throw new ApiError(400, 'invalid_grant', 'bad code') } })
       expect(await service(api).connect()).toEqual({ ok: false, reason: 'invalid_grant' })
       await nothingStored()
     })
 
     test('a network failure during the exchange → network_error', async () => {
-      const api = new FakeApi({ exchangeCode: async () => { throw new NetworkError('offline') } })
+      const api = apiStub({ exchangeCode: async () => { throw new NetworkError('offline') } })
       expect(await service(api).connect()).toEqual({ ok: false, reason: 'network_error' })
     })
 
     test('malformed redirect URL → invalid_response', async () => {
-      flow.respond = async () => 'not a url'
-      expect(await service(new FakeApi()).connect()).toEqual({ ok: false, reason: 'invalid_response' })
+      ch.redirect = async () => 'not a url'
+      expect(await service(apiStub()).connect()).toEqual({ ok: false, reason: 'invalid_response' })
       await nothingStored()
     })
 
     test('post-exchange refresh returns 401 → unauthorized, nothing stored', async () => {
-      const log = new MemoryLog()
-      const api = new FakeApi({ me: async () => { throw new ApiError(401, 'unauthorized', 'revoked') } })
-      const svc = new SessionService({
-        store, api, authFlow: flow, pkce: new FakePkce(), deviceName: () => 'Chrome on macOS', log, afterConnect,
-      })
-      expect(await svc.connect()).toEqual({ ok: false, reason: 'unauthorized' })
+      const api = apiStub({ me: async () => { throw new ApiError(401, 'unauthorized', 'revoked') } })
+      expect(await service(api).connect()).toEqual({ ok: false, reason: 'unauthorized' })
       await nothingStored()
       expect(afterConnect).not.toHaveBeenCalled()
     })
@@ -102,7 +108,7 @@ describe('SessionService', () => {
 
   describe('state and refresh', () => {
     test('state is disconnected without a token, connected with one', async () => {
-      const svc = service(new FakeApi())
+      const svc = service(apiStub())
       expect(await svc.state()).toEqual({ kind: 'disconnected' })
       await store.setKv('device_token', 'rt_x')
       expect(await svc.state()).toEqual({ kind: 'connected', user: null, installation: null })
@@ -110,7 +116,7 @@ describe('SessionService', () => {
 
     test('refresh stores /v1/me', async () => {
       await store.setKv('device_token', 'rt_x')
-      const api = new FakeApi({ me: async () => ({
+      const api = apiStub({ me: async () => ({
         user: { id: 'u1', name: 'T' }, device: { id: 'd1', name: 'Mac' }, installation: { ...INSTALLATION, status: 'revoked' },
       }) })
       expect(await service(api).refresh()).toEqual({
@@ -121,7 +127,7 @@ describe('SessionService', () => {
 
     test('refresh on 401 disconnects', async () => {
       await store.setKv('device_token', 'rt_x')
-      const api = new FakeApi({ me: async () => { throw new ApiError(401, 'unauthorized', 'revoked') } })
+      const api = apiStub({ me: async () => { throw new ApiError(401, 'unauthorized', 'revoked') } })
       expect(await service(api).refresh()).toEqual({ kind: 'disconnected' })
       expect(await store.getKv('device_token')).toBeUndefined()
     })
@@ -129,19 +135,16 @@ describe('SessionService', () => {
     test('refresh offline keeps the cached state', async () => {
       await store.setKv('device_token', 'rt_x')
       await store.setKv('installation', INSTALLATION)
-      const api = new FakeApi({ me: async () => { throw new NetworkError('offline') } })
+      const api = apiStub({ me: async () => { throw new NetworkError('offline') } })
       expect(await service(api).refresh()).toEqual({ kind: 'connected', user: null, installation: INSTALLATION })
     })
 
     test('refresh on 500 logs the error and keeps the cached state', async () => {
       await store.setKv('device_token', 'rt_x')
       await store.setKv('installation', INSTALLATION)
-      const log = new MemoryLog()
-      const api = new FakeApi({ me: async () => { throw new ApiError(500, 'internal', 'boom') } })
-      const svc = new SessionService({
-        store, api, authFlow: flow, pkce: new FakePkce(), deviceName: () => 'Chrome on macOS', log, afterConnect,
-      })
-      expect(await svc.refresh()).toEqual({ kind: 'connected', user: null, installation: INSTALLATION })
+      const log = captureLog()
+      const api = apiStub({ me: async () => { throw new ApiError(500, 'internal', 'boom') } })
+      expect(await service(api, log).refresh()).toEqual({ kind: 'connected', user: null, installation: INSTALLATION })
       expect(log.lines.some((line) => line.includes('refresh failed'))).toBe(true)
     })
   })
@@ -152,41 +155,54 @@ describe('SessionService', () => {
       await store.setKv('device_id', 'd1')
       await store.setKv('installation', INSTALLATION)
       await store.setKv('enabled_domains', ['example.com'])
-      store.articleRows.set('https://e.com/a', {
-        canonicalUrl: 'https://e.com/a', source: 'web', title: 'A', author: '', siteName: '', wordCount: 0,
-        publishedAt: '', originalUrl: 'https://e.com/a', totalSeconds: 60, maxProgress: 0.5, lastReadAt: '2026-10-06T03:00:00.000Z',
-      })
+      await record(store, segment('s1', { canonicalUrl: 'https://e.com/a' }))
     })
 
     test('logout calls the API and disconnects locally even if it fails', async () => {
-      const api = new FakeApi({ logout: async () => { throw new NetworkError('offline') } })
+      const api = apiStub({ logout: async () => { throw new NetworkError('offline') } })
       await service(api).logout()
       expect(api.calls.map((c) => c.method)).toEqual(['logout'])
       await nothingStored()
-      expect(store.articleRows.size).toBe(1)
+      expect(await articleCount()).toBe(1)
     })
 
     test('deleteAccount clears auth and local reading data after the server accepts', async () => {
-      const api = new FakeApi()
+      const api = apiStub()
       await service(api).deleteAccount()
       expect(api.count('deleteAccount')).toBe(1)
       await nothingStored()
-      expect(store.articleRows.size).toBe(0)
+      expect(await articleCount()).toBe(0)
       expect(await store.getKv('enabled_domains')).toEqual(['example.com'])
     })
 
     test('M2: deleteAccount treats a 401 as the account already gone', async () => {
-      const api = new FakeApi({ deleteAccount: async () => { throw new ApiError(401, 'unauthorized', 'revoked') } })
+      const api = apiStub({ deleteAccount: async () => { throw new ApiError(401, 'unauthorized', 'revoked') } })
       await service(api).deleteAccount()
       await nothingStored()
-      expect(store.articleRows.size).toBe(0)
+      expect(await articleCount()).toBe(0)
     })
 
     test('deleteAccount keeps everything when the server call fails', async () => {
-      const api = new FakeApi({ deleteAccount: async () => { throw new ApiError(500, 'internal', 'boom') } })
+      const api = apiStub({ deleteAccount: async () => { throw new ApiError(500, 'internal', 'boom') } })
       await expect(service(api).deleteAccount()).rejects.toBeInstanceOf(ApiError)
       expect(await store.getKv('device_token')).toBe('rt_x')
-      expect(store.articleRows.size).toBe(1)
+      expect(await articleCount()).toBe(1)
+    })
+  })
+
+  describe('chrome.identity', () => {
+    test('an empty redirect from the auth window counts as cancelled', async () => {
+      ch.redirect = async () => undefined
+      const api = apiStub()
+      expect(await service(api).connect()).toEqual({ ok: false, reason: 'cancelled' })
+      expect(api.count('exchangeCode')).toBe(0)
+    })
+
+    test('launches an interactive window with the chromiumapp redirect', async () => {
+      const api = apiStub()
+      await service(api).connect()
+      expect(ch.chrome.identity.launchWebAuthFlow).toHaveBeenCalledWith(expect.objectContaining({ interactive: true }))
+      expect((api.calls[0]?.args[0] as { extRedirect: string }).extRedirect).toBe('https://ext.chromiumapp.org/')
     })
   })
 })

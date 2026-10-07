@@ -5,9 +5,9 @@ import { sendToBackground, sendToTab } from '../shared/messaging'
 import { activeTabId, openOptions, openTab } from '../adapters/chrome/tabs'
 import { buildPopupModel } from '../application/popup-model'
 import { PopupApp } from '../ui/popup/PopupApp'
-import { compose } from './compose'
+import { createServices } from '../background/services'
 
-const s = compose('popup')
+const s = createServices('popup')
 
 async function currentCanonical(): Promise<string | null> {
   const tabId = await activeTabId()
@@ -17,7 +17,11 @@ async function currentCanonical(): Promise<string | null> {
 createRoot(document.getElementById('app') as HTMLElement).render(
   <StrictMode>
     <PopupApp
-      load={async () => buildPopupModel(s, await s.session.state(), await currentCanonical())}
+      load={async () => buildPopupModel(
+        { db: s.db, api: s.api, clock: { now: () => new Date(), timeZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone } },
+        await s.session.state(),
+        await currentCanonical(),
+      )}
       refresh={async () => {
         await s.session.refresh()
       }}

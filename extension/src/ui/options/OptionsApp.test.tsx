@@ -1,15 +1,21 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { FakeContentScripts, FakePermissions, MemoryStore } from '../../../test/fakes'
-import { DomainService } from '../../application/domains'
-import type { SessionState } from '../../application/session'
+import { installChrome } from '../../../test/chrome'
+import { testDb } from '../../../test/helpers'
+import { DomainService } from '../../background/domains'
+import type { SessionState } from '../../background/session'
 import { OptionsApp } from './OptionsApp'
 import type { OptionsServices } from './options-controller'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 function services(): OptionsServices & { refreshed: () => number } {
+  installChrome()
+  installChrome()
   let refreshes = 0
   const session: SessionState = { kind: 'disconnected' }
   return {
@@ -23,7 +29,7 @@ function services(): OptionsServices & { refreshed: () => number } {
       deleteAccount: async () => {},
     },
     setup: { searchPages: async () => [], createDatabases: vi.fn() },
-    domains: new DomainService({ store: new MemoryStore(), permissions: new FakePermissions(), scripts: new FakeContentScripts() }),
+    domains: new DomainService({ db: testDb() }),
     connect: async () => ({ ok: false, reason: 'cancelled' }),
     refreshed: () => refreshes,
   }

@@ -4,9 +4,9 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { sendToBackground } from '../shared/messaging'
 import { OptionsApp } from '../ui/options/OptionsApp'
-import { compose } from './compose'
+import { createServices } from '../background/services'
 
-const s = compose('options')
+const s = createServices('options')
 
 createRoot(document.getElementById('app') as HTMLElement).render(
   <StrictMode>

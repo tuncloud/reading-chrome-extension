@@ -1,18 +1,20 @@
 // SessionService owns the device's connection to the backend (spec §2.1–§2.5, §2.17, T29).
 import { isApiError, NetworkError, NotConnectedError } from '../shared/errors'
-import type { Api, AuthFlow, KvKey, LocalStore, Log, Pkce } from './ports'
+import type { Log } from '../shared/log'
 import type { ConnectResult, SessionState } from '../shared/types'
+import type { ApiClient } from './api'
+import type { KvKey } from './db'
+import { Db } from './db'
+import { deviceName } from './device'
+import { challengeFor, randomVerifier } from './pkce'
 
 export type { ConnectResult, SessionState } from '../shared/types'
 
 export const AUTH_KEYS: readonly KvKey[] = ['device_token', 'device_id', 'user', 'installation']
 
 export interface SessionDeps {
-  store: LocalStore
-  api: Api
-  authFlow: AuthFlow
-  pkce: Pkce
-  deviceName: () => string
+  db: Db
+  api: Pick<ApiClient, 'oauthStartUrl' | 'exchangeCode' | 'me' | 'logout' | 'deleteAccount'>
   log: Log
   // afterConnect runs once a device token is stored (e.g. to push the waiting outbox).
   afterConnect?: () => void
@@ -22,18 +24,21 @@ export class SessionService {
   constructor(private readonly deps: SessionDeps) {}
 
   async state(): Promise<SessionState> {
-    const { store } = this.deps
-    if (!(await store.getKv('device_token'))) return { kind: 'disconnected' }
-    return { kind: 'connected', user: (await store.getKv('user')) ?? null, installation: (await store.getKv('installation')) ?? null }
+    const { db } = this.deps
+    if (!(await db.getKv('device_token'))) return { kind: 'disconnected' }
+    return { kind: 'connected', user: (await db.getKv('user')) ?? null, installation: (await db.getKv('installation')) ?? null }
   }
 
   async connect(): Promise<ConnectResult> {
-    const { api, authFlow, pkce, store, log } = this.deps
-    const { verifier, challenge } = await pkce.create()
-    const url = api.oauthStartUrl({ extRedirect: authFlow.redirectUrl(), codeChallenge: challenge })
+    const { api, db, log } = this.deps
+    const verifier = randomVerifier()
+    const challenge = await challengeFor(verifier)
+    const url = api.oauthStartUrl({ extRedirect: chrome.identity.getRedirectURL(), codeChallenge: challenge })
     let redirect: string
     try {
-      redirect = await authFlow.launch(url)
+      const r = await chrome.identity.launchWebAuthFlow({ url, interactive: true })
+      if (!r) throw new Error('auth flow ended without a redirect')
+      redirect = r
     } catch (e) {
       log.info(`connect: auth window closed (${e instanceof Error ? e.message : String(e)})`)
       return { ok: false, reason: 'cancelled' }
@@ -49,12 +54,12 @@ export class SessionService {
     const code = params.get('code')
     if (!code) return { ok: false, reason: 'invalid_response' }
     try {
-      const grant = await api.exchangeCode({ code, codeVerifier: verifier, deviceName: this.deps.deviceName() })
-      await store.setKv('device_token', grant.deviceToken)
-      await store.setKv('device_id', grant.deviceId)
-      await store.setKv('user', grant.user)
-      await store.setKv('installation', grant.installation)
-      await store.deleteKv('sync_failures', 'sync_backoff_until') // a fresh token must not wait out an old backoff
+      const grant = await api.exchangeCode({ code, codeVerifier: verifier, deviceName: deviceName(navigator) })
+      await db.setKv('device_token', grant.deviceToken)
+      await db.setKv('device_id', grant.deviceId)
+      await db.setKv('user', grant.user)
+      await db.setKv('installation', grant.installation)
+      await db.deleteKv('sync_failures', 'sync_backoff_until') // a fresh token must not wait out an old backoff
       const after = await this.refresh() // T29: GET /v1/me after the exchange; best-effort, it never throws
       if (after.kind === 'disconnected') return { ok: false, reason: 'unauthorized' }
       this.deps.afterConnect?.()
@@ -68,13 +73,13 @@ export class SessionService {
 
   // refresh reloads GET /v1/me; offline it returns the cached state.
   async refresh(): Promise<SessionState> {
-    const { store, api, log } = this.deps
-    const token = await store.getKv('device_token')
+    const { db, api, log } = this.deps
+    const token = await db.getKv('device_token')
     if (!token) return { kind: 'disconnected' }
     try {
       const me = await api.me(token)
-      await store.setKv('user', me.user)
-      await store.setKv('installation', me.installation)
+      await db.setKv('user', me.user)
+      await db.setKv('installation', me.installation)
       return { kind: 'connected', user: me.user, installation: me.installation }
     } catch (e) {
       if (isApiError(e, 401)) {
@@ -90,7 +95,7 @@ export class SessionService {
 
   // logout revokes the device token on the server and always disconnects locally.
   async logout(): Promise<void> {
-    const token = await this.deps.store.getKv('device_token')
+    const token = await this.deps.db.getKv('device_token')
     if (token) {
       try {
         await this.deps.api.logout(token)
@@ -103,8 +108,8 @@ export class SessionService {
 
   // deleteAccount asks the server to purge the account (§2.17), then clears local data.
   async deleteAccount(): Promise<void> {
-    const { store, api } = this.deps
-    const token = await store.getKv('device_token')
+    const { db, api } = this.deps
+    const token = await db.getKv('device_token')
     if (!token) throw new NotConnectedError()
     try {
       await api.deleteAccount(token)
@@ -112,10 +117,10 @@ export class SessionService {
       if (!isApiError(e, 401)) throw e // 401: the server already revoked the token, the account is gone
     }
     await this.forget()
-    await store.clearReading()
+    await db.clearReading()
   }
 
   private async forget(): Promise<void> {
-    await this.deps.store.deleteKv(...AUTH_KEYS)
+    await this.deps.db.deleteKv(...AUTH_KEYS)
   }
 }

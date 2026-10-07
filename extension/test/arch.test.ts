@@ -116,7 +116,7 @@ describe('dependency rules', () => {
     expect(problems).toEqual([])
   })
 
-  test.each(['content/index.ts', 'entry/background.ts'])('%s import closure never reaches react', (entry) => {
+  test.each(['content/index.ts', 'background/index.ts'])('%s import closure never reaches react', (entry) => {
     expect(sources.has(entry)).toBe(true)
     expect(reactImporters(entry, sources)).toEqual([])
   })
