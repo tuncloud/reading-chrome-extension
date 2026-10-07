@@ -95,6 +95,31 @@ func TestArticleAdoptsExistingPageByURL(t *testing.T) {
 	}
 }
 
+// An adoptable page that vanished between the URL query and the PATCH is not a
+// missing database: fall through and create a fresh page in the same call.
+func TestArticleAdoptedPageGoneIsRecreated(t *testing.T) {
+	e := newEnv(t)
+	e.seedInstallation("tok", "rt")
+	existing := e.ns.AddPage(e.tpl.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
+	e.ns.FailNext("PATCH", "/v1/pages/"+existing.ID, notiontest.Fail{Status: 404, Code: "object_not_found", Message: "gone"})
+	e.read(artURL, 0, 120, 0.5)
+	if f := e.handle(articleMsg()); len(f) != 0 {
+		t.Fatalf("failures %+v", f)
+	}
+	inst, err := e.db.Store.GetInstallation(ctx, testBot)
+	must(t, err)
+	if inst.Status != store.StatusActive {
+		t.Fatalf("installation %+v", inst)
+	}
+	pages := e.libraryPages()
+	if len(pages) != 2 || len(e.ns.Calls("POST", "/v1/pages")) != 1 {
+		t.Fatalf("%d library pages, %d creates", len(pages), len(e.ns.Calls("POST", "/v1/pages")))
+	}
+	if a := e.article(artURL); a.NotionPageID != pages[1].ID || a.NotionPageID == existing.ID {
+		t.Fatalf("article %+v", a)
+	}
+}
+
 // T19 AC: the PATCH body contains only server-owned metric property ids.
 func TestArticlePatchContainsOnlyMetricProps(t *testing.T) {
 	e := newEnv(t)

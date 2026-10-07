@@ -76,10 +76,13 @@ func (w *Worker) createArticlePage(ctx context.Context, sess *session, hash stri
 		err := sess.call(ctx, func(tok string) error {
 			return w.updatePage(ctx, tok, page.ID, articleMetrics(inst.Props, art, completed))
 		})
-		if err != nil {
+		if isPageGone(err) {
+			page = nil // vanished between the query and the PATCH: create a fresh page below
+		} else if err != nil {
 			return err
 		}
-	} else {
+	}
+	if page == nil {
 		err := sess.call(ctx, func(tok string) error {
 			p, err := w.Notion.CreatePage(ctx, tok, articleCreateBody(inst.LibraryDSID, inst.Props, art, completed))
 			page = p
