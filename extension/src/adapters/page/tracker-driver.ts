@@ -100,8 +100,13 @@ export function startTracking(d: DriverDeps): Driver {
     }
   }
   const onVisibility = () => flush(tracker.setVisible(doc.visibilityState === 'visible', now()))
-  const onFocus = () => flush(tracker.setFocused(true, now()))
-  const onBlur = () => flush(tracker.setFocused(false, now()))
+  // Capturing listeners also see element-level focus/blur; only the window's own count.
+  const onFocus = (e: Event) => {
+    if (e.target === win) flush(tracker.setFocused(true, now()))
+  }
+  const onBlur = (e: Event) => {
+    if (e.target === win) flush(tracker.setFocused(false, now()))
+  }
   const onPageHide = () => {
     updateProgress()
     flush(tracker.pagehide(now()))

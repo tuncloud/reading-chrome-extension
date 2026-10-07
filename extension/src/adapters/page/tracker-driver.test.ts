@@ -87,6 +87,18 @@ describe('startTracking', () => {
     expect(sent.map((s) => s.segment.activeSeconds)).toEqual([5, 5])
   })
 
+  test('C1: focus changes on an element inside the page do not pause tracking', () => {
+    document.body.innerHTML = '<article>text <button id="b">clap</button></article>'
+    start()
+    vi.advanceTimersByTime(10_000)
+    const b = document.getElementById('b')!
+    b.dispatchEvent(new FocusEvent('focus'))
+    b.dispatchEvent(new FocusEvent('blur'))
+    scrollEvery(10, 50)
+    window.dispatchEvent(new Event('pagehide'))
+    expect(sent.reduce((sum, s) => sum + s.segment.activeSeconds, 0)).toBe(60)
+  })
+
   test('mousemove keeps the reader active', () => {
     start()
     for (let t = 1; t <= 120; t++) {
