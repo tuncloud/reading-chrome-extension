@@ -101,7 +101,7 @@ describe('SyncService.run', () => {
     expect(await store.getKv('sync_backoff_until')).toBeUndefined()
   })
 
-  describe('I1: poison batches', () => {
+  describe('oversized and refused batches', () => {
     const rejectContaining = (bad: string, status = 413) => new FakeApi({
       push: async (_t, body) => {
         if (body.segments.some((s) => s.id === bad)) throw new ApiError(status, 'payload_too_large', 'too big')
@@ -120,7 +120,19 @@ describe('SyncService.run', () => {
       expect(await store.getKv('sync_backoff_until')).toBeUndefined()
     })
 
-    test('a 400 once on a batch of 3, then success, syncs everything in halves', async () => {
+    // The backend answers 400 only for request-level faults (tz, malformed JSON); a segment's own
+    // problems come back in `rejected`. So a 400 must never split the batch or drop data.
+    test('a 400 on every push keeps every segment and backs off', async () => {
+      await seed(store, 1)
+      const api = new FakeApi({ push: async () => { throw new ApiError(400, 'invalid_request', 'tz is not a known IANA time zone') } })
+      expect(await service(api).run()).toBe('failed')
+      expect(api.count('push')).toBe(1)
+      expect(await store.countUnsynced()).toBe(1)
+      expect(await store.getKv('sync_backoff_until')).toBeDefined()
+      expect(log.lines.some((l) => l.includes('dropped'))).toBe(false)
+    })
+
+    test('a 400 does not split a batch: the next run resends it whole', async () => {
       const ids = await seed(store, 3)
       let first = true
       const api = new FakeApi({
@@ -132,11 +144,14 @@ describe('SyncService.run', () => {
           return { accepted: body.segments.map((s) => s.id), duplicate: [], retry: [], rejected: [] }
         },
       })
-      expect(await service(api).run()).toBe('synced')
+      const svc = service(api)
+      expect(await svc.run()).toBe('failed')
+      clock.advance(60_000)
+      expect(await svc.run()).toBe('synced')
       const sizes = api.calls.filter((c) => c.method === 'push').map((c) => (c.args[1] as PushBody).segments.length)
-      expect(sizes).toEqual([3, 2, 1])
-      expect(await store.countUnsynced()).toBe(0)
+      expect(sizes).toEqual([3, 3])
       expect([...store.segmentRows.keys()].sort()).toEqual(ids)
+      expect(await store.countUnsynced()).toBe(0)
     })
 
     test('5xx and network errors are not poison: they back off and keep the segments', async () => {

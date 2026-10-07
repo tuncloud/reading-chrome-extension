@@ -36,8 +36,11 @@ function plain(s: StoredSegment): Segment {
   }
 }
 
-// POISON are the statuses that mean "this batch itself is unacceptable", not "try again later".
-const POISON = [400, 413]
+// TOO_LARGE is the one batch-level refusal a smaller batch can cure: the backend's 256 KB body
+// limit or its 50-item cap. A 400 is never poison: the backend answers 400 only for request-level
+// faults (tz, malformed JSON) and reports a segment's own problems in `rejected`, so a 400 backs
+// off like any other failure and keeps every segment.
+const TOO_LARGE = 413
 
 interface Progress {
   settled: number
@@ -92,9 +95,9 @@ export class SyncService {
     return 'synced'
   }
 
-  // push sends one batch and settles the answer. A batch the server refuses as a whole (413/400)
-  // is poison: it is retried in halves, and a single segment that is still refused is dropped,
-  // so one bad segment cannot block the outbox. Other failures propagate.
+  // push sends one batch and settles the answer. A batch refused as too large (413) is retried in
+  // halves, and a single segment still too large is dropped, so one oversized segment cannot
+  // block the outbox. Every other failure propagates and backs off with the data kept.
   private async push(token: string, segments: StoredSegment[]): Promise<Progress> {
     const { store, api, clock, log } = this.deps
     const articles = await store.articles([...new Set(segments.map((s) => s.canonicalUrl))])
@@ -107,7 +110,7 @@ export class SyncService {
         segments: segments.map(plain),
       })
     } catch (e) {
-      if (!isApiError(e) || !POISON.includes(e.status)) throw e
+      if (!isApiError(e, TOO_LARGE)) throw e
       const only = segments[0]!
       if (segments.length === 1) {
         await store.deleteSegments([only.id])
