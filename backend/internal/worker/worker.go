@@ -63,7 +63,9 @@ func New(d Deps) *Worker {
 		d.Jitter = func() time.Duration { return time.Duration(rand.IntN(4)) * time.Second }
 	}
 	w := &Worker{Deps: d}
-	w.handlers = map[queue.Type]handlerFunc{}
+	w.handlers = map[queue.Type]handlerFunc{
+		queue.TypeArticle: w.handleArticle,
+	}
 	return w
 }
 
