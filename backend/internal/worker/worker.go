@@ -106,6 +106,11 @@ func (w *Worker) handleRecord(ctx context.Context, rec events.SQSMessage) error 
 }
 
 // classify maps a handler error to ack (nil), a back-off, or a plain failure (spec §2.15).
+// Retried (failed, redelivered, DLQ after maxReceive so it stays visible): 5xx, 409
+// conflict_error (retryable per Notion) and a 401 that escaped session.call, which
+// means the refresh endpoint rejected us (e.g. invalid_client), not a revoked token.
+// Acked and logged: every other 4xx (400 validation_error poison, 403
+// restricted_resource, 404s the handlers did not translate).
 func (w *Worker) classify(ctx context.Context, err error) error {
 	if err == nil || errors.Is(err, errAck) {
 		return nil
@@ -121,7 +126,7 @@ func (w *Worker) classify(ctx context.Context, err error) error {
 			d = defaultBackoff
 		}
 		return &retryAfterError{delay: d + w.Jitter(), err: err}
-	case e.Status >= 500:
+	case e.Status >= 500, e.Status == http.StatusConflict, e.Status == http.StatusUnauthorized:
 		return err
 	default:
 		w.Log.ErrorContext(ctx, "worker: notion rejected request; dropping message",

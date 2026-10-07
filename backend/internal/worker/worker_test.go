@@ -66,6 +66,43 @@ func TestServerErrorIsRetriedWithoutVisibilityChange(t *testing.T) {
 	}
 }
 
+// Notion 409 conflict_error is documented as retryable: fail the message, no back-off.
+func TestConflictIsRetriedWithoutVisibilityChange(t *testing.T) {
+	e := newEnv(t)
+	e.w.handlers[queue.TypeArticle] = func(context.Context, queue.Message) error {
+		return &notion.APIError{Status: 409, Code: "conflict_error"}
+	}
+	if fails := e.handle(queue.Article(testBot, "h")); len(fails) != 1 || len(e.vis.calls) != 0 {
+		t.Fatalf("fails %+v vis %v", fails, e.vis.calls)
+	}
+}
+
+// A 401 that escapes session.call means the refresh endpoint itself rejected us
+// (e.g. invalid_client): retry so the message reaches the DLQ instead of vanishing.
+func TestUnauthorizedIsRetried(t *testing.T) {
+	e := newEnv(t)
+	e.w.handlers[queue.TypeArticle] = func(context.Context, queue.Message) error {
+		return &notion.APIError{Status: 401, Code: "unauthorized"}
+	}
+	if fails := e.handle(queue.Article(testBot, "h")); len(fails) != 1 || len(e.vis.calls) != 0 {
+		t.Fatalf("fails %+v vis %v", fails, e.vis.calls)
+	}
+}
+
+// Other 4xx (here 403 restricted_resource) are poison: log and ack.
+func TestForbiddenIsAcked(t *testing.T) {
+	e := newEnv(t)
+	e.w.handlers[queue.TypeArticle] = func(context.Context, queue.Message) error {
+		return &notion.APIError{Status: 403, Code: "restricted_resource"}
+	}
+	if fails := e.handle(queue.Article(testBot, "h")); len(fails) != 0 {
+		t.Fatalf("fails %+v", fails)
+	}
+	if !strings.Contains(e.logs.String(), "restricted_resource") {
+		t.Fatal("dropped message not logged")
+	}
+}
+
 // §2.15: 400 validation_error is a poison message: log and ack.
 func TestValidationErrorIsAcked(t *testing.T) {
 	e := newEnv(t)
