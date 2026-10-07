@@ -28,9 +28,9 @@ func (s *Service) syncArticle(ctx context.Context, job port.Job) error {
 	}
 
 	switch {
-	case art.NotionPageID != "" && !domain.SameID(art.NotionDataSourceID, inst.LibraryDSID):
-		// R1: the page lives in a database this installation no longer writes to (or has no recorded one). Its
-		// property ids differ from ours, so a PATCH would be rejected; re-create instead.
+	case art.NotionPageID != "" && art.NotionDataSourceID != "" && !domain.SameID(art.NotionDataSourceID, inst.LibraryDSID):
+		// R1: the page lives in a database this installation no longer writes to. Its property ids differ
+		// from ours, so a PATCH would be rejected; re-create instead.
 		return s.forgetArticlePage(ctx, inst.ID, job)
 	case art.NotionPageID == "":
 		if art.TotalSeconds < int64(s.Policy.MinCreateSeconds) {
@@ -43,14 +43,28 @@ func (s *Service) syncArticle(ctx context.Context, job port.Job) error {
 		err := sess.call(ctx, func(tok string) error {
 			return s.Pages.UpdateArticlePage(ctx, tok, sess.db(), art.NotionPageID, *art, completed)
 		})
-		if port.IsNotionKind(err, port.NotionPageGone) {
+		legacy := art.NotionDataSourceID == ""
+		if port.IsNotionKind(err, port.NotionPageGone) || (legacy && isBadRequest(err)) {
 			return s.forgetArticlePage(ctx, inst.ID, job)
 		}
 		if err != nil {
 			return err
 		}
+		if legacy {
+			// R1: a legacy row (no recorded data source) accepted the PATCH, so the page is in our database:
+			// back-fill instead of re-creating (a re-create would orphan it, e.g. for URLs Notion cannot query).
+			if err := s.Reading.SetArticlePage(ctx, inst.ID, job.URLHash, art.NotionPageID, art.NotionURL, inst.LibraryDSID); err != nil {
+				return err
+			}
+		}
 	}
 	return s.Reading.MarkArticleSynced(ctx, inst.ID, job.URLHash, art.Version, completed, s.Now())
+}
+
+// isBadRequest reports a Notion 400 rejection: the property ids do not match the page's database.
+func isBadRequest(err error) bool {
+	e, ok := port.NotionErrorOf(err)
+	return ok && e.Kind == port.NotionRejected && e.Status == 400
 }
 
 // forgetArticlePage clears the page link and re-delivers the job, which then creates

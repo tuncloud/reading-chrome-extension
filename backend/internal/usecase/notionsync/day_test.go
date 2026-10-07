@@ -194,6 +194,59 @@ func TestDayPageWithoutDataSourceIsRelinked(t *testing.T) {
 	if f := e.handle(dayMsg()); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
 	}
+	if n := len(e.ns.Calls("PATCH", "/v1/pages/"+pg.ID)); n != 1 {
+		t.Fatalf("PATCHed in place %d times, want 1", n)
+	}
+	if more := e.q.Drain(); len(more) != 0 {
+		t.Fatalf("requeued: %+v", more)
+	}
+	d, err := e.db.Store.GetDay(ctx, testBot, today)
+	must(t, err)
+	if d.NotionPageID != pg.ID || d.NotionDataSourceID != e.tpl.DailyDS {
+		t.Fatalf("day %+v", d)
+	}
+}
+
+func TestDayWithoutDataSourceFallsBackToForget(t *testing.T) {
+	for name, f := range map[string]notiontest.Fail{
+		"page gone": {Status: 404, Code: "object_not_found", Message: "gone"},
+		"400":       {Status: 400, Code: "validation_error", Message: "property does not exist"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			e.seedInstallation("tok", "rt")
+			pg := e.ns.AddPage(e.tpl.DailyDS, map[string]any{pid("Date"): map[string]any{"date": map[string]any{"start": today}}})
+			e.read(artURL, 0, 60, 0.5)
+			must(t, e.db.Store.SetDayPage(ctx, testBot, today, pg.ID, ""))
+			e.ns.FailNext("PATCH", "/v1/pages/"+pg.ID, f)
+
+			if fl := e.handle(dayMsg()); len(fl) != 0 {
+				t.Fatalf("failures %+v", fl)
+			}
+			d, err := e.db.Store.GetDay(ctx, testBot, today)
+			must(t, err)
+			if d.NotionPageID != "" {
+				t.Fatalf("page link not cleared: %+v", d)
+			}
+			sent := e.q.Drain()
+			if len(sent) != 1 || sent[0].Message != dayMsg() {
+				t.Fatalf("requeue %+v", sent)
+			}
+		})
+	}
+}
+
+// R1: a recorded, different data source is stale: forget, requeue, adopt.
+func TestDayPageInOtherDataSourceIsRelinked(t *testing.T) {
+	e := newEnv(t)
+	e.seedInstallation("tok", "rt")
+	pg := e.ns.AddPage(e.tpl.DailyDS, map[string]any{pid("Date"): map[string]any{"date": map[string]any{"start": today}}})
+	e.read(artURL, 0, 60, 0.5)
+	must(t, e.db.Store.SetDayPage(ctx, testBot, today, pg.ID, "old-ds"))
+
+	if f := e.handle(dayMsg()); len(f) != 0 {
+		t.Fatalf("failures %+v", f)
+	}
 	if n := len(e.ns.Calls("PATCH", "/v1/pages/"+pg.ID)); n != 0 {
 		t.Fatalf("PATCHed in place %d times", n)
 	}

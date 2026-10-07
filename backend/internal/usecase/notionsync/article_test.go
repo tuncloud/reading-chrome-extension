@@ -329,6 +329,86 @@ func TestArticlePageWithoutDataSourceIsRelinked(t *testing.T) {
 	if f := e.handle(articleMsg()); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
 	}
+	if n := len(e.ns.Calls("PATCH", "/v1/pages/"+pg.ID)); n != 1 {
+		t.Fatalf("PATCHed in place %d times, want 1", n)
+	}
+	if more := e.q.Drain(); len(more) != 0 {
+		t.Fatalf("requeued: %+v", more)
+	}
+	a := e.article(artURL)
+	if a.NotionPageID != pg.ID || a.NotionDataSourceID != e.tpl.LibraryDS || a.NotionSyncedVersion != 1 {
+		t.Fatalf("article %+v", a)
+	}
+}
+
+// R1: a legacy row for a URL Notion cannot query (> 2000 chars) must be PATCHed in place, never re-created.
+func TestArticleLongURLWithoutDataSourceIsNotDuplicated(t *testing.T) {
+	e := newEnv(t)
+	e.seedInstallation("tok", "rt")
+	long := "https://example.com/" + strings.Repeat("a", 2001-len("https://example.com/"))
+	pg := e.ns.AddPage(e.tpl.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": long}})
+	e.read(long, 0, 120, 0.5)
+	must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(long), pg.ID, pg.URL, ""))
+
+	msg := queue.Article(testBot, domain.URLHash(long))
+	if f := e.handle(msg); len(f) != 0 {
+		t.Fatalf("failures %+v", f)
+	}
+	if n := len(e.libraryPages()); n != 1 {
+		t.Fatalf("%d library pages, want 1", n)
+	}
+	if n := len(e.ns.Calls("POST", "/v1/pages")); n != 0 {
+		t.Fatalf("%d creates", n)
+	}
+	a := e.article(long)
+	if a.NotionPageID != pg.ID || a.NotionDataSourceID != e.tpl.LibraryDS {
+		t.Fatalf("article %+v", a)
+	}
+	if more := e.q.Drain(); len(more) != 0 {
+		t.Fatalf("requeued: %+v", more)
+	}
+}
+
+// R1: no recorded data source and the PATCH reports the page gone, or rejects the property ids (the page sits in an
+// old database): forget and requeue.
+func TestArticleWithoutDataSourceFallsBackToForget(t *testing.T) {
+	for name, f := range map[string]notiontest.Fail{
+		"page gone": {Status: 404, Code: "object_not_found", Message: "gone"},
+		"400":       {Status: 400, Code: "validation_error", Message: "property does not exist"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			e.seedInstallation("tok", "rt")
+			pg := e.ns.AddPage(e.tpl.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
+			e.read(artURL, 0, 120, 0.5)
+			must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), pg.ID, pg.URL, ""))
+			e.ns.FailNext("PATCH", "/v1/pages/"+pg.ID, f)
+
+			if fl := e.handle(articleMsg()); len(fl) != 0 {
+				t.Fatalf("failures %+v", fl)
+			}
+			if a := e.article(artURL); a.NotionPageID != "" {
+				t.Fatalf("page link not cleared: %+v", a)
+			}
+			sent := e.q.Drain()
+			if len(sent) != 1 || sent[0].Message != articleMsg() {
+				t.Fatalf("requeue %+v", sent)
+			}
+		})
+	}
+}
+
+// R1: a recorded, different data source is stale: forget, requeue, then adopt or create in the current Library.
+func TestArticlePageInOtherDataSourceIsRelinked(t *testing.T) {
+	e := newEnv(t)
+	e.seedInstallation("tok", "rt")
+	pg := e.ns.AddPage(e.tpl.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
+	e.read(artURL, 0, 120, 0.5)
+	must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), pg.ID, pg.URL, "old-ds"))
+
+	if f := e.handle(articleMsg()); len(f) != 0 {
+		t.Fatalf("failures %+v", f)
+	}
 	if n := len(e.ns.Calls("PATCH", "/v1/pages/"+pg.ID)); n != 0 {
 		t.Fatalf("PATCHed in place %d times", n)
 	}

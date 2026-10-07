@@ -25,7 +25,7 @@ func (s *Service) syncDay(ctx context.Context, job port.Job) error {
 	if err != nil {
 		return err
 	}
-	if day.NotionPageID != "" && !domain.SameID(day.NotionDataSourceID, inst.DailyDSID) {
+	if day.NotionPageID != "" && day.NotionDataSourceID != "" && !domain.SameID(day.NotionDataSourceID, inst.DailyDSID) {
 		return s.forgetDayPage(ctx, inst.ID, job) // R1, as for articles
 	}
 	pageIDs, err := s.dayArticlePages(ctx, inst.ID, day.ArticleHashes)
@@ -44,11 +44,17 @@ func (s *Service) syncDay(ctx context.Context, job port.Job) error {
 		err := sess.call(ctx, func(tok string) error {
 			return s.Pages.UpdateDayPage(ctx, tok, sess.db(), day.NotionPageID, *day, pageIDs)
 		})
-		if port.IsNotionKind(err, port.NotionPageGone) {
+		legacy := day.NotionDataSourceID == ""
+		if port.IsNotionKind(err, port.NotionPageGone) || (legacy && isBadRequest(err)) {
 			return s.forgetDayPage(ctx, inst.ID, job)
 		}
 		if err != nil {
 			return err
+		}
+		if legacy {
+			if err := s.Reading.SetDayPage(ctx, inst.ID, job.Date, day.NotionPageID, inst.DailyDSID); err != nil {
+				return err
+			}
 		}
 	}
 	return s.Reading.MarkDaySynced(ctx, inst.ID, job.Date, day.Version)
