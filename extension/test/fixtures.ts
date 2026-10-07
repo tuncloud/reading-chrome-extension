@@ -1,0 +1,10 @@
+// The exact body of the backend's GET /v1/config defaults (backend/internal/platform/config/default_config.json).
+export const wireConfig = {
+  version: 1,
+  tracking: {
+    idle_seconds: 60, segment_seconds: 60, min_create_seconds: 30, complete_progress: 0.9,
+    complete_time_ratio: 0.3, words_per_minute: 230, sync_interval_minutes: 2, sync_threshold_segments: 20,
+  },
+  freedium_hosts: ['freedium-mirror.cfd', 'freedium.cfd'],
+  strip_query_params: ['utm_*', 'fbclid', 'gclid', 'mc_cid', 'mc_eid', 'ref', 'source'],
+}
