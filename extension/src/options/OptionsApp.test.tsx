@@ -4,7 +4,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { installChrome } from '../../test/chrome'
 import { testDb } from '../../test/helpers'
 import { DomainService } from '../background/domains'
-import type { SessionState } from '../background/session'
+import type { SessionState } from '../shared/types'
 import { OptionsApp } from './OptionsApp'
 import type { OptionsServices } from './controller'
 

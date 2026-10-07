@@ -7,7 +7,6 @@ import type { Db, KvKey } from './db'
 import { deviceName } from './device'
 import { challengeFor, randomVerifier } from './pkce'
 
-export type { ConnectResult, SessionState } from '../shared/types'
 
 export const AUTH_KEYS: readonly KvKey[] = ['device_token', 'device_id', 'user', 'installation']
 

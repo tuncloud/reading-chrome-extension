@@ -1,4 +1,4 @@
-// The snake_case JSON of spec §2 and its mapping to application types.
+// The snake_case JSON of spec §2 and its mapping to shared types.
 import type { ArticleStatus, Installation, Me, PushBody, PushResult, TokenGrant } from '../shared/types'
 
 export interface WireInstallation {

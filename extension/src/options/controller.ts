@@ -2,7 +2,8 @@
 // then re-read what changed and re-render with a short note.
 import { isApiError } from '../shared/errors'
 import type { DomainService } from '../background/domains'
-import type { ConnectResult, SessionService } from '../background/session'
+import type { SessionService } from '../background/session'
+import type { ConnectResult } from '../shared/types'
 import type { SetupService } from '../background/setup'
 import { connectMessage } from '../popup/messages'
 import type { OptionsActions, OptionsState } from './OptionsView'

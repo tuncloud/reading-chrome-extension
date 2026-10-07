@@ -1,4 +1,4 @@
-// Popup composition root (spec T30): real adapters in, <PopupApp> out.
+// Popup composition root (spec T30): wires the popup feature folder's session, API and tab code into <PopupApp>.
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { sendToBackground, sendToTab } from '../shared/messaging'

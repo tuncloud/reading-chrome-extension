@@ -2,8 +2,7 @@
 // the text typed into its forms; everything else comes from the controller.
 import { useState, type FormEvent } from 'react'
 import type { DomainLists } from '../shared/domains'
-import type { SessionState } from '../background/session'
-import type { NotionPage } from '../shared/types'
+import type { NotionPage, SessionState } from '../shared/types'
 
 export interface OptionsState {
   session: SessionState

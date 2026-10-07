@@ -1,3 +1,4 @@
+// Logger shape shared by every feature folder; each injects its own console-backed instance.
 export type Log = {
   info(message: string, ...details: unknown[]): void
   warn(message: string, ...details: unknown[]): void

@@ -7,7 +7,7 @@ import { DomainService } from '../background/domains'
 import { SessionService } from '../background/session'
 import type { Db } from '../background/db'
 import { SetupService } from '../background/setup'
-import type { ConnectResult } from '../background/session'
+import type { ConnectResult } from '../shared/types'
 import { createOptionsController } from './controller'
 import type { OptionsState } from './OptionsView'
 

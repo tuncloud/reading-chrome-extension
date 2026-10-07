@@ -2,8 +2,7 @@
 import { roundMinutes, todaySeconds, type LocalArticle } from '../shared/reading'
 import type { ApiClient } from '../background/api'
 import type { Db } from '../background/db'
-import type { SessionState } from '../background/session'
-import type { ArticleStatus } from '../shared/types'
+import type { ArticleStatus, SessionState } from '../shared/types'
 
 export interface ArticleView {
   url: string

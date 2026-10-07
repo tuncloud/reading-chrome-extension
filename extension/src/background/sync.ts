@@ -7,7 +7,6 @@ import type { ApiClient } from './api'
 import type { Db } from './db'
 import type { PushResult, SyncOutcome } from '../shared/types'
 
-export type { SyncOutcome } from '../shared/types'
 
 // PUSH_LIMIT is the backend's per-request segment cap (C25).
 export const PUSH_LIMIT = 50

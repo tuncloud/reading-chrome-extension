@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { PopupModel } from './model'
-import type { ConnectResult } from '../background/session'
+import type { ConnectResult } from '../shared/types'
 import { PopupApp, type PopupAppProps } from './PopupApp'
 
 afterEach(cleanup)

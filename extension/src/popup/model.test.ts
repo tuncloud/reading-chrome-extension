@@ -4,7 +4,7 @@ import type { Db } from '../background/db'
 import { roundMinutes } from '../shared/reading'
 import { NetworkError } from '../shared/errors'
 import { buildPopupModel } from './model'
-import type { SessionState } from '../background/session'
+import type { SessionState } from '../shared/types'
 
 const connected = (status: string, extra: object = {}): SessionState => ({
   kind: 'connected', user: { id: 'u1', name: 'T' }, installation: { ...INSTALLATION, status, ...extra },
