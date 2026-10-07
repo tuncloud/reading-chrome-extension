@@ -44,5 +44,7 @@ func New(d Deps) *echo.Echo {
 	v1 := e.Group("/v1")
 	v1.GET("/config", h.getConfig)
 	v1.GET("/me", h.getMe, h.requireDevice)
+	v1.GET("/oauth/notion/start", h.oauthStart)
+	v1.GET("/oauth/notion/callback", h.oauthCallback)
 	return e
 }
