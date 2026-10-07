@@ -73,6 +73,23 @@ describe('SessionService', () => {
       const api = new FakeApi({ exchangeCode: async () => { throw new NetworkError('offline') } })
       expect(await service(api).connect()).toEqual({ ok: false, reason: 'network_error' })
     })
+
+    test('malformed redirect URL → invalid_response', async () => {
+      flow.respond = async () => 'not a url'
+      expect(await service(new FakeApi()).connect()).toEqual({ ok: false, reason: 'invalid_response' })
+      await nothingStored()
+    })
+
+    test('post-exchange refresh returns 401 → unauthorized, nothing stored', async () => {
+      const log = new MemoryLog()
+      const api = new FakeApi({ me: async () => { throw new ApiError(401, 'unauthorized', 'revoked') } })
+      const svc = new SessionService({
+        store, api, authFlow: flow, pkce: new FakePkce(), deviceName: () => 'Chrome on macOS', log, afterConnect,
+      })
+      expect(await svc.connect()).toEqual({ ok: false, reason: 'unauthorized' })
+      await nothingStored()
+      expect(afterConnect).not.toHaveBeenCalled()
+    })
   })
 
   describe('state and refresh', () => {
@@ -106,6 +123,18 @@ describe('SessionService', () => {
       await store.setKv('installation', INSTALLATION)
       const api = new FakeApi({ me: async () => { throw new NetworkError('offline') } })
       expect(await service(api).refresh()).toEqual({ kind: 'connected', user: null, installation: INSTALLATION })
+    })
+
+    test('refresh on 500 logs the error and keeps the cached state', async () => {
+      await store.setKv('device_token', 'rt_x')
+      await store.setKv('installation', INSTALLATION)
+      const log = new MemoryLog()
+      const api = new FakeApi({ me: async () => { throw new ApiError(500, 'internal', 'boom') } })
+      const svc = new SessionService({
+        store, api, authFlow: flow, pkce: new FakePkce(), deviceName: () => 'Chrome on macOS', log, afterConnect,
+      })
+      expect(await svc.refresh()).toEqual({ kind: 'connected', user: null, installation: INSTALLATION })
+      expect(log.lines.some((line) => line.includes('refresh failed'))).toBe(true)
     })
   })
 

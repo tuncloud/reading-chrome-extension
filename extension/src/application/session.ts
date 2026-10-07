@@ -42,7 +42,12 @@ export class SessionService {
       log.info(`connect: auth window closed (${e instanceof Error ? e.message : String(e)})`)
       return { ok: false, reason: 'cancelled' }
     }
-    const params = new URL(redirect).searchParams
+    let params: URLSearchParams
+    try {
+      params = new URL(redirect).searchParams
+    } catch {
+      return { ok: false, reason: 'invalid_response' }
+    }
     const error = params.get('error')
     if (error) return { ok: false, reason: error }
     const code = params.get('code')
@@ -53,7 +58,8 @@ export class SessionService {
       await store.setKv('device_id', grant.deviceId)
       await store.setKv('user', grant.user)
       await store.setKv('installation', grant.installation)
-      await this.refresh() // T29: GET /v1/me after the exchange; best-effort, it never throws
+      const after = await this.refresh() // T29: GET /v1/me after the exchange; best-effort, it never throws
+      if (after.kind === 'disconnected') return { ok: false, reason: 'unauthorized' }
       this.deps.afterConnect?.()
       return { ok: true, installation: grant.installation }
     } catch (e) {
@@ -65,7 +71,7 @@ export class SessionService {
 
   // refresh reloads GET /v1/me; offline it returns the cached state.
   async refresh(): Promise<SessionState> {
-    const { store, api } = this.deps
+    const { store, api, log } = this.deps
     const token = await store.getKv('device_token')
     if (!token) return { kind: 'disconnected' }
     try {
@@ -77,6 +83,9 @@ export class SessionService {
       if (isApiError(e, 401)) {
         await this.forget()
         return { kind: 'disconnected' }
+      }
+      if (!(e instanceof NetworkError)) {
+        log.warn(`session: refresh failed (${e instanceof Error ? e.message : String(e)})`)
       }
       return this.state()
     }
