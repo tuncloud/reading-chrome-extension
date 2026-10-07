@@ -148,6 +148,7 @@ func (h *handlers) upsertInstallation(ctx context.Context, uid string, tok *noti
 	if err != nil {
 		return nil, err
 	}
+	prevLibrary, prevDaily, prevSetupError := inst.LibraryDSID, inst.DailyDSID, inst.SetupError
 	aad := []byte(tok.BotID)
 	if inst.AccessTokenEnc, err = h.Config.Keys.Seal([]byte(tok.AccessToken), aad); err != nil {
 		return nil, err
@@ -165,7 +166,6 @@ func (h *handlers) upsertInstallation(ctx context.Context, uid string, tok *noti
 	inst.TokenVersion++
 	inst.UserID, inst.WorkspaceID, inst.WorkspaceName, inst.WorkspaceIcon = uid, tok.WorkspaceID, tok.WorkspaceName, tok.WorkspaceIcon
 	inst.UpdatedAt, inst.SetupError = store.Timestamp(now), ""
-	prevLibrary, prevDaily := inst.LibraryDSID, inst.DailyDSID
 
 	switch {
 	case tok.DuplicatedTemplateID != "":
@@ -195,9 +195,10 @@ func (h *handlers) upsertInstallation(ctx context.Context, uid string, tok *noti
 	}
 	if inst.Status == store.StatusActive {
 		// New databases (e.g. a newly duplicated template) → re-send everything (scenario 10).
-		full := inst.LibraryDSID != prevLibrary || inst.DailyDSID != prevDaily
-		if err := h.setup.Resync(ctx, tok.BotID, full); err != nil {
-			h.Log.WarnContext(ctx, "oauth: resync enqueue failed", "err", err)
+		// So does recovering from a failed resync, which may have been a full one.
+		full := inst.LibraryDSID != prevLibrary || inst.DailyDSID != prevDaily || prevSetupError == setupErrResyncFailed
+		if err := h.resync(ctx, inst, full); err != nil {
+			return nil, err
 		}
 	}
 	return inst, nil

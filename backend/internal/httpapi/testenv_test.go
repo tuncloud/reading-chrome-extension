@@ -42,6 +42,7 @@ type testEnv struct {
 	cfg    *config.Config
 	now    time.Time
 	logs   *bytes.Buffer
+	sleeps []time.Duration
 	e      *echo.Echo
 }
 
@@ -62,7 +63,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	env.cfg = cfg
 	nc := &notion.Client{BaseURL: cfg.NotionAPIBase, Version: cfg.NotionVersion, ClientID: cfg.NotionClientID, ClientSecret: cfg.NotionClientSecret}
 	env.e = httpapi.New(httpapi.Deps{Config: cfg, Store: env.db.Store, Notion: nc, Queue: env.queue,
-		Now: func() time.Time { return env.now }, Log: slog.New(slog.NewTextHandler(env.logs, nil))})
+		Now: func() time.Time { return env.now }, Log: slog.New(slog.NewTextHandler(env.logs, nil)),
+		Sleep: func(d time.Duration) { env.sleeps = append(env.sleeps, d) }})
 	return env
 }
 

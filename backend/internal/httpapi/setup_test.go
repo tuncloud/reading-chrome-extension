@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -162,5 +163,48 @@ func TestPostSetupAfterDeletedLibraryResyncsEverything(t *testing.T) {
 	}
 	if got := env.queue.Messages(); !reflect.DeepEqual(got, fullResync()) {
 		t.Fatalf("resync enqueued %+v, want %+v", got, fullResync())
+	}
+}
+
+// I3: when the backlog can't be enqueued even after retries, the installation goes back to
+// needs_setup (resync_failed) instead of staying active with a stranded backlog; running
+// setup again (idempotent) re-runs the resync.
+func TestPostSetupResyncFailureNeedsSetupUntilRetried(t *testing.T) {
+	env := newTestEnv(t)
+	uid, tok := env.seedUser()
+	env.seedInstallation(uid, store.StatusNeedsSetup)
+	env.seedSyncedRead()
+	env.queue.Err = errors.New("sqs down")
+
+	rec := env.do("POST", "/v1/setup", map[string]string{"parent_page_id": "parent-1"}, tok)
+	type view struct {
+		Status     string `json:"status"`
+		SetupError string `json:"setup_error"`
+	}
+	if body := decode[view](t, rec); rec.Code != 200 || body.Status != "needs_setup" || body.SetupError != "resync_failed" {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	inst, err := env.db.Store.GetInstallation(context.Background(), testBotID)
+	must(t, err)
+	if inst.Status != store.StatusNeedsSetup || inst.SetupError != "resync_failed" {
+		t.Fatalf("installation %+v", inst)
+	}
+	if !strings.Contains(env.logs.String(), "level=ERROR") {
+		t.Fatalf("no error logged:\n%s", env.logs)
+	}
+	if want := []time.Duration{100 * time.Millisecond, 200 * time.Millisecond}; !reflect.DeepEqual(env.sleeps, want) {
+		t.Fatalf("back-offs %v, want %v (3 attempts)", env.sleeps, want)
+	}
+
+	env.queue.Err = nil
+	rec = env.do("POST", "/v1/setup", map[string]string{"parent_page_id": "parent-1"}, tok)
+	if body := decode[view](t, rec); rec.Code != 200 || body.Status != "active" || body.SetupError != "" {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if got := env.queue.Messages(); !reflect.DeepEqual(got, fullResync()) {
+		t.Fatalf("resync enqueued %+v, want %+v", got, fullResync())
+	}
+	if n := len(env.notion.Calls("POST", "/v1/databases")); n != 2 {
+		t.Fatalf("%d database creates across both attempts, want 2", n)
 	}
 }

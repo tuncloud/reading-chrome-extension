@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -101,8 +102,37 @@ func (h *handlers) postSetup(c echo.Context) error {
 	inst.Status, inst.SetupError = store.StatusActive, ""
 	// Setup always points the installation at (possibly) different databases, so pages
 	// synced into the old ones must be written again: full resync (scenario 10).
-	if err := h.setup.Resync(ctx, inst.ID(), true); err != nil {
-		h.Log.WarnContext(ctx, "setup: resync enqueue failed", "err", err)
+	if err := h.resync(ctx, inst, true); err != nil {
+		return err
 	}
 	return c.JSON(http.StatusOK, viewInstallation(inst))
+}
+
+const (
+	resyncAttempts = 3
+	resyncBackoff  = 100 * time.Millisecond
+	// setupErrResyncFailed marks an installation whose backlog could not be enqueued.
+	setupErrResyncFailed = "resync_failed"
+)
+
+// resync enqueues the installation's backlog (T22; full when its databases changed),
+// retrying briefly. If it still fails, the installation goes back to needs_setup with
+// setup_error "resync_failed" instead of staying active with a stranded backlog:
+// re-running setup or reconnecting re-runs the resync (a full one, see upsertInstallation).
+func (h *handlers) resync(ctx context.Context, inst *store.Installation, full bool) error {
+	var err error
+	for attempt := 1; attempt <= resyncAttempts; attempt++ {
+		if err = h.setup.Resync(ctx, inst.ID(), full); err == nil {
+			return nil
+		}
+		if attempt < resyncAttempts {
+			h.Sleep(time.Duration(attempt) * resyncBackoff)
+		}
+	}
+	h.Log.ErrorContext(ctx, "resync enqueue failed; installation needs setup", "installation_id", inst.ID(), "err", err)
+	if err := h.Store.SetInstallationStatus(ctx, inst.ID(), store.StatusNeedsSetup, setupErrResyncFailed, h.Now()); err != nil {
+		return err
+	}
+	inst.Status, inst.SetupError = store.StatusNeedsSetup, setupErrResyncFailed
+	return nil
 }

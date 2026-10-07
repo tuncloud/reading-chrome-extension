@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"reflect"
@@ -241,5 +242,33 @@ func TestOAuthReconnectSameDatabasesSkipsSyncedItems(t *testing.T) {
 	env.connect(t, tokenResponse(nil))
 	if got := env.queue.Messages(); len(got) != 0 {
 		t.Fatalf("resync enqueued %+v, want nothing", got)
+	}
+}
+
+// I3: a resync that keeps failing in the callback leaves the installation in needs_setup
+// (resync_failed) while the user still signs in. Reconnecting re-runs a full resync even
+// with unchanged databases, since the failed one may have been a full one.
+func TestOAuthCallbackResyncFailureNeedsSetupUntilReconnect(t *testing.T) {
+	env := newTestEnv(t)
+	env.notion.AddTemplate("tpl-1")
+	env.connect(t, tokenResponse("tpl-1"))
+	env.seedSyncedRead()
+	env.queue.Err = errors.New("sqs down")
+
+	env.notion.AddTemplate("tpl-2")
+	env.connect(t, tokenResponse("tpl-2")) // still redirects with a code
+	inst, err := env.db.Store.GetInstallation(context.Background(), testBotID)
+	must(t, err)
+	if inst.Status != store.StatusNeedsSetup || inst.SetupError != "resync_failed" {
+		t.Fatalf("installation %+v", inst)
+	}
+
+	env.queue.Err = nil
+	env.connect(t, tokenResponse(nil))
+	if inst, _ = env.db.Store.GetInstallation(context.Background(), testBotID); inst.Status != store.StatusActive || inst.SetupError != "" {
+		t.Fatalf("installation %+v", inst)
+	}
+	if got := env.queue.Messages(); !reflect.DeepEqual(got, fullResync()) {
+		t.Fatalf("resync enqueued %+v, want %+v", got, fullResync())
 	}
 }

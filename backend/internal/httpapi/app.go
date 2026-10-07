@@ -24,6 +24,7 @@ type Deps struct {
 	Queue  queue.Sender
 	Now    func() time.Time
 	Log    *slog.Logger
+	Sleep  func(time.Duration) // retry back-off; nil means time.Sleep
 }
 
 type handlers struct {
@@ -42,6 +43,9 @@ func New(d Deps) *echo.Echo {
 	e.Use(requestLogger(d.Log))
 	e.Use(middleware.BodyLimit("256K"))
 
+	if d.Sleep == nil {
+		d.Sleep = time.Sleep
+	}
 	h := &handlers{
 		Deps:  d,
 		setup: &setup.Service{Notion: d.Notion, Store: d.Store, Queue: d.Queue, Bucket: d.Config.DebounceBucket, Now: d.Now},
