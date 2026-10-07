@@ -77,7 +77,7 @@ export function violation(fromRel: string, target: Target): string | null {
 }
 
 function candidates(rel: string): string[] {
-  return /\.tsx?$/.test(rel) ? [rel] : [`${rel}.ts`, `${rel}.tsx`, `${rel}/index.ts`]
+  return /\.tsx?$/.test(rel) ? [rel] : [`${rel}.ts`, `${rel}.tsx`, `${rel}/index.ts`, `${rel}/index.tsx`]
 }
 
 // reactImporters walks the relative-import closure of entry over files and returns the files that import react.
@@ -116,7 +116,8 @@ describe('dependency rules', () => {
     expect(problems).toEqual([])
   })
 
-  test.each(['content/index.ts', 'background/index.ts', 'entry/background.ts'])('%s import closure never reaches react', (entry) => {
+  test.each(['content/index.ts', 'entry/background.ts'])('%s import closure never reaches react', (entry) => {
+    expect(sources.has(entry)).toBe(true)
     expect(reactImporters(entry, sources)).toEqual([])
   })
 })
@@ -146,8 +147,10 @@ describe('rule table', () => {
       ['a/entry.ts', "import { b } from './b'\nimport x from './dir'"],
       ['a/b.tsx', "import React from 'react'"],
       ['a/dir/index.ts', "export const y = 1"],
+      ['a/view/index.tsx', "import { createRoot } from 'react-dom'"],
     ])
-    expect(reactImporters('a/entry.ts', files)).toEqual(['a/b.tsx imports react'])
+    files.set('a/entry.ts', "import { b } from './b'\nimport x from './dir'\nimport v from './view'")
+    expect(reactImporters('a/entry.ts', files)).toEqual(['a/view/index.tsx imports react-dom', 'a/b.tsx imports react'])
   })
 
   test('comment markers inside strings do not hide imports', () => {
