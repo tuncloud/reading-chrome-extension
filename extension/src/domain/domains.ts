@@ -21,6 +21,8 @@ export function normalizeDomain(input: string): string | null {
     return null
   }
   host = host.replace(/^www\./, '').replace(/\.$/, '')
+  // Reject IP literals (IPv4: last label is all digits; IPv6: contains colons)
+  if (/\.\d+$/.test(host) || host.includes(':')) return null
   return HOSTNAME.test(host) ? host : null
 }
 

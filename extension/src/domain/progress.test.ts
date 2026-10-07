@@ -13,4 +13,5 @@ test('progress is clamped to [0, 1]', () => {
 
 test('an empty root reads as 0, never NaN', () => {
   expect(readingProgress({ scrollY: 0, viewportHeight: 800, rootTop: 0, rootHeight: 0 })).toBe(0)
+  expect(readingProgress({ scrollY: Number.NaN, viewportHeight: 800, rootTop: 0, rootHeight: 3000 })).toBe(0)
 })

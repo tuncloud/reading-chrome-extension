@@ -11,5 +11,6 @@ export interface ScrollGeometry {
 export function readingProgress(g: ScrollGeometry): number {
   if (!(g.rootHeight > 0)) return 0
   const p = (g.scrollY + g.viewportHeight - g.rootTop) / g.rootHeight
+  if (!Number.isFinite(p)) return 0
   return Math.min(1, Math.max(0, p))
 }

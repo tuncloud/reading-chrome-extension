@@ -11,7 +11,7 @@ describe('normalizeDomain', () => {
     expect(normalizeDomain(input)).toBe(want)
   })
 
-  test.each(['', 'localhost', 'not a domain', 'exa mple.com', '-bad.com', 'chrome://extensions'])('rejects %j', (input) => {
+  test.each(['', 'localhost', 'not a domain', 'exa mple.com', '-bad.com', 'chrome://extensions', '192.168.1.1', 'https://10.0.0.1/x'])('rejects %j', (input) => {
     expect(normalizeDomain(input)).toBeNull()
   })
 })

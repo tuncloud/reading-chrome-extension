@@ -1,7 +1,7 @@
 // Medium identity (spec T26): every Medium URL and every Freedium mirror of it maps to
 // https://medium.com/p/<post id>, so reading on any of them counts for one article.
 
-const POST_ID = /-?([0-9a-f]{10,16})$/
+const POST_ID = /(?:^|-)([0-9a-f]{10,16})$/
 
 export function isMediumHost(host: string): boolean {
   const h = host.toLowerCase()

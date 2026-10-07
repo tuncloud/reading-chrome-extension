@@ -57,5 +57,8 @@ describe('helpers', () => {
   test('mediumPostId reads the last segment', () => {
     expect(mediumPostId('/a/b-8f3c2a1b9d4e/')).toBe('8f3c2a1b9d4e')
     expect(mediumPostId('/a/b-xyz')).toBeNull()
+    expect(mediumPostId('/a/b-' + 'a'.repeat(32))).toBeNull()
+    expect(mediumPostId('/p/8f3c2a1b9d4e')).toBe('8f3c2a1b9d4e')
+    expect(mediumPostId('/a/designing-apis-8f3c2a1b9d4e')).toBe('8f3c2a1b9d4e')
   })
 })
