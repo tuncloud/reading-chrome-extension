@@ -58,5 +58,6 @@ func New(d Deps) *echo.Echo {
 	v1.POST("/setup", h.postSetup, h.requireDevice)
 	v1.POST("/articles/status", h.articlesStatus, h.requireDevice)
 	v1.POST("/sync/push", h.syncPush, h.requireDevice)
+	v1.DELETE("/me", h.deleteMe, h.requireDevice)
 	return e
 }

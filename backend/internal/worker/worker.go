@@ -66,6 +66,7 @@ func New(d Deps) *Worker {
 	w.handlers = map[queue.Type]handlerFunc{
 		queue.TypeArticle: w.handleArticle,
 		queue.TypeDay:     w.handleDay,
+		queue.TypePurge:   w.handlePurge,
 	}
 	return w
 }
