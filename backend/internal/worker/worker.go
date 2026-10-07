@@ -65,6 +65,7 @@ func New(d Deps) *Worker {
 	w := &Worker{Deps: d}
 	w.handlers = map[queue.Type]handlerFunc{
 		queue.TypeArticle: w.handleArticle,
+		queue.TypeDay:     w.handleDay,
 	}
 	return w
 }
