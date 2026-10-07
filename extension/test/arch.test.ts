@@ -73,11 +73,6 @@ function resolveImport(fromRel: string, spec: string): Target {
 export function violation(fromRel: string, target: Target): string | null {
   const from = layerOf(fromRel)
   if (from.layer === null) return `${fromRel} is outside the layer directories ${LAYERS.join(', ')}`
-  if ('pkg' in target && (target.pkg === 'react' || target.pkg === 'react-dom')) {
-    if (fromRel === 'entry/content.ts' || fromRel === 'entry/background.ts') {
-      return `${fromRel} must not bundle ${target.pkg}`
-    }
-  }
   if (from.layer === 'entry') return null
   if ('pkg' in target) {
     if (target.pkg === 'dexie' && from.layer === 'adapters' && from.sub === 'storage') return null
@@ -98,6 +93,39 @@ export function violation(fromRel: string, target: Target): string | null {
     return `adapters/${from.sub} may not import adapters/${to.sub}`
   }
   return null
+}
+
+// resolveFile finds the source file a relative import points at, or null when it is not in files.
+export function resolveFile(fromRel: string, spec: string, files: ReadonlySet<string>): string | null {
+  const joined = posix.normalize(posix.join(posix.dirname(fromRel), spec))
+  const candidates = /\.tsx?$/.test(joined)
+    ? [joined]
+    : [`${joined}.ts`, `${joined}.tsx`, `${joined}/index.ts`, `${joined}/index.tsx`]
+  return candidates.find((c) => files.has(c)) ?? null
+}
+
+// reactImporters walks the relative-import closure of entry and returns the files in it that
+// import react or react-dom, as "file imports pkg".
+export function reactImporters(entry: string, sources: ReadonlyMap<string, string>): string[] {
+  const files = new Set(sources.keys())
+  const seen = new Set<string>()
+  const found: string[] = []
+  const todo = [entry]
+  while (todo.length > 0) {
+    const f = todo.pop()!
+    if (seen.has(f)) continue
+    seen.add(f)
+    for (const spec of importsOf(sources.get(f) ?? '')) {
+      if (spec.startsWith('.')) {
+        const next = resolveFile(f, spec, files)
+        if (next) todo.push(next)
+      } else {
+        const pkg = resolveImport(f, spec)
+        if ('pkg' in pkg && (pkg.pkg === 'react' || pkg.pkg === 'react-dom')) found.push(`${f} imports ${pkg.pkg}`)
+      }
+    }
+  }
+  return found.sort()
 }
 
 // globalViolation flags browser globals used outside the layers allowed to touch them.
@@ -140,6 +168,49 @@ describe('layer rule', () => {
   })
 })
 
+describe('content and background bundles stay React-free', () => {
+  const sources = new Map(sourceFiles().map((f) => [f, readFileSync(join(SRC, f), 'utf8')]))
+
+  test.each(['entry/content.ts', 'entry/background.ts'])('%s import closure never reaches react', (entry) => {
+    expect(sources.has(entry)).toBe(true)
+    expect(reactImporters(entry, sources)).toEqual([])
+  })
+})
+
+describe('reactImporters', () => {
+  const sources = new Map([
+    ['entry/a.ts', "import { b } from '../adapters/x/b'\nimport './side'"],
+    ['adapters/x/b.ts', "import { c } from '../../ui/c'"],
+    ['ui/c/index.tsx', "import { useState } from 'react'"],
+    ['entry/side.ts', "export const s = 1"],
+    ['entry/clean.ts', "import { s } from './side'"],
+    ['entry/dyn.ts', "const m = import('react-dom/client')"],
+    ['entry/cycle.ts', "import './cycle'\nimport '@scope/pkg/x'"],
+    ['entry/comment.ts', "// import 'react'\nexport {}"],
+  ])
+
+  test.each([
+    ['entry/a.ts', ['ui/c/index.tsx imports react']],
+    ['entry/clean.ts', []],
+    ['entry/dyn.ts', ['entry/dyn.ts imports react-dom']],
+    ['entry/cycle.ts', []],
+    ['entry/comment.ts', []],
+  ] as const)('closure of %s', (entry, expected) => {
+    expect(reactImporters(entry, sources)).toEqual(expected)
+  })
+
+  test('resolveFile tries .ts, .tsx and index files, and gives up on unknown paths', () => {
+    const files = new Set(['a/b.ts', 'a/c.tsx', 'a/d/index.ts', 'a/e/index.tsx', 'a/f.tsx'])
+    expect(resolveFile('a/x.ts', './b', files)).toBe('a/b.ts')
+    expect(resolveFile('a/x.ts', './c', files)).toBe('a/c.tsx')
+    expect(resolveFile('a/x.ts', './d', files)).toBe('a/d/index.ts')
+    expect(resolveFile('a/x.ts', './e', files)).toBe('a/e/index.tsx')
+    expect(resolveFile('a/x.ts', './f.tsx', files)).toBe('a/f.tsx')
+    expect(resolveFile('a/x.ts', './missing', files)).toBeNull()
+    expect(resolveFile('a/y/x.ts', '../b', files)).toBe('a/b.ts')
+  })
+})
+
 describe('violation rules', () => {
   test.each([
     ['domain/url.ts', { rel: 'domain/medium.ts' }, false],
@@ -160,8 +231,7 @@ describe('violation rules', () => {
     ['application/popup-model.ts', { pkg: 'react' }, true],
     ['adapters/page/tracker-driver.ts', { pkg: 'react' }, true],
     ['entry/background.ts', { rel: 'adapters/storage/dexie-store.ts' }, false],
-    ['entry/content.ts', { pkg: 'react' }, true],
-    ['entry/background.ts', { pkg: 'react-dom' }, true],
+    ['entry/content.ts', { pkg: 'react' }, false], // bundles are policed by the import-closure test
     ['lib/x.ts', { rel: 'domain/url.ts' }, true],
   ] as const)('%s → %j forbidden=%s', (from, target, forbidden) => {
     expect(violation(from, target) !== null).toBe(forbidden)
