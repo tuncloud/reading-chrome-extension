@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 DDB_CONTAINER := reading-ddb
 
-.PHONY: test ddb-up ddb-down
+.PHONY: test ddb-up ddb-down run-local
 
 test:
 	go test ./...
@@ -14,3 +14,10 @@ ddb-up:
 
 ddb-down:
 	-podman stop $(DDB_CONTAINER)
+
+.env.local:
+	sed -e "s|^TOKEN_ENC_KEYS=.*|TOKEN_ENC_KEYS=v1:$$(openssl rand -base64 32)|" \
+	    -e "s|^DEVICE_TOKEN_PEPPER=.*|DEVICE_TOKEN_PEPPER=$$(openssl rand -base64 32)|" .env.local.example > .env.local
+
+run-local: .env.local
+	set -a && source .env.local && set +a && go run ./cmd/local

@@ -1,0 +1,108 @@
+package httpapi_test
+
+import (
+	"strings"
+	"testing"
+
+	"reading-tracker/backend/internal/config"
+	"reading-tracker/backend/internal/store"
+)
+
+func TestConfigEndpoint(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do("GET", "/v1/config", nil, "")
+	if rec.Code != 200 || rec.Header().Get("Cache-Control") != "max-age=3600" {
+		t.Fatalf("%d %v", rec.Code, rec.Header())
+	}
+	body := decode[config.PublicConfig](t, rec)
+	if body.Version != 1 || body.Tracking.IdleSeconds != 60 || len(body.StripQueryParams) == 0 {
+		t.Fatalf("body %+v", body)
+	}
+}
+
+// T12 AC: unauthenticated GET /v1/me → 401 with the §2.0 error shape.
+func TestMeRequiresDeviceToken(t *testing.T) {
+	env := newTestEnv(t)
+	for _, tok := range []string{"", "not-a-token", "rt_" + strings.Repeat("A", 43)} {
+		rec := env.do("GET", "/v1/me", nil, tok)
+		if rec.Code != 401 || errorCode(t, rec) != "unauthorized" {
+			t.Fatalf("token %q: %d %s", tok, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestUnknownRouteIsJSON404(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do("GET", "/v1/nope", nil, "")
+	if rec.Code != 404 || errorCode(t, rec) != "not_found" {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+type meResponse struct {
+	User struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"user"`
+	Device struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"device"`
+	Installation *struct {
+		ID            string  `json:"id"`
+		WorkspaceName string  `json:"workspace_name"`
+		Status        string  `json:"status"`
+		SetupError    string  `json:"setup_error"`
+		LibraryURL    *string `json:"library_url"`
+	} `json:"installation"`
+}
+
+func TestMeReturnsUserDeviceAndInstallation(t *testing.T) {
+	env := newTestEnv(t)
+	uid, tok := env.seedUser()
+	env.seedInstallation(uid, store.StatusActive)
+	rec := env.do("GET", "/v1/me", nil, tok)
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	body := decode[meResponse](t, rec)
+	if body.User.ID != uid || body.User.Name != "Tuan Do" || body.Device.ID != "dev-1" || body.Device.Name != "MacBook Chrome" {
+		t.Fatalf("body %+v", body)
+	}
+	if body.Installation == nil || body.Installation.ID != testBotID || body.Installation.Status != "active" ||
+		body.Installation.LibraryURL == nil || body.Installation.WorkspaceName != "Tuan's Notion" {
+		t.Fatalf("installation %+v", body.Installation)
+	}
+}
+
+func TestMeWithoutInstallationReturnsNull(t *testing.T) {
+	env := newTestEnv(t)
+	_, tok := env.seedUser()
+	rec := env.do("GET", "/v1/me", nil, tok)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"installation":null`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestNeedsSetupInstallationShowsErrorAndNullLibrary(t *testing.T) {
+	env := newTestEnv(t)
+	uid, tok := env.seedUser()
+	inst := env.seedInstallation(uid, store.StatusNeedsSetup)
+	inst.SetupError = "template_not_found"
+	must(t, env.db.Store.PutInstallation(t.Context(), testBotID, inst))
+	rec := env.do("GET", "/v1/me", nil, tok)
+	if !strings.Contains(rec.Body.String(), `"setup_error":"template_not_found"`) || !strings.Contains(rec.Body.String(), `"library_url":null`) {
+		t.Fatalf("%s", rec.Body)
+	}
+}
+
+// C13: the request log has the path but never the query string or bearer token.
+func TestRequestLogOmitsQueryAndToken(t *testing.T) {
+	env := newTestEnv(t)
+	_, tok := env.seedUser()
+	env.do("GET", "/v1/me?code=abc123secret", nil, tok)
+	logs := env.logs.String()
+	if !strings.Contains(logs, "/v1/me") || strings.Contains(logs, "abc123secret") || strings.Contains(logs, tok) {
+		t.Fatalf("log leak: %s", logs)
+	}
+}
