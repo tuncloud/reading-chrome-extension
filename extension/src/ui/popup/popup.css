@@ -1,0 +1,25 @@
+:root {
+  color-scheme: light;
+  --fg: #1f2328;
+  --muted: #656d76;
+  --accent: #2f6feb;
+  --line: #d0d7de;
+  font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--fg);
+}
+body { margin: 0; width: 320px; }
+main { padding: 14px 16px; display: grid; gap: 10px; }
+h1 { font-size: 15px; margin: 0; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 4px; }
+p { margin: 0; }
+ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+li { display: grid; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.title { font-weight: 600; }
+.today { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.today strong { font-size: 22px; }
+button { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: #f6f8fa; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.link { border: 0; background: none; padding: 0; color: var(--accent); text-align: left; }
+.note { color: #9a6700; }
