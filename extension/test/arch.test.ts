@@ -64,12 +64,18 @@ export function violation(fromRel: string, target: Target): string | null {
     if ((target.pkg === 'react' || target.pkg === 'react-dom') && from !== 'popup' && from !== 'options') {
       return `${fromRel}: react is only for popup/ and options/`
     }
+    if (target.pkg === 'dexie' && from !== 'background') return `${fromRel}: dexie is only for background/`
     return null
   }
   const to = top(target.rel)
   if (from === 'content' && to !== 'content' && to !== 'shared') return `${fromRel}: content may import only content/ and shared/ (${target.rel})`
   if (from === 'shared' && to !== 'shared') return `${fromRel}: shared may import only shared/ (${target.rel})`
   if (from === 'background' && (to === 'popup' || to === 'options' || to === 'content')) return `${fromRel}: background may not import ${to}/`
+  if ((from === 'popup' || from === 'options') && to === 'content') return `${fromRel}: ${from} may not import content/`
+  if (from === 'popup' && to === 'options') return `${fromRel}: popup may not import options/`
+  if (from === 'options' && to === 'popup' && target.rel !== 'popup/messages' && !target.rel.startsWith('popup/messages.')) {
+    return `${fromRel}: options may import only popup/messages from popup/ (${target.rel})`
+  }
   return null
 }
 
@@ -142,18 +148,25 @@ describe('rule table', () => {
     ['background/index.ts', { pkg: 'react' }, true],
     ['content/index.ts', { pkg: 'react-dom' }, true],
     ['background/db.ts', { pkg: 'dexie' }, false],
+    ['popup/model.ts', { pkg: 'dexie' }, true],
+    ['content/tracker.ts', { pkg: 'dexie' }, true],
+    ['shared/url.ts', { pkg: 'dexie' }, true],
+    ['popup/Popup.tsx', { rel: 'content/driver' }, true],
+    ['options/controller.ts', { rel: 'content/driver' }, true],
+    ['popup/Popup.tsx', { rel: 'options/controller' }, true],
+    ['options/controller.ts', { rel: 'popup/model' }, true],
+    ['options/OptionsApp.tsx', { rel: 'popup/messages' }, false],
   ] as const)('%s → %j forbidden=%s', (from, target, forbidden) => {
     expect(violation(from, target) !== null).toBe(forbidden)
   })
 
   test('the closure walker follows .ts/.tsx/index and reports react', () => {
     const files = new Map([
-      ['a/entry.ts', "import { b } from './b'\nimport x from './dir'"],
+      ['a/entry.ts', "import { b } from './b'\nimport x from './dir'\nimport v from './view'"],
       ['a/b.tsx', "import React from 'react'"],
       ['a/dir/index.ts', "export const y = 1"],
       ['a/view/index.tsx', "import { createRoot } from 'react-dom'"],
     ])
-    files.set('a/entry.ts', "import { b } from './b'\nimport x from './dir'\nimport v from './view'")
     expect(reactImporters('a/entry.ts', files)).toEqual(['a/view/index.tsx imports react-dom', 'a/b.tsx imports react'])
   })
 

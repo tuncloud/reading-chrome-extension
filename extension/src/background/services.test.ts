@@ -2,7 +2,10 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { installChrome } from '../../test/chrome'
 import { createServices } from './services'
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+})
 
 test('createServices registers no chrome listeners and creates no alarms', () => {
   const ch = installChrome()

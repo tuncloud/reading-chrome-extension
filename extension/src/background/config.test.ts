@@ -40,7 +40,7 @@ describe('ConfigService', () => {
     const cfg = await service(api).current()
     expect(cfg?.freediumHosts).toEqual(['freedium-mirror.cfd', 'freedium.cfd'])
     expect(await store.getKv('config')).toEqual({ fetchedAt: '2026-10-06T03:00:00.000Z', value: cfg })
-    expect(ch.alarms.get('sync')?.periodInMinutes).toBe(2)
+    expect(ch.alarms.get('sync')).toEqual({ periodInMinutes: 2, delayInMinutes: 2 })
   })
 
   test('a failed refresh keeps the cached config, or gives null when there is none', async () => {
@@ -67,6 +67,6 @@ describe('ConfigService', () => {
     expect(ch.alarms.size).toBe(0)
     await cached('2026-10-06T02:00:00.000Z', 5)
     await service(api).ensureSchedule()
-    expect(ch.alarms.get('sync')?.periodInMinutes).toBe(5)
+    expect(ch.alarms.get('sync')).toEqual({ periodInMinutes: 5, delayInMinutes: 5 })
   })
 })
