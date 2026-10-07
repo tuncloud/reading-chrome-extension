@@ -3,7 +3,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { sendToBackground } from '../shared/messaging'
-import { OptionsApp } from '../ui/options/OptionsApp'
+import { OptionsApp } from './OptionsApp'
 import { createServices } from '../background/services'
 
 const s = createServices('options')

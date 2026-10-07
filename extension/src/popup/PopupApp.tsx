@@ -1,8 +1,8 @@
 // <PopupApp> loads the popup model, refreshes /v1/me in the background, and handles connect.
 // Connect itself runs in the service worker: the popup closes when the Notion window opens.
 import { useEffect, useState } from 'react'
-import type { PopupModel } from '../../application/popup-model'
-import type { ConnectResult } from '../../background/session'
+import type { PopupModel } from './model'
+import type { ConnectResult } from '../background/session'
 import { connectMessage } from './messages'
 import { Popup, type PopupActions } from './Popup'
 

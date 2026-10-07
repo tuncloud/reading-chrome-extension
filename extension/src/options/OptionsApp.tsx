@@ -1,7 +1,7 @@
 // <OptionsApp> connects the controller to React: the controller's render callback sets
 // state, and React draws <OptionsView>. It loads, refreshes /v1/me, then reloads.
 import { useEffect, useState } from 'react'
-import { createOptionsController, type OptionsServices } from './options-controller'
+import { createOptionsController, type OptionsServices } from './controller'
 import { OptionsView, type OptionsActions, type OptionsState } from './OptionsView'
 
 export interface OptionsAppProps {

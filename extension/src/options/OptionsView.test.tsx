@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { INSTALLATION } from '../../../test/helpers'
+import { INSTALLATION } from '../../test/helpers'
 import { OptionsView, type OptionsActions, type OptionsState } from './OptionsView'
 
 afterEach(cleanup)

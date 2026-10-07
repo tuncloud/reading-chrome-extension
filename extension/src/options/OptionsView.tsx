@@ -1,9 +1,9 @@
 // <OptionsView> draws the options page (spec T31) for one OptionsState. It holds only
 // the text typed into its forms; everything else comes from the controller.
 import { useState, type FormEvent } from 'react'
-import type { DomainLists } from '../../shared/domains'
-import type { SessionState } from '../../background/session'
-import type { NotionPage } from '../../shared/types'
+import type { DomainLists } from '../shared/domains'
+import type { SessionState } from '../background/session'
+import type { NotionPage } from '../shared/types'
 
 export interface OptionsState {
   session: SessionState

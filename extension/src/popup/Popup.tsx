@@ -1,5 +1,5 @@
 // <Popup> draws one PopupModel (spec T30). It holds no state: PopupApp owns loading.
-import type { ArticleView, PopupModel } from '../../application/popup-model'
+import type { ArticleView, PopupModel } from './model'
 import { isHttpsUrl } from './https-url'
 
 export interface PopupActions {

@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { installChrome, type ChromeMock } from '../../../test/chrome'
-import { apiStub, captureLog, INSTALLATION, testDb } from '../../../test/helpers'
-import { ApiError } from '../../shared/errors'
-import { DomainService } from '../../background/domains'
-import { SessionService } from '../../background/session'
-import type { Db } from '../../background/db'
-import { SetupService } from '../../background/setup'
-import type { ConnectResult } from '../../background/session'
-import { createOptionsController } from './options-controller'
+import { installChrome, type ChromeMock } from '../../test/chrome'
+import { apiStub, captureLog, INSTALLATION, testDb } from '../../test/helpers'
+import { ApiError } from '../shared/errors'
+import { DomainService } from '../background/domains'
+import { SessionService } from '../background/session'
+import type { Db } from '../background/db'
+import { SetupService } from '../background/setup'
+import type { ConnectResult } from '../background/session'
+import { createOptionsController } from './controller'
 import type { OptionsState } from './OptionsView'
 
 describe('options controller', () => {
@@ -29,8 +29,6 @@ describe('options controller', () => {
     rendered = []
     connect = async () => ({ ok: false, reason: 'cancelled' })
   })
-
-  afterEach(() => vi.unstubAllGlobals())
 
   afterEach(() => vi.unstubAllGlobals())
 

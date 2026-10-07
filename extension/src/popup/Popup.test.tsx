@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { PopupModel } from '../../application/popup-model'
+import type { PopupModel } from './model'
 import { connectMessage } from './messages'
 import { Popup, type PopupActions } from './Popup'
 

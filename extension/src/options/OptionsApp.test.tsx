@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { installChrome } from '../../../test/chrome'
-import { testDb } from '../../../test/helpers'
-import { DomainService } from '../../background/domains'
-import type { SessionState } from '../../background/session'
+import { installChrome } from '../../test/chrome'
+import { testDb } from '../../test/helpers'
+import { DomainService } from '../background/domains'
+import type { SessionState } from '../background/session'
 import { OptionsApp } from './OptionsApp'
-import type { OptionsServices } from './options-controller'
+import type { OptionsServices } from './controller'
 
 afterEach(() => {
   cleanup()
@@ -14,7 +14,6 @@ afterEach(() => {
 })
 
 function services(): OptionsServices & { refreshed: () => number } {
-  installChrome()
   installChrome()
   let refreshes = 0
   const session: SessionState = { kind: 'disconnected' }

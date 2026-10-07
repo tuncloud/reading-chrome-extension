@@ -3,7 +3,7 @@ import { apiStub, clock as makeClock, INSTALLATION, record, segment, testDb } fr
 import type { Db } from '../background/db'
 import { roundMinutes } from '../shared/reading'
 import { NetworkError } from '../shared/errors'
-import { buildPopupModel } from './popup-model'
+import { buildPopupModel } from './model'
 import type { SessionState } from '../background/session'
 
 const connected = (status: string, extra: object = {}): SessionState => ({

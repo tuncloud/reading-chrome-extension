@@ -22,8 +22,8 @@ export interface Services {
   domains: DomainService
 }
 
-const now = () => new Date()
-const timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone
+export const now = () => new Date()
+export const timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone
 
 export function createServices(scope: string): Services {
   const db = new Db(new ReadingDb())
