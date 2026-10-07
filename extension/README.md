@@ -4,24 +4,21 @@ Measures active reading time per article. The data is stored in IndexedDB and pu
 
 ## Architecture
 
-Clean architecture. Dependencies point inward, and `test/arch.test.ts` enforces this.
+Code is organized by the Chrome context it runs in:
 
-| Layer | Path | Holds | May import |
-|---|---|---|---|
-| Domain | `src/domain` | URL normalization, Medium canonicals, tracker state machine, reading rules | domain only; no `chrome`, `window` or `document` |
-| Application | `src/application` | use cases (record, sync, config, session, setup, domains, popup model), ports, message protocol | domain, application |
-| Adapters | `src/adapters/{storage,http,crypto,chrome,site,page,system}` | Dexie, fetch, WebCrypto, `chrome.*`, site DOM extractors, DOM tracker driver | domain, application, and their own folder |
-| UI | `src/ui/{popup,options}` | React 19 components for the popup and options page, plus the plain-TypeScript options controller | domain, application, ui, `react` |
-| Entry | `src/entry` | composition roots: `background`, `content`, `popup`, `options` | everything |
+| Folder | Runs in | Holds |
+|---|---|---|
+| `src/shared` | everywhere | types, message protocol + messaging helpers, URL/Medium/domain rules, config parsing, errors, log |
+| `src/content` | the page | `index.ts` (entry), `driver.ts` (DOM events → tracker), `tracker.ts` (state machine), `sites/` (Medium/Freedium, generic) |
+| `src/background` | service worker (and imported by popup/options) | `index.ts` (listeners, router), `services.ts`, `db.ts` (Dexie), `api.ts` (backend), `sync.ts`, `record.ts`, `config.ts`, `session.ts`, `setup.ts`, `domains.ts` |
+| `src/popup` | popup page | React UI + `model.ts` |
+| `src/options` | options page | React UI + `controller.ts` |
 
-Only `adapters/storage` imports `dexie`. Only `ui` and `entry` import `react` / `react-dom`, so React ships in the popup and options pages, never in the service worker or the content script. Only `adapters/chrome` and `entry` touch `chrome.*`.
+Two rules are enforced by `test/arch.test.ts`:
+- `content/` imports only `content/` and `shared/`, so pages never bundle Dexie or the API client.
+- React stays out of the content script and the service worker.
 
-How a read becomes a Notion page:
-1. The content script (`entry/content`) asks the background for a tracking plan.
-2. `adapters/page/tracker-driver` feeds DOM events to `domain/tracker`.
-3. Flushed segments go to the background, where `application/record` stores them.
-4. The `sync` alarm runs `application/sync`, which sends them to `POST /v1/sync/push`.
-5. The backend queues the Notion write.
+Modules call Dexie, `fetch` and `chrome.*` directly. Tests use fake-indexeddb, `test/helpers.ts` (fresh DB, clock, API stub) and `test/chrome.ts` (a `chrome` mock).
 
 ## Prerequisites
 
@@ -73,6 +70,7 @@ Then:
 |---|---|
 | `pnpm test` | unit tests (Vitest, jsdom, fake-indexeddb, React Testing Library) including the layer rule |
 | `pnpm typecheck` | `tsc --noEmit` |
+| `pnpm dev` | rebuild `dist/` on every save (then reload the extension in `chrome://extensions`) |
 | `pnpm build` | two Vite builds: service worker and React pages (ES modules), then the content script (one IIFE, no React) |
 | `pnpm check` | typecheck, then test, then build |
 | `pnpm smoke` | real-browser check of config, alarms, popup and tracking. It needs `CHROME_BIN` (Chrome for Testing) and the local backend. |

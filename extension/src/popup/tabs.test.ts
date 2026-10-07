@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest'
-import { activeTabId } from '../../popup/tabs'
+import { activeTabId } from './tabs'
 
 afterEach(() => vi.unstubAllGlobals())
 

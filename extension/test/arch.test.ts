@@ -55,16 +55,13 @@ function resolveImport(fromRel: string, spec: string): Target {
   return { rel: posix.normalize(posix.join(posix.dirname(fromRel), spec)) }
 }
 
-// LEGACY folders are still being emptied (Tasks 2-6); they carry no restrictions yet. Remove with Task 6.
-const LEGACY = new Set(['application', 'adapters', 'ui', 'entry'])
-
 const top = (rel: string) => rel.split('/')[0] ?? ''
 
 // violation explains why fromRel may not import target, or returns null.
 export function violation(fromRel: string, target: Target): string | null {
   const from = top(fromRel)
   if ('pkg' in target) {
-    if ((target.pkg === 'react' || target.pkg === 'react-dom') && from !== 'popup' && from !== 'options' && !LEGACY.has(from)) {
+    if ((target.pkg === 'react' || target.pkg === 'react-dom') && from !== 'popup' && from !== 'options') {
       return `${fromRel}: react is only for popup/ and options/`
     }
     return null
@@ -106,9 +103,16 @@ describe('dependency rules', () => {
   const files = sourceFiles()
   const sources = new Map(files.map((f) => [f, readFileSync(join(SRC, f), 'utf8')]))
 
-  test('the walk finds the source tree (not vacuous)', () => {
-    expect(files).toContain('content/index.ts')
-    expect(files).toContain('shared/messages.ts')
+  test('the walk finds every feature folder (not vacuous)', () => {
+    for (const f of ['shared/messages.ts', 'content/index.ts', 'content/tracker.ts', 'background/index.ts',
+      'background/sync.ts', 'background/db.ts', 'popup/main.tsx', 'options/main.tsx']) {
+      expect(files).toContain(f)
+    }
+  })
+
+  test('only the five feature folders exist under src/', () => {
+    const tops = new Set(files.map((f) => f.split('/')[0]))
+    expect([...tops].sort()).toEqual(['background', 'content', 'options', 'popup', 'shared'])
   })
 
   test('every import respects the folder rules', () => {

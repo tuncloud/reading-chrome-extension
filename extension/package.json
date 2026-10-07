@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build && vite build -c vite.content.config.ts",
+    "dev": "vite build --watch & vite build -c vite.content.config.ts --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
