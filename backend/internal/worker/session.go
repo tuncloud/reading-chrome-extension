@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/store"
@@ -74,7 +75,7 @@ func (s *session) refresh(ctx context.Context) error {
 			return err
 		}
 	}
-	err = s.w.Store.UpdateInstallationTokens(ctx, s.inst.ID(), access, refresh, s.inst.TokenVersion, s.w.Now())
+	err = s.persistTokens(ctx, access, refresh)
 	if errors.Is(err, store.ErrConditionFailed) {
 		// Someone rotated first; use what they stored.
 		fresh, gerr := s.w.Store.GetInstallation(ctx, s.inst.ID())
@@ -95,6 +96,30 @@ func (s *session) refresh(ctx context.Context) error {
 	s.inst.TokenVersion++
 	s.token = res.AccessToken
 	return nil
+}
+
+const (
+	tokenWriteAttempts = 3
+	tokenWriteBackoff  = 100 * time.Millisecond
+)
+
+// persistTokens stores the rotated tokens, retrying transient failures in-process:
+// Notion has already rotated the refresh token, so losing this write would leave only
+// a dead refresh token and force a reconnect (C7). A condition failure (someone else
+// rotated, or an earlier attempt landed after all) is returned at once.
+func (s *session) persistTokens(ctx context.Context, access, refresh string) error {
+	var err error
+	for attempt := 1; attempt <= tokenWriteAttempts; attempt++ {
+		err = s.w.Store.UpdateInstallationTokens(ctx, s.inst.ID(), access, refresh, s.inst.TokenVersion, s.w.Now())
+		if err == nil || errors.Is(err, store.ErrConditionFailed) {
+			return err
+		}
+		if attempt < tokenWriteAttempts {
+			s.w.Sleep(time.Duration(attempt) * tokenWriteBackoff)
+		}
+	}
+	s.w.Log.ErrorContext(ctx, "worker: persisting rotated tokens failed", "installation_id", s.inst.ID(), "err", err)
+	return err
 }
 
 func (s *session) revoke(ctx context.Context) error {

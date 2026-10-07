@@ -3,11 +3,13 @@ package worker
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
 	"reading-tracker/backend/internal/crypto"
 	"reading-tracker/backend/internal/notion"
@@ -201,5 +203,62 @@ func TestRefreshReencryptsWithCurrentKey(t *testing.T) {
 	got, _ := e.db.Store.GetInstallation(ctx, testBot)
 	if !strings.HasPrefix(got.AccessTokenEnc, "v2:") || !strings.HasPrefix(got.RefreshTokenEnc, "v2:") {
 		t.Fatalf("not re-sealed with v2: %s / %s", got.AccessTokenEnc[:3], got.RefreshTokenEnc[:3])
+	}
+}
+
+// tokenWriteFailDB fails the first n token-rotation writes with a transient error.
+type tokenWriteFailDB struct {
+	store.API
+	n int
+}
+
+func (d *tokenWriteFailDB) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
+	if d.n > 0 && in.ExpressionAttributeNames["#a"] == "access_token_enc" {
+		d.n--
+		return nil, errors.New("dynamodb: connection reset")
+	}
+	return d.API.UpdateItem(ctx, in, opts...)
+}
+
+// C7: Notion has already rotated the refresh token, so a transient failure persisting
+// it is retried in-process instead of losing the only valid refresh token.
+func TestSessionRefreshRetriesTokenWrite(t *testing.T) {
+	e := newEnv(t)
+	inst := e.seedInstallation("old-access", "old-refresh")
+	e.w.Store = store.New(&tokenWriteFailDB{API: e.db.DB, n: 2}, e.db.Table)
+	e.ns.RejectToken("old-access")
+	e.ns.SetRefreshResponse(map[string]any{"access_token": "new-access", "refresh_token": "new-refresh"})
+
+	s, err := e.w.openSession(inst)
+	must(t, err)
+	must(t, s.call(ctx, searchCall(e)))
+	got, _ := e.db.Store.GetInstallation(ctx, testBot)
+	refresh, _ := e.keys.Open(got.RefreshTokenEnc, []byte(testBot))
+	if got.TokenVersion != 2 || string(refresh) != "new-refresh" {
+		t.Fatalf("rotated tokens not persisted: version %d", got.TokenVersion)
+	}
+	if want := []time.Duration{100 * time.Millisecond, 200 * time.Millisecond}; !reflect.DeepEqual(e.sleeps, want) {
+		t.Fatalf("back-offs %v, want %v", e.sleeps, want)
+	}
+}
+
+// After three failed writes the error surfaces (message retried later) and is logged.
+func TestSessionRefreshTokenWriteGivesUpAfterThreeAttempts(t *testing.T) {
+	e := newEnv(t)
+	inst := e.seedInstallation("old-access", "old-refresh")
+	e.w.Store = store.New(&tokenWriteFailDB{API: e.db.DB, n: 3}, e.db.Table)
+	e.ns.RejectToken("old-access")
+	e.ns.SetRefreshResponse(map[string]any{"access_token": "new-access", "refresh_token": "new-refresh"})
+
+	s, err := e.w.openSession(inst)
+	must(t, err)
+	if err := s.call(ctx, searchCall(e)); err == nil || errors.Is(err, errAck) {
+		t.Fatalf("err %v", err)
+	}
+	if got, _ := e.db.Store.GetInstallation(ctx, testBot); got.TokenVersion != 1 {
+		t.Fatalf("token_version %d", got.TokenVersion)
+	}
+	if !strings.Contains(e.logs.String(), "level=ERROR") || strings.Contains(e.logs.String(), "new-refresh") {
+		t.Fatalf("logs:\n%s", e.logs)
 	}
 }

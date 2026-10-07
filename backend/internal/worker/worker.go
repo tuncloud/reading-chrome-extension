@@ -35,6 +35,7 @@ type Deps struct {
 	Tracking   config.Tracking
 	Now        func() time.Time
 	Jitter     func() time.Duration // added to Retry-After; default rand 0..3 s
+	Sleep      func(time.Duration)  // in-process retry back-off; default time.Sleep
 	Log        *slog.Logger
 }
 
@@ -61,6 +62,9 @@ func (e *retryAfterError) Unwrap() error { return e.err }
 func New(d Deps) *Worker {
 	if d.Jitter == nil {
 		d.Jitter = func() time.Duration { return time.Duration(rand.IntN(4)) * time.Second }
+	}
+	if d.Sleep == nil {
+		d.Sleep = time.Sleep
 	}
 	w := &Worker{Deps: d}
 	w.handlers = map[queue.Type]handlerFunc{

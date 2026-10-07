@@ -39,17 +39,18 @@ func (f *fakeVisibility) ChangeVisibility(_ context.Context, _ string, d time.Du
 }
 
 type wenv struct {
-	t    *testing.T
-	w    *Worker
-	db   *storetest.Env
-	ns   *notiontest.Server
-	q    *queue.Recorder
-	vis  *fakeVisibility
-	tpl  notiontest.Template
-	keys *crypto.Keyring
-	now  time.Time
-	logs *bytes.Buffer
-	segs int
+	t      *testing.T
+	w      *Worker
+	db     *storetest.Env
+	ns     *notiontest.Server
+	q      *queue.Recorder
+	vis    *fakeVisibility
+	tpl    notiontest.Template
+	keys   *crypto.Keyring
+	now    time.Time
+	logs   *bytes.Buffer
+	sleeps []time.Duration
+	segs   int
 }
 
 func b64(b byte) string { return base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{b}, 32)) }
@@ -81,6 +82,7 @@ func newEnvWithKeys(t *testing.T, keys string) *wenv {
 		Tracking:   pub.Tracking,
 		Now:        func() time.Time { return e.now },
 		Jitter:     func() time.Duration { return 2 * time.Second },
+		Sleep:      func(d time.Duration) { e.sleeps = append(e.sleeps, d) },
 		Log:        slog.New(slog.NewTextHandler(e.logs, nil)),
 	})
 	return e
