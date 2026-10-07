@@ -208,3 +208,24 @@ run "tracking_config_override_reaches_both_lambdas" {
     error_message = "TRACKING_CONFIG_JSON is passed through when set"
   }
 }
+
+run "logs_and_budget" {
+  command = apply
+
+  assert {
+    condition     = aws_cloudwatch_log_group.api.retention_in_days == 7 && aws_cloudwatch_log_group.worker.retention_in_days == 7
+    error_message = "T5: 7-day log retention"
+  }
+  assert {
+    condition     = aws_cloudwatch_log_group.api.name == "/aws/lambda/${aws_lambda_function.api.function_name}"
+    error_message = "log group matches the function name"
+  }
+  assert {
+    condition     = aws_budgets_budget.monthly.limit_amount == "1" && aws_budgets_budget.monthly.limit_unit == "USD" && aws_budgets_budget.monthly.time_unit == "MONTHLY"
+    error_message = "T6: $1 monthly budget"
+  }
+  assert {
+    condition     = one(aws_budgets_budget.monthly.notification).threshold == 80 && one(aws_budgets_budget.monthly.notification).notification_type == "ACTUAL" && one(aws_budgets_budget.monthly.notification).subscriber_email_addresses == toset(["owner@example.com"])
+    error_message = "T6: alert at 80% actual to the budget email"
+  }
+}
