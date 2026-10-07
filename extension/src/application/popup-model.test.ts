@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import { FakeApi, FixedClock, INSTALLATION, MemoryStore } from '../../test/fakes'
-import { record, segment } from '../../test/store-contract'
+import { record, segment } from '../../test/helpers'
 import { roundMinutes } from '../shared/reading'
 import { NetworkError } from '../shared/errors'
 import { buildPopupModel } from './popup-model'

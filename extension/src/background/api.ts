@@ -1,13 +1,12 @@
-// HttpApi is the backend over fetch (spec §2). It only moves JSON; decisions stay in use cases.
-import { parseRemoteConfig, type RemoteConfig } from '../../shared/config'
-import { ApiError, NetworkError } from '../../shared/errors'
-import type { Api } from '../../application/ports'
-import type { ArticleStatus, Installation, Me, NotionPage, PushBody, PushResult, TokenGrant } from '../../shared/types'
-import * as wire from './wire'
+// Api is the backend over fetch (spec §2). It only moves JSON; decisions stay in use cases.
+import { parseRemoteConfig, type RemoteConfig } from '../shared/config'
+import { ApiError, NetworkError } from '../shared/errors'
+import type { ArticleStatus, Installation, Me, NotionPage, PushBody, PushResult, TokenGrant } from '../shared/types'
+import * as wire from './api-wire'
 
 export type Fetch = (url: string, init?: RequestInit) => Promise<Response>
 
-export interface HttpApiOptions {
+export interface ApiOptions {
   baseUrl: string
   fetch?: Fetch
   timeoutMs?: number
@@ -33,12 +32,12 @@ async function apiError(res: Response): Promise<ApiError> {
   return new ApiError(res.status, code, message)
 }
 
-export class HttpApi implements Api {
+export class Api {
   private readonly base: string
   private readonly fetchFn: Fetch
   private readonly timeoutMs: number
 
-  constructor(opts: HttpApiOptions) {
+  constructor(opts: ApiOptions) {
     this.base = opts.baseUrl.replace(/\/+$/, '')
     this.fetchFn = opts.fetch ?? ((url, init) => fetch(url, init))
     this.timeoutMs = opts.timeoutMs ?? 20_000
@@ -125,3 +124,9 @@ export class HttpApi implements Api {
     }
   }
 }
+
+// ApiClient is what services depend on, so tests can pass plain objects.
+export type ApiClient = Pick<
+  Api,
+  'oauthStartUrl' | 'config' | 'exchangeCode' | 'me' | 'logout' | 'deleteAccount' | 'push' | 'articlesStatus' | 'setupPages' | 'setup'
+>

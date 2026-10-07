@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import { FakeApi, FixedClock, MemoryLog, MemoryStore } from '../../test/fakes'
-import { record, segment } from '../../test/store-contract'
+import { record, segment } from '../../test/helpers'
 import { ApiError, NetworkError } from '../shared/errors'
 import type { PushBody, PushResult } from '../shared/types'
 import { SyncService } from './sync'

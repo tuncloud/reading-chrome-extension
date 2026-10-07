@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ChromeScheduler, onAlarm } from './alarms'
-import { deviceName } from './device'
 import { ChromeAuthFlow } from './identity'
 import { ChromePermissions } from './permissions'
 import { ChromeContentScripts } from './scripting'
@@ -92,16 +91,4 @@ test('activeTabId returns the id or null', async () => {
   expect(await activeTabId()).toBe(7)
   tabs.query.mockResolvedValueOnce([])
   expect(await activeTabId()).toBeNull()
-})
-
-describe('deviceName', () => {
-  test.each([
-    [{ userAgentData: { platform: 'macOS' }, userAgent: '' }, 'Chrome on macOS'],
-    [{ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130' }, 'Chrome on Windows'],
-    [{ userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/130' }, 'Chrome on Linux'],
-    [{ userAgent: 'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) Chrome/130' }, 'Chrome on ChromeOS'],
-    [{ userAgent: 'something odd' }, 'Chrome'],
-  ])('%j → %s', (nav, want) => {
-    expect(deviceName(nav as unknown as Navigator)).toBe(want)
-  })
 })

@@ -1,24 +1,10 @@
 // Ports: what the use cases need from the outside world. Adapters implement them.
 import type { RemoteConfig } from '../shared/config'
 import type { LocalArticle, StoredSegment } from '../shared/reading'
+import type { KvKey, KvSchema } from '../background/db'
 import type {
-  ArticleStatus, CachedConfig, Installation, Me, NotionPage, PushBody, PushResult, TokenGrant, User,
+  ArticleStatus, Installation, Me, NotionPage, PushBody, PushResult, TokenGrant,
 } from '../shared/types'
-
-// KvSchema is the kv table of spec §3.4.
-export interface KvSchema {
-  device_token: string
-  device_id: string
-  user: User
-  installation: Installation | null
-  config: CachedConfig
-  enabled_domains: string[]
-  denied_domains: string[]
-  sync_backoff_until: string
-  sync_failures: number
-}
-
-export type KvKey = keyof KvSchema
 
 export interface LocalStore {
   // applyRead stores a new segment and folds it into its article in one transaction.
@@ -91,3 +77,4 @@ export interface Scheduler {
 }
 
 export type { Log } from '../shared/log'
+export type { KvSchema, KvKey } from '../background/db'

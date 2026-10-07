@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import { parseRemoteConfig, type RemoteConfig } from '../shared/config'
 import { wireConfig } from '../../test/fixtures'
-import { META } from '../../test/store-contract'
+import { META } from '../../test/helpers'
 import { createRouter, type RouterServices } from './router'
 
 const cfg = parseRemoteConfig(wireConfig)

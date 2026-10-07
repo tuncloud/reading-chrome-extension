@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
-import { wireConfig } from '../../../test/fixtures'
-import { ApiError, NetworkError } from '../../shared/errors'
-import { HttpApi, type Fetch } from './api-client'
+import { wireConfig } from '../../test/fixtures'
+import { ApiError, NetworkError } from '../shared/errors'
+import { Api, type Fetch } from './api'
 
 interface Call {
   url: string
@@ -10,7 +10,7 @@ interface Call {
   body: unknown
 }
 
-function stub(respond: (call: Call) => Response | Promise<Response>): { api: HttpApi; calls: Call[] } {
+function stub(respond: (call: Call) => Response | Promise<Response>): { api: Api; calls: Call[] } {
   const calls: Call[] = []
   const fetch: Fetch = async (url, init) => {
     const call: Call = {
@@ -22,7 +22,7 @@ function stub(respond: (call: Call) => Response | Promise<Response>): { api: Htt
     calls.push(call)
     return respond(call)
   }
-  return { api: new HttpApi({ baseUrl: 'https://api.example.com/', fetch }), calls }
+  return { api: new Api({ baseUrl: 'https://api.example.com/', fetch }), calls }
 }
 
 const json = (status: number, body: unknown) =>
@@ -31,7 +31,7 @@ const json = (status: number, body: unknown) =>
 const wireInstallation = { id: 'b1', workspace_name: "Tuan's Notion", status: 'active', library_url: 'https://www.notion.so/2a1b' }
 const installation = { id: 'b1', workspaceName: "Tuan's Notion", status: 'active', setupError: '', libraryUrl: 'https://www.notion.so/2a1b' }
 
-describe('HttpApi requests', () => {
+describe('Api requests', () => {
   test('oauthStartUrl carries ext_redirect and the S256 challenge (§2.1)', () => {
     const { api } = stub(() => json(200, {}))
     const u = new URL(api.oauthStartUrl({ extRedirect: 'https://abc.chromiumapp.org/', codeChallenge: 'E9Mel' }))
@@ -134,7 +134,7 @@ describe('HttpApi requests', () => {
   })
 })
 
-describe('HttpApi errors', () => {
+describe('Api errors', () => {
   test('the §2.0 error body becomes ApiError', async () => {
     const { api } = stub(() => json(409, { error: { code: 'no_installation', message: 'connect Notion first' } }))
     const err = await api.push('rt_x', { clientTime: '', tz: 'UTC', articles: [], segments: [] }).catch((e) => e)
@@ -158,12 +158,12 @@ describe('HttpApi errors', () => {
   })
 
   test('a failed fetch becomes NetworkError', async () => {
-    const api = new HttpApi({ baseUrl: 'https://api.example.com', fetch: async () => { throw new TypeError('Failed to fetch') } })
+    const api = new Api({ baseUrl: 'https://api.example.com', fetch: async () => { throw new TypeError('Failed to fetch') } })
     await expect(api.config()).rejects.toBeInstanceOf(NetworkError)
   })
 
   test('a timeout becomes NetworkError', async () => {
-    const api = new HttpApi({
+    const api = new Api({
       baseUrl: 'https://api.example.com', timeoutMs: 5,
       fetch: (_url, init) => new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))),
     })
@@ -171,7 +171,7 @@ describe('HttpApi errors', () => {
   })
 
   test('a body-read error becomes NetworkError', async () => {
-    const api = new HttpApi({
+    const api = new Api({
       baseUrl: 'https://api.example.com',
       fetch: () => Promise.resolve({ ok: true, status: 200, text: () => Promise.reject(new DOMException('aborted', 'AbortError')) } as unknown as Response),
     })

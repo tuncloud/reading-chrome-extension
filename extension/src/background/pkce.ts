@@ -1,5 +1,5 @@
 // PKCE S256 over WebCrypto (spec §2.1, T29): a 64-char verifier and base64url(SHA-256(verifier)).
-import type { Pkce } from '../../application/ports'
+import type { Pkce } from '../application/ports'
 
 const UNRESERVED = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~'
 // The largest multiple of 66 below 256; bytes at or above it are redrawn to avoid modulo bias.

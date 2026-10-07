@@ -4,11 +4,11 @@ import { ChromeAuthFlow } from '../adapters/chrome/identity'
 import { ChromePermissions } from '../adapters/chrome/permissions'
 import { ChromeContentScripts } from '../adapters/chrome/scripting'
 import { ChromeScheduler } from '../adapters/chrome/alarms'
-import { deviceName } from '../adapters/chrome/device'
-import { WebCryptoPkce } from '../adapters/crypto/pkce'
-import { HttpApi } from '../adapters/http/api-client'
-import { DexieStore, ReadingDb } from '../adapters/storage/dexie-store'
-import { consoleLog, SystemClock } from '../adapters/system/system'
+import { deviceName } from '../background/device'
+import { WebCryptoPkce } from '../background/pkce'
+import { Api as HttpApi } from '../background/api'
+import { Db, ReadingDb } from '../background/db'
+import { consoleLog } from '../shared/log'
 import { ConfigService } from '../application/config-service'
 import { DomainService } from '../application/domains'
 import type { Api, Clock, LocalStore, Log } from '../application/ports'
@@ -32,9 +32,9 @@ export interface Services {
 
 export function compose(scope: string): Services {
   const apiBase = import.meta.env.VITE_API_BASE as string
-  const store = new DexieStore(new ReadingDb())
+  const store = new Db(new ReadingDb())
   const api = new HttpApi({ baseUrl: apiBase })
-  const clock = new SystemClock()
+  const clock = { now: () => new Date(), timeZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone }
   const log = consoleLog(scope)
   const config = new ConfigService({ store, api, clock, scheduler: new ChromeScheduler(), log })
   const sync = new SyncService({ store, api, clock, log })
