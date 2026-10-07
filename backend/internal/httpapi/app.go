@@ -47,5 +47,9 @@ func New(d Deps) *echo.Echo {
 	v1.GET("/oauth/notion/start", h.oauthStart)
 	v1.GET("/oauth/notion/callback", h.oauthCallback)
 	v1.POST("/auth/token", h.authToken)
+	v1.POST("/auth/logout", h.logout, h.requireDevice)
+	v1.GET("/setup/pages", h.setupPages, h.requireDevice)
+	v1.POST("/setup", h.postSetup, h.requireDevice)
+	v1.POST("/articles/status", h.articlesStatus, h.requireDevice)
 	return e
 }
