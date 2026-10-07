@@ -73,10 +73,19 @@ func TestResyncAfterPushIsDeliveredByLocalQueue(t *testing.T) {
 		}}
 	q := &SyncQueue{Sender: l, Bucket: 120 * time.Second, Now: time.Now}
 	ctx := context.Background()
-	q.EnqueueSync(ctx, bot, []string{hash}, nil)
-	q.EnqueueResync(ctx, bot, []string{hash}, nil)
-	<-done
-	<-done
+	if err := q.EnqueueSync(ctx, bot, []string{hash}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.EnqueueResync(ctx, bot, []string{hash}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out: delivered %d of 2 messages", delivered.Load())
+		}
+	}
 	if delivered.Load() != 2 {
 		t.Fatalf("delivered %d, want 2", delivered.Load())
 	}
@@ -85,8 +94,12 @@ func TestResyncAfterPushIsDeliveredByLocalQueue(t *testing.T) {
 func TestRequeueAndPurge(t *testing.T) {
 	rec := &Recorder{}
 	q := newSyncQueue(rec, time.Unix(42, 0))
-	q.Requeue(context.Background(), port.Job{Type: port.JobDay, InstallationID: bot, Date: "2026-10-06"})
-	q.EnqueuePurge(context.Background(), "u1", bot)
+	if err := q.Requeue(context.Background(), port.Job{Type: port.JobDay, InstallationID: bot, Date: "2026-10-06"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.EnqueuePurge(context.Background(), "u1", bot); err != nil {
+		t.Fatal(err)
+	}
 	sent := rec.Drain()
 	if len(sent) != 2 || sent[0].Message != Day(bot, "2026-10-06") || !strings.Contains(sent[0].DedupID, "#r") ||
 		sent[1].Message != Purge("u1", bot) || sent[1].DedupID != "purge#u1#42" {

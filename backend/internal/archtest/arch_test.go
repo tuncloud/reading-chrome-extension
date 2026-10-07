@@ -138,18 +138,54 @@ func TestViolationRules(t *testing.T) {
 	}
 }
 
+var layers = []string{"internal/domain", "internal/usecase", "internal/adapter", "internal/platform", "internal/wire"}
+
+// outsideLayers reports whether pkg is not inside any layer directory.
+func outsideLayers(pkg string) bool {
+	for _, l := range layers {
+		if under(pkg, l) {
+			return false
+		}
+	}
+	return true
+}
+
+func TestOutsideLayers(t *testing.T) {
+	cases := []struct {
+		pkg string
+		bad bool
+	}{
+		{"internal/foo", true},
+		{"internal/domainx", true},
+		{"internal", true},
+		{"internal/domain", false},
+		{"internal/usecase/port", false},
+		{"internal/adapter/httpapi", false},
+		{"internal/platform/crypto", false},
+		{"internal/wire", false},
+	}
+	for _, c := range cases {
+		if got := outsideLayers(c.pkg); got != c.bad {
+			t.Errorf("outsideLayers(%s) = %v, want %v", c.pkg, got, c.bad)
+		}
+	}
+}
+
 // Every production package lives in a layer directory.
 func TestOnlyLayerDirectories(t *testing.T) {
-	layers := []string{"internal/domain", "internal/usecase", "internal/adapter", "internal/platform", "internal/wire"}
 	for pkg := range packageImports(t) {
-		ok := false
-		for _, l := range layers {
-			if under(pkg, l) {
-				ok = true
-			}
-		}
-		if !ok {
+		if outsideLayers(pkg) {
 			t.Errorf("%s is outside the layer directories %v", pkg, layers)
+		}
+	}
+}
+
+// The walk must actually find the layers, or the rules above would pass vacuously.
+func TestWalkFindsLayerPackages(t *testing.T) {
+	pkgs := packageImports(t)
+	for _, want := range []string{"internal/domain", "internal/usecase/port", "internal/adapter/httpapi", "internal/wire"} {
+		if _, ok := pkgs[want]; !ok {
+			t.Errorf("packageImports found no %s (walk is broken or the package moved)", want)
 		}
 	}
 }
