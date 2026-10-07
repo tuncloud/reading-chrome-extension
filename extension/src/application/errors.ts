@@ -19,3 +19,11 @@ export class NetworkError extends Error {
 export function isApiError(e: unknown, status?: number, code?: string): e is ApiError {
   return e instanceof ApiError && (status === undefined || e.status === status) && (code === undefined || e.code === code)
 }
+
+// NotConnectedError means the use case needs a device token and there is none.
+export class NotConnectedError extends Error {
+  override name = 'NotConnectedError'
+  constructor() {
+    super('not connected to Notion')
+  }
+}

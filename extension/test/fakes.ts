@@ -189,3 +189,54 @@ export class FakeScheduler implements Scheduler {
     this.alarms.set(name, periodMinutes)
   }
 }
+
+import type { AuthFlow, ContentScripts, Permissions, Pkce } from '../src/application/ports'
+
+export class FakeAuthFlow implements AuthFlow {
+  readonly launched: string[] = []
+  constructor(public respond: (url: string) => Promise<string> = async () => 'https://ext.chromiumapp.org/?code=one-time') {}
+  redirectUrl(): string {
+    return 'https://ext.chromiumapp.org/'
+  }
+  launch(url: string): Promise<string> {
+    this.launched.push(url)
+    return this.respond(url)
+  }
+}
+
+export class FakePkce implements Pkce {
+  async create(): Promise<{ verifier: string; challenge: string }> {
+    return { verifier: 'v'.repeat(64), challenge: 'challenge-of-v' }
+  }
+}
+
+export class FakePermissions implements Permissions {
+  readonly granted = new Set<string>()
+  readonly events: string[]
+  constructor(public allow = true, events: string[] = []) {
+    this.events = events
+  }
+  async request(origins: string[]): Promise<boolean> {
+    this.events.push(`request ${origins.join(' ')}`)
+    if (this.allow) for (const o of origins) this.granted.add(o)
+    return this.allow
+  }
+  async remove(origins: string[]): Promise<boolean> {
+    this.events.push(`remove ${origins.join(' ')}`)
+    for (const o of origins) this.granted.delete(o)
+    return true
+  }
+}
+
+export class FakeContentScripts implements ContentScripts {
+  readonly scripts = new Map<string, string[]>()
+  async register(id: string, matches: string[]): Promise<void> {
+    this.scripts.set(id, matches)
+  }
+  async unregister(ids: string[]): Promise<void> {
+    for (const id of ids) this.scripts.delete(id)
+  }
+  async registeredIds(): Promise<string[]> {
+    return [...this.scripts.keys()]
+  }
+}
