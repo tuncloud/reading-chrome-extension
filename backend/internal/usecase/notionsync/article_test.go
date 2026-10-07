@@ -252,7 +252,7 @@ func TestArticlePageInOldLibraryIsRecreated(t *testing.T) {
 	stale := e.ns.AddPage(old.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
 	e.ns.DeleteDataSource(old.LibraryDS)
 	e.read(artURL, 0, 120, 0.5)
-	must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), stale.ID, stale.URL, ""))
+	must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), stale.ID, stale.URL, old.LibraryDS))
 
 	if f := e.handle(articleMsg()); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
@@ -313,5 +313,35 @@ func TestArticleInOldDatabaseIsRecreatedBeforePatch(t *testing.T) {
 	a := e.article(artURL)
 	if len(pages) != 1 || a.NotionPageID != pages[0].ID || a.NotionDataSourceID != newDS {
 		t.Fatalf("not re-created in the new Library: pages %d, article %+v", len(pages), a)
+	}
+}
+
+// R1: a row linked to a page but with no recorded data source (written before the id
+// was stored) is stale: it is not PATCHed in place, it is requeued, and the requeued job
+// adopts the page and records the current data source, so it does not loop.
+func TestArticlePageWithoutDataSourceIsRelinked(t *testing.T) {
+	e := newEnv(t)
+	e.seedInstallation("tok", "rt")
+	pg := e.ns.AddPage(e.tpl.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
+	e.read(artURL, 0, 120, 0.5)
+	must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), pg.ID, pg.URL, ""))
+
+	if f := e.handle(articleMsg()); len(f) != 0 {
+		t.Fatalf("failures %+v", f)
+	}
+	if n := len(e.ns.Calls("PATCH", "/v1/pages/"+pg.ID)); n != 0 {
+		t.Fatalf("PATCHed in place %d times", n)
+	}
+	sent := e.q.Drain()
+	if len(sent) != 1 || sent[0].Message != articleMsg() {
+		t.Fatalf("requeue %+v", sent)
+	}
+	e.handle(sent[0].Message)
+	a := e.article(artURL)
+	if a.NotionPageID != pg.ID || a.NotionDataSourceID != e.tpl.LibraryDS || a.NotionSyncedVersion != 1 {
+		t.Fatalf("article %+v", a)
+	}
+	if more := e.q.Drain(); len(more) != 0 {
+		t.Fatalf("looping: %+v", more)
 	}
 }

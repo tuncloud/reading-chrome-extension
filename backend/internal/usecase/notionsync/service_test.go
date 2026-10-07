@@ -64,6 +64,9 @@ func TestUnknownJobTypeIsAcked(t *testing.T) {
 	if err := e.s.HandleJob(ctx, port.Job{Type: "mystery"}); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(e.logs.String(), "unknown job type dropped") {
+		t.Fatalf("drop not logged: %s", e.logs)
+	}
 }
 
 func searchCall(e *wenv) func(string) error {

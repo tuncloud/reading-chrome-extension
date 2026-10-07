@@ -12,7 +12,6 @@ const (
 	notionMaxURL    = 2000
 	notionMaxText   = 2000
 	notionMaxSelect = 100
-	maxRelations    = 100
 )
 
 // articleMetrics are the server-owned properties written on every update (§3.3).

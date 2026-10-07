@@ -25,7 +25,7 @@ func (s *Service) syncDay(ctx context.Context, job port.Job) error {
 	if err != nil {
 		return err
 	}
-	if day.NotionPageID != "" && day.NotionDataSourceID != "" && !domain.SameID(day.NotionDataSourceID, inst.DailyDSID) {
+	if day.NotionPageID != "" && !domain.SameID(day.NotionDataSourceID, inst.DailyDSID) {
 		return s.forgetDayPage(ctx, inst.ID, job) // R1, as for articles
 	}
 	pageIDs, err := s.dayArticlePages(ctx, inst.ID, day.ArticleHashes)

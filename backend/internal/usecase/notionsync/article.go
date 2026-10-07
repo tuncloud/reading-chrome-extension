@@ -28,8 +28,8 @@ func (s *Service) syncArticle(ctx context.Context, job port.Job) error {
 	}
 
 	switch {
-	case art.NotionPageID != "" && art.NotionDataSourceID != "" && !domain.SameID(art.NotionDataSourceID, inst.LibraryDSID):
-		// R1: the page lives in a database this installation no longer writes to. Its
+	case art.NotionPageID != "" && !domain.SameID(art.NotionDataSourceID, inst.LibraryDSID):
+		// R1: the page lives in a database this installation no longer writes to (or has no recorded one). Its
 		// property ids differ from ours, so a PATCH would be rejected; re-create instead.
 		return s.forgetArticlePage(ctx, inst.ID, job)
 	case art.NotionPageID == "":

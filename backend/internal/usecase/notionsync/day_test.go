@@ -1,6 +1,7 @@
 package notionsync
 
 import (
+	"fmt"
 	"testing"
 
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
@@ -129,7 +130,7 @@ func TestDayPageInOldDailyLogIsRecreated(t *testing.T) {
 	old := e.ns.AddTemplate("old-tpl")
 	stale := e.ns.AddPage(old.DailyDS, map[string]any{pid("Date"): map[string]any{"date": map[string]any{"start": today}}})
 	e.read(artURL, 0, 60, 0.5)
-	must(t, e.db.Store.SetDayPage(ctx, testBot, today, stale.ID, ""))
+	must(t, e.db.Store.SetDayPage(ctx, testBot, today, stale.ID, old.DailyDS))
 
 	if f := e.handle(dayMsg()); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
@@ -179,5 +180,55 @@ func TestDayInOldDatabaseIsRecreatedBeforePatch(t *testing.T) {
 	must(t, err)
 	if pages := e.ns.Pages("daily2-ds"); len(pages) != 1 || d.NotionPageID != pages[0].ID || d.NotionDataSourceID != "daily2-ds" {
 		t.Fatalf("day not re-created in the new Daily Log: %+v", d)
+	}
+}
+
+// R1: see TestArticlePageWithoutDataSourceIsRelinked.
+func TestDayPageWithoutDataSourceIsRelinked(t *testing.T) {
+	e := newEnv(t)
+	e.seedInstallation("tok", "rt")
+	pg := e.ns.AddPage(e.tpl.DailyDS, map[string]any{pid("Date"): map[string]any{"date": map[string]any{"start": today}}})
+	e.read(artURL, 0, 60, 0.5)
+	must(t, e.db.Store.SetDayPage(ctx, testBot, today, pg.ID, ""))
+
+	if f := e.handle(dayMsg()); len(f) != 0 {
+		t.Fatalf("failures %+v", f)
+	}
+	if n := len(e.ns.Calls("PATCH", "/v1/pages/"+pg.ID)); n != 0 {
+		t.Fatalf("PATCHed in place %d times", n)
+	}
+	sent := e.q.Drain()
+	if len(sent) != 1 || sent[0].Message != dayMsg() {
+		t.Fatalf("requeue %+v", sent)
+	}
+	e.handle(sent[0].Message)
+	d, err := e.db.Store.GetDay(ctx, testBot, today)
+	must(t, err)
+	if d.NotionPageID != pg.ID || d.NotionDataSourceID != e.tpl.DailyDS {
+		t.Fatalf("day %+v", d)
+	}
+	if more := e.q.Drain(); len(more) != 0 {
+		t.Fatalf("looping: %+v", more)
+	}
+}
+
+// Spec §2.14 step 2: the Articles relation holds at most 100 pages.
+func TestDayArticlePagesCapsRelationAtOneHundred(t *testing.T) {
+	e := newEnv(t)
+	e.seedInstallation("tok", "rt")
+	for i := 0; i < maxDayRelations+1; i++ {
+		url := fmt.Sprintf("https://example.com/a/%03d", i)
+		e.read(url, 0, 60, 0.5)
+		must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(url), fmt.Sprintf("page-%03d", i), "https://notion.so/p", "ds"))
+	}
+	d, err := e.db.Store.GetDay(ctx, testBot, today)
+	must(t, err)
+	if len(d.ArticleHashes) != maxDayRelations+1 {
+		t.Fatalf("day has %d articles", len(d.ArticleHashes))
+	}
+	ids, err := e.s.dayArticlePages(ctx, testBot, d.ArticleHashes)
+	must(t, err)
+	if len(ids) != maxDayRelations {
+		t.Fatalf("relation ids %d, want %d", len(ids), maxDayRelations)
 	}
 }
