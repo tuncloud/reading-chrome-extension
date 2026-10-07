@@ -2,6 +2,7 @@ package setup_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -133,6 +134,67 @@ func TestCreateDatabasesBuildsBothAndLinksRelation(t *testing.T) {
 	}
 	if len(db.Props) != 16 {
 		t.Fatalf("props %v", db.Props)
+	}
+}
+
+// A retry of "Finish setup" must not create a second pair of databases.
+func TestCreateDatabasesIsIdempotent(t *testing.T) {
+	f := newFixture(t)
+	first, err := f.svc.CreateDatabases(ctx, "tok", "parent-1")
+	must(t, err)
+	second, err := f.svc.CreateDatabases(ctx, "tok", "parent-1")
+	must(t, err)
+	if n := len(f.ns.Calls("POST", "/v1/databases")); n != 2 {
+		t.Fatalf("%d database creates across two calls, want 2", n)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("second call differs:\n first %+v\nsecond %+v", first, second)
+	}
+}
+
+// A prior run that created only the Library (Daily Log failed) is completed, not duplicated.
+func TestCreateDatabasesReusesExistingLibrary(t *testing.T) {
+	f := newFixture(t)
+	f.ns.AddDatabase("lib-db", "lib-ds", notiontest.LibrarySchema)
+	f.ns.SetBlocks("parent-1", notiontest.ChildDatabase("lib-db", setup.LibraryTitle))
+
+	db, err := f.svc.CreateDatabases(ctx, "tok", "parent-1")
+	must(t, err)
+	calls := f.ns.Calls("POST", "/v1/databases")
+	if len(calls) != 1 {
+		t.Fatalf("%d database creates, want only the Daily Log", len(calls))
+	}
+	dailyProps := calls[0].Body["initial_data_source"].(map[string]any)["properties"].(map[string]any)
+	rel := dailyProps["Articles"].(map[string]any)["relation"].(map[string]any)
+	if rel["data_source_id"] != "lib-ds" {
+		t.Fatalf("relation points at %v, want the pre-seeded library data source", rel["data_source_id"])
+	}
+	if db.LibraryDBID != "lib-db" || db.LibraryDSID != "lib-ds" || db.DailyDSID == "" || len(db.Props) != 16 {
+		t.Fatalf("got %+v", db)
+	}
+}
+
+func TestCreateDatabasesExistingLibraryGone(t *testing.T) {
+	f := newFixture(t)
+	f.ns.SetBlocks("parent-1", notiontest.ChildDatabase("ghost-db", setup.LibraryTitle))
+	_, err := f.svc.CreateDatabases(ctx, "tok", "parent-1")
+	if setup.Reason(err) != "database_missing:Reading Library" {
+		t.Fatalf("reason %q (err %v)", setup.Reason(err), err)
+	}
+	if n := len(f.ns.Calls("POST", "/v1/databases")); n != 0 {
+		t.Fatalf("%d database creates, want 0", n)
+	}
+}
+
+func TestCreateDatabasesListingFailureCreatesNothing(t *testing.T) {
+	f := newFixture(t)
+	f.ns.FailNext("GET", "/v1/blocks/parent-1/children", notiontest.Fail{Status: 502, Code: "bad_gateway"})
+	_, err := f.svc.CreateDatabases(ctx, "tok", "parent-1")
+	if setup.Reason(err) != "notion_error" {
+		t.Fatalf("reason %q (err %v)", setup.Reason(err), err)
+	}
+	if n := len(f.ns.Calls("POST", "/v1/databases")); n != 0 {
+		t.Fatalf("%d database creates, want 0", n)
 	}
 }
 

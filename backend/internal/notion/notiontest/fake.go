@@ -1,6 +1,9 @@
 // Package notiontest is an in-memory fake of the Notion endpoints the backend uses.
-// It enforces Notion-Version, keys page properties by property id, and can inject
-// failures, rejected tokens, archived pages and deleted data sources.
+// It enforces Notion-Version, rejects page writes (400 validation_error, nothing stored)
+// whose property keys are neither a property id nor a property name in the data source
+// schema, and can inject failures, rejected tokens, archived pages and deleted data
+// sources. Accepted properties are stored and returned keyed as sent; real Notion keys
+// response properties by name, but the client never reads response properties.
 package notiontest
 
 import (
@@ -8,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -357,7 +361,24 @@ func (s *Server) createDatabase(w http.ResponseWriter, body map[string]any) {
 			}
 		}
 	}
-	writeJSON(w, s.addDatabaseLocked(dbID, dsID, schema))
+	db := s.addDatabaseLocked(dbID, dsID, schema)
+	// Like real Notion, the new database is listed among its parent page's children.
+	parentID, _ := parent["page_id"].(string)
+	s.blocks[parentID] = append(s.blocks[parentID], ChildDatabase(dbID, plainTitle(body["title"])))
+	writeJSON(w, db)
+}
+
+// plainTitle joins the text content of a rich-text title array.
+func plainTitle(v any) string {
+	var b strings.Builder
+	items, _ := v.([]any)
+	for _, it := range items {
+		item, _ := it.(map[string]any)
+		text, _ := item["text"].(map[string]any)
+		content, _ := text["content"].(string)
+		b.WriteString(content)
+	}
+	return b.String()
 }
 
 func (s *Server) query(w http.ResponseWriter, dsID string, body map[string]any) {
@@ -404,6 +425,9 @@ func (s *Server) createPage(w http.ResponseWriter, body map[string]any) {
 		return
 	}
 	props, _ := body["properties"].(map[string]any)
+	if !s.validPropertiesLocked(w, dsID, props) {
+		return
+	}
 	pg := s.newPageLocked(dsID, props)
 	pg.Children, _ = body["children"].([]any)
 	writeJSON(w, pg.json())
@@ -432,10 +456,46 @@ func (s *Server) updatePage(w http.ResponseWriter, id string, body map[string]an
 		return
 	}
 	props, _ := body["properties"].(map[string]any)
+	if !s.validPropertiesLocked(w, pg.DataSource, props) {
+		return
+	}
 	for k, v := range props {
 		pg.Properties[k] = v
 	}
 	writeJSON(w, pg.json())
+}
+
+// validPropertiesLocked writes a 400 validation_error and returns false when props has
+// a key that is neither a property id nor a property name of the data source. A data
+// source that no longer exists (user deleted it) is not validated against.
+func (s *Server) validPropertiesLocked(w http.ResponseWriter, dsID string, props map[string]any) bool {
+	ds, ok := s.dataSources[dsID]
+	if !ok {
+		return true
+	}
+	schema, _ := ds["properties"].(map[string]any)
+	known := map[string]bool{}
+	for name, p := range schema {
+		known[name] = true
+		if prop, ok := p.(map[string]any); ok {
+			if id, ok := prop["id"].(string); ok {
+				known[id] = true
+			}
+		}
+	}
+	var unknown []string
+	for k := range props {
+		if !known[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) == 0 {
+		return true
+	}
+	sort.Strings(unknown)
+	writeErr(w, Fail{Status: 400, Code: "validation_error",
+		Message: fmt.Sprintf("%s is not a property that exists.", strings.Join(unknown, ", "))})
+	return false
 }
 
 func notFound(what string) Fail {

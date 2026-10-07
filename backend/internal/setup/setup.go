@@ -46,6 +46,55 @@ func (s *Service) ResolveTemplate(ctx context.Context, token, templateID string)
 	if err != nil {
 		return store.DBConfig{}, err
 	}
+	ids := childDatabaseIDs(blocks)
+	return s.resolve(ctx, token, ids[LibraryTitle], ids[DailyTitle])
+}
+
+// CreateDatabases creates both databases under parentPageID (spec §2.7). It is
+// idempotent: databases already under the parent with the expected titles (left by
+// an earlier partial attempt) are reused, and only the missing ones are created.
+// Library goes first because the Daily Log relation needs its data source id.
+func (s *Service) CreateDatabases(ctx context.Context, token, parentPageID string) (store.DBConfig, error) {
+	blocks, err := s.Notion.ListBlockChildren(ctx, token, parentPageID)
+	if err != nil && !isNotFound(err) {
+		return store.DBConfig{}, err
+	}
+	ids := childDatabaseIDs(blocks)
+	libID, dailyID := ids[LibraryTitle], ids[DailyTitle]
+
+	var libDSID string
+	if libID == "" {
+		lib, err := s.Notion.CreateDatabase(ctx, token, parentPageID, LibraryTitle, libraryCreateSchema())
+		if err != nil {
+			return store.DBConfig{}, err
+		}
+		if len(lib.DataSources) == 0 {
+			return store.DBConfig{}, fmt.Errorf("setup: created %s has no data source", LibraryTitle)
+		}
+		libID, libDSID = lib.ID, lib.DataSources[0].ID
+	} else if dailyID == "" {
+		lib, err := s.Notion.GetDatabase(ctx, token, libID)
+		if isNotFound(err) || (err == nil && len(lib.DataSources) == 0) {
+			return store.DBConfig{}, &Error{"database_missing:" + LibraryTitle}
+		}
+		if err != nil {
+			return store.DBConfig{}, err
+		}
+		libDSID = lib.DataSources[0].ID
+	}
+	if dailyID == "" {
+		daily, err := s.Notion.CreateDatabase(ctx, token, parentPageID, DailyTitle, dailyCreateSchema(libDSID))
+		if err != nil {
+			return store.DBConfig{}, err
+		}
+		dailyID = daily.ID
+	}
+	return s.resolve(ctx, token, libID, dailyID)
+}
+
+// childDatabaseIDs maps child_database titles to block ids, keeping the first
+// occurrence of each title.
+func childDatabaseIDs(blocks []notion.Block) map[string]string {
 	ids := map[string]string{}
 	for _, b := range blocks {
 		if b.Type == "child_database" && b.ChildDatabase != nil {
@@ -54,24 +103,7 @@ func (s *Service) ResolveTemplate(ctx context.Context, token, templateID string)
 			}
 		}
 	}
-	return s.resolve(ctx, token, ids[LibraryTitle], ids[DailyTitle])
-}
-
-// CreateDatabases creates both databases under parentPageID (spec §2.7). Library
-// goes first because the Daily Log relation needs its data source id.
-func (s *Service) CreateDatabases(ctx context.Context, token, parentPageID string) (store.DBConfig, error) {
-	lib, err := s.Notion.CreateDatabase(ctx, token, parentPageID, LibraryTitle, libraryCreateSchema())
-	if err != nil {
-		return store.DBConfig{}, err
-	}
-	if len(lib.DataSources) == 0 {
-		return store.DBConfig{}, fmt.Errorf("setup: created %s has no data source", LibraryTitle)
-	}
-	daily, err := s.Notion.CreateDatabase(ctx, token, parentPageID, DailyTitle, dailyCreateSchema(lib.DataSources[0].ID))
-	if err != nil {
-		return store.DBConfig{}, err
-	}
-	return s.resolve(ctx, token, lib.ID, daily.ID)
+	return ids
 }
 
 func (s *Service) resolve(ctx context.Context, token, libDBID, dailyDBID string) (store.DBConfig, error) {
