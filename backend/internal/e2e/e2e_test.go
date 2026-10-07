@@ -24,10 +24,10 @@ import (
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
 	"reading-tracker/backend/internal/adapter/queue"
-	"reading-tracker/backend/internal/app"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
+	"reading-tracker/backend/internal/wire"
 )
 
 const extID = "abcdefghijklmnopabcdefghijklmnop"
@@ -106,8 +106,8 @@ func newSystem(t *testing.T) *system {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	nc := &notion.Client{BaseURL: sys.ns.URL, Version: cfg.NotionVersion, ClientID: cfg.NotionClientID, ClientSecret: cfg.NotionClientSecret}
-	sys.api = app.NewAPI(app.APIDeps{Config: cfg, Store: sys.db.Store, Notion: nc, Queue: sys.q, Now: clock, Log: log})
-	sys.wk = app.NewWorker(app.WorkerDeps{Store: sys.db.Store, Notion: nc, Keys: cfg.Keys, Queue: sys.q, Visibility: noVisibility{},
+	sys.api = wire.NewAPI(wire.APIDeps{Config: cfg, Store: sys.db.Store, Notion: nc, Queue: sys.q, Now: clock, Log: log})
+	sys.wk = wire.NewWorker(wire.WorkerDeps{Store: sys.db.Store, Notion: nc, Keys: cfg.Keys, Queue: sys.q, Visibility: noVisibility{},
 		Tracking: cfg.Public.Tracking, Now: clock, Log: log})
 	return sys
 }

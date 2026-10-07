@@ -11,10 +11,10 @@ import (
 
 	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/adapter/notion"
-	"reading-tracker/backend/internal/app"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
+	"reading-tracker/backend/internal/wire"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -190,7 +190,7 @@ func (throttledReadsDB) GetItem(context.Context, *dynamodb.GetItemInput, ...func
 func TestThrottledReadIs503(t *testing.T) {
 	env := newTestEnv(t)
 	_, tok := env.seedUser()
-	e := app.NewAPI(app.APIDeps{Config: env.cfg, Store: dynamo.New(throttledReadsDB{env.db.DB}, env.db.Table),
+	e := wire.NewAPI(wire.APIDeps{Config: env.cfg, Store: dynamo.New(throttledReadsDB{env.db.DB}, env.db.Table),
 		Notion: &notion.Client{BaseURL: env.notion.URL, Version: "2025-09-03"}, Queue: env.queue,
 		Now: func() time.Time { return env.now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	req := httptest.NewRequest("GET", "/v1/me", nil)

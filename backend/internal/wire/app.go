@@ -1,5 +1,7 @@
-// Package app wires production dependencies for the cmd binaries.
-package app
+// Package wire is the composition root: it builds adapters, injects them into use
+// cases, and hands cmd/* a ready API handler or SQS consumer. Only cmd/* (and
+// integration tests) import it.
+package wire
 
 import (
 	"context"

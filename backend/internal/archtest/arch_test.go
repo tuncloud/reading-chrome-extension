@@ -64,6 +64,8 @@ func adapterRoot(pkg string) string {
 func violation(pkg, imp string) string {
 	target, internal := strings.CutPrefix(imp, module+"/")
 	switch {
+	case internal && under(target, "internal/wire") && !under(pkg, "internal/wire"):
+		return "only cmd/* may import wire"
 	case under(pkg, "internal/domain"):
 		if internal && !under(target, "internal/domain") {
 			return "domain may import only domain"
@@ -123,6 +125,8 @@ func TestViolationRules(t *testing.T) {
 		{"internal/adapter/httpapi", module + "/internal/adapter/dynamo", true},
 		{"internal/adapter/notion/notiontest", module + "/internal/adapter/notion", false},
 		{"internal/adapter/queue", module + "/internal/wire", true},
+		{"internal/usecase/setup", module + "/internal/wire", true},
+		{"internal/domain", module + "/internal/wire", true},
 		{"internal/platform/config", module + "/internal/platform/crypto", false},
 		{"internal/platform/config", module + "/internal/domain", true},
 		{"internal/wire", module + "/internal/adapter/dynamo", false},
@@ -130,6 +134,22 @@ func TestViolationRules(t *testing.T) {
 	for _, c := range cases {
 		if got := violation(c.pkg, c.imp) != ""; got != c.bad {
 			t.Errorf("violation(%s, %s) = %v, want %v", c.pkg, c.imp, got, c.bad)
+		}
+	}
+}
+
+// Every production package lives in a layer directory.
+func TestOnlyLayerDirectories(t *testing.T) {
+	layers := []string{"internal/domain", "internal/usecase", "internal/adapter", "internal/platform", "internal/wire"}
+	for pkg := range packageImports(t) {
+		ok := false
+		for _, l := range layers {
+			if under(pkg, l) {
+				ok = true
+			}
+		}
+		if !ok {
+			t.Errorf("%s is outside the layer directories %v", pkg, layers)
 		}
 	}
 }

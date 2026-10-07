@@ -35,7 +35,7 @@ queue (`LOCAL_QUEUE_DELAY_SECONDS`). Keep that delay ≥ `DEBOUNCE_BUCKET_SECOND
 as a redirect URI of the Notion integration.
 
 To run against a fake Notion instead of api.notion.com, set `NOTION_API_BASE` to its
-base URL (the in-memory fake in `internal/notion/notiontest` is what the tests use).
+base URL (the in-memory fake in `internal/adapter/notion/notiontest` is what the tests use).
 
 ## Build
 
@@ -45,20 +45,21 @@ make build         # build/api/bootstrap and build/worker/bootstrap (linux/arm64
 
 `events/` holds a sample SQS event for invoking the worker locally.
 
-## Package map
+## Architecture
 
-| Package | Role |
-|---|---|
-| `cmd/api`, `cmd/worker` | Lambda entrypoints |
-| `cmd/local` | local API + worker + in-process queue |
-| `internal/app` | production wiring (AWS clients, Notion client, deps) |
-| `internal/config` | env config, tracking config (`/v1/config`) |
-| `internal/httpapi` | Echo routes: OAuth, auth, setup, sync push, status, account |
-| `internal/usecase/readsync` | push validation and segment writes |
-| `internal/setup` | template resolution, database creation, resync |
-| `internal/worker` | Notion page writes, token refresh, purge |
-| `internal/notion` (+ `notiontest`) | Notion client (+ in-memory fake) |
-| `internal/store` (+ `storetest`) | DynamoDB single-table repository (+ test tables) |
-| `internal/queue` | SQS FIFO sender, local queue, test recorder |
-| `internal/crypto` | token sealing, device tokens, PKCE |
-| `internal/e2e` | API → queue → worker → fake Notion tests |
+Clean architecture: dependencies point inward, enforced by `internal/archtest`.
+
+| Layer | Packages | May import |
+|---|---|---|
+| Domain | `internal/domain` — entities and business rules | standard library only |
+| Use cases | `internal/usecase/{auth,connect,setup,readsync,library,account,notionsync}`; interfaces in `usecase/port`; error kinds in `usecase/apperr` | domain, other use cases, `platform/{crypto,textutil}` |
+| Adapters | `internal/adapter/dynamo` (DynamoDB), `adapter/notion` (Notion API), `adapter/queue` (SQS/local queue, consumer), `adapter/httpapi` (Echo) | domain, use cases, platform — never another adapter |
+| Platform | `internal/platform/{crypto,config,textutil}` | platform only |
+| Composition | `internal/wire`, used by `cmd/{api,worker,local}` | everything |
+
+Flow of a read: extension → `adapter/httpapi` → `usecase/readsync` → `port.Reading` (`adapter/dynamo`) +
+`port.SyncQueue` (`adapter/queue`) → SQS → `adapter/queue.Consumer` → `usecase/notionsync` →
+`port.NotionPages` (`adapter/notion`).
+
+Adding a feature: put rules in `domain`, orchestration in a `usecase` package that declares the
+ports it needs, implement those ports in an adapter, and connect them in `wire`.
