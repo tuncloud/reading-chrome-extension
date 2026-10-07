@@ -8,12 +8,12 @@
 - `src/domain` holds pure TypeScript rules: URL normalization, Medium canonicals, the tracker state machine and article merging. It has no browser APIs.
 - `src/application` holds use cases (record, sync, config, session, setup, domains, popup model) behind ports it defines.
 - `src/adapters/*` implement those ports: Dexie, fetch, chrome.*, WebCrypto, site DOM extractors, the DOM tracker driver.
-- `src/ui` renders popup and options from application models.
+- `src/ui` holds the React components for the popup and options page. They render application models and call use cases; no React reaches the service worker or the content script.
 - `src/entry/*` are the four composition roots: background service worker, content script, popup, options.
 
-**Tech Stack:** TypeScript 7 (strict), Vite 8 (two builds: ES-module service worker + HTML pages, and an IIFE content script), Dexie 4, Vitest 5 with jsdom and fake-indexeddb, pnpm. No UI framework. Real-browser smoke test on Chrome for Testing over the DevTools protocol (no extra npm dependency).
+**Tech Stack:** TypeScript 7 (strict), React 19 for the popup and options page only, Vite 8 with `@vitejs/plugin-react` (two builds: ES-module service worker + React pages, and an IIFE content script without React), Dexie 4, Vitest 5 with jsdom, fake-indexeddb and React Testing Library, pnpm. Real-browser smoke test on Chrome for Testing over the DevTools protocol (no extra npm dependency).
 
-**Pre-validated:** every code block in this plan was extracted into a scratch project and run before the plan was written: 277 tests, a clean `tsc`, both builds, and the Task 13 smoke test in Chrome for Testing 152 against the local backend. Remaining slips should be small; fix compile slips in place and note them in the report.
+**Pre-validated:** every code block in this plan was extracted into a scratch project and run before the plan was written: 288 tests, a clean `tsc`, both builds, and the Task 13 smoke test in Chrome for Testing 152 against the local backend. Remaining slips should be small; fix compile slips in place and note them in the report.
 
 **Spec:** `docs/reading-tracker-agent-spec.md` (§2 API contracts, §3.4 local storage, §4.2 T25–T31, §5 scenarios, §6 constraints, §7 open questions) and `docs/reading-tracker-onboarding.md` §5 (flows, tracker lifecycle). The backend in `backend/` is the live contract: `backend/internal/adapter/httpapi` is the source of truth for JSON shapes.
 
@@ -38,9 +38,9 @@
   - `domain` imports only `domain`, and uses no `chrome`, `window` or `document`.
   - `application` imports only `domain` and `application`, and uses no `chrome`, `window` or `document`.
   - `adapters/<x>` imports `domain`, `application` and its own `adapters/<x>` only.
-  - `ui` imports `domain`, `application` and `ui`.
+  - `ui` imports `domain`, `application`, `ui`, and the packages `react` / `react-dom`.
   - `entry` may import anything.
-  - The only npm package imported from `src/` is `dexie`, and only by `adapters/storage`.
+  - npm packages imported from `src/`: `dexie` only in `adapters/storage`; `react` and `react-dom` only in `ui` and `entry`. The content script and the service worker never bundle React.
   - `chrome.` may appear only in `adapters/chrome` and `entry`.
 - Times on the wire are RFC 3339 UTC (`Date.prototype.toISOString()`).
 
@@ -58,7 +58,7 @@
 extension/
 ├── package.json  tsconfig.json  vitest.config.ts  vite.config.ts  vite.content.config.ts
 ├── manifest.config.ts          # buildManifest(env) → MV3 manifest object (tested)
-├── popup.html  options.html    # page shells, scripts from src/entry
+├── popup.html  options.html    # page shells, scripts from src/entry/*.tsx
 ├── .env.example  .gitignore  README.md
 ├── scripts/smoke.mjs           # real-browser smoke test (Chrome for Testing + local backend)
 ├── test/
@@ -98,13 +98,19 @@ extension/
     │   ├── site/{types,freedium-medium,generic,metadata,registry}.ts
     │   └── page/tracker-driver.ts
     ├── ui/
-    │   ├── dom.ts              # h() element helper
-    │   ├── popup-view.ts  popup.css        # renderPopup(model, actions)
-    │   ├── options-view.ts  options.css    # renderOptions(state, actions)
-    │   └── options-controller.ts           # options page state machine
+    │   ├── popup/
+    │   │   ├── Popup.tsx       # <Popup model actions note />: pure view
+    │   │   ├── PopupApp.tsx    # loads the model, refreshes /v1/me, handles connect
+    │   │   ├── messages.ts     # connectMessage(reason)
+    │   │   └── popup.css
+    │   └── options/
+    │       ├── OptionsView.tsx         # <OptionsView state actions />: pure view
+    │       ├── OptionsApp.tsx          # wires the controller to React state
+    │       ├── options-controller.ts   # options state machine (plain TS, no React)
+    │       └── options.css
     └── entry/
         ├── compose.ts          # builds every service from the real adapters
-        ├── background.ts  content.ts  popup.ts  options.ts
+        ├── background.ts  content.ts  popup.tsx  options.tsx
 ```
 
 Tests sit next to the code they test (`*.test.ts`); shared fakes live in `extension/test/`.
@@ -122,7 +128,7 @@ Tests sit next to the code they test (`*.test.ts`); shared fakes live in `extens
 - Create: `extension/package.json`, `extension/tsconfig.json`, `extension/vitest.config.ts`, `extension/vite.config.ts`, `extension/vite.content.config.ts`
 - Create: `extension/manifest.config.ts`, `extension/manifest.config.test.ts`
 - Create: `extension/popup.html`, `extension/options.html`, `extension/.env.example`, `extension/.gitignore`
-- Create: `extension/src/entry/{background,content,popup,options}.ts` (stubs)
+- Create: `extension/src/entry/background.ts`, `content.ts`, `popup.tsx`, `options.tsx` (stubs)
 - Create: `extension/test/arch.test.ts`
 
 **Interfaces:**
@@ -131,7 +137,8 @@ Tests sit next to the code they test (`*.test.ts`); shared fakes live in `extens
   - `buildManifest(env: ManifestEnv): Manifest`, `apiHostPattern(apiBase: string): string` and `STATIC_SITES: readonly string[]` from `manifest.config.ts`.
   - The `pnpm build | test | typecheck | check` scripts.
   - The `dist/` layout: `manifest.json`, `background.js` (ES module service worker), `content.js` (IIFE), `popup.html`, `options.html`, `chunks/*`, `assets/*`.
-  - The layer rule test `test/arch.test.ts`, with exported `violation(fromRel, target)` and `globalViolation(fromRel, code)`.
+  - The layer rule test `test/arch.test.ts`, with exported `violation(fromRel, target)` and `globalViolation(fromRel, code)`. It covers `.ts` and `.tsx` files, and allows `react` / `react-dom` only in `ui` (and `entry`).
+  - React 19 with JSX (`"jsx": "react-jsx"`) for the popup and options pages only.
 
 - [ ] **Step 1: Create the package and install tooling**
 
@@ -153,8 +160,9 @@ cat > package.json <<'EOF'
   }
 }
 EOF
-pnpm add dexie@^4
-pnpm add -D typescript@^7 vite@^8 vitest@^5 jsdom@^30 fake-indexeddb@^6 @types/chrome @types/node
+pnpm add dexie@^4 react@^19 react-dom@^19
+pnpm add -D typescript@^7 vite@^8 vitest@^5 jsdom@^30 fake-indexeddb@^6 @types/chrome @types/node \
+  @vitejs/plugin-react@^6 @testing-library/react@^16 @testing-library/dom@^10 @types/react@^19 @types/react-dom@^19
 test ! -e package-lock.json && echo "no package-lock.json"
 ```
 
@@ -171,6 +179,7 @@ Expected: `pnpm-lock.yaml` exists and `no package-lock.json` prints.
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
     "types": ["chrome", "vite/client", "node"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -192,7 +201,7 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    include: ['src/**/*.test.ts', 'test/**/*.test.ts', '*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}', 'test/**/*.test.ts', '*.test.ts'],
     environment: 'node',
     restoreMocks: true,
   },
@@ -228,7 +237,7 @@ VITE_API_BASE=http://localhost:8080
   </head>
   <body>
     <main id="app"></main>
-    <script type="module" src="/src/entry/popup.ts"></script>
+    <script type="module" src="/src/entry/popup.tsx"></script>
   </body>
 </html>
 ```
@@ -244,12 +253,12 @@ VITE_API_BASE=http://localhost:8080
   </head>
   <body>
     <main id="app"></main>
-    <script type="module" src="/src/entry/options.ts"></script>
+    <script type="module" src="/src/entry/options.tsx"></script>
   </body>
 </html>
 ```
 
-The entry stubs are replaced in later tasks. `src/entry/background.ts`, `src/entry/popup.ts` and `src/entry/options.ts` each contain:
+The entry stubs are replaced in later tasks. `src/entry/background.ts`, `src/entry/popup.tsx` and `src/entry/options.tsx` each contain:
 
 ```ts
 export {}
@@ -403,11 +412,12 @@ Expected: PASS, 8 tests.
 
 - [ ] **Step 7: Write the two Vite configs**
 
-`extension/vite.config.ts` builds the service worker and the two pages, and emits `manifest.json`:
+`extension/vite.config.ts` builds the service worker and the two React pages, and emits `manifest.json`:
 
 ```ts
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import react from '@vitejs/plugin-react'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import { buildManifest } from './manifest.config.ts'
 
@@ -448,12 +458,12 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    plugins: [manifestPlugin(apiBase, env.EXTENSION_KEY || undefined)],
+    plugins: [react(), manifestPlugin(apiBase, env.EXTENSION_KEY || undefined)],
   }
 })
 ```
 
-`extension/vite.content.config.ts`. Content scripts are classic scripts, so the content script is built as one self-contained IIFE, without shared chunks:
+`extension/vite.content.config.ts`. Content scripts are classic scripts, so the content script is built as one self-contained IIFE, without shared chunks. It renders no UI, so it has no React plugin and React never reaches the pages you read:
 
 ```ts
 import { resolve } from 'node:path'
@@ -499,11 +509,11 @@ function walk(dir: string): string[] {
   })
 }
 
-// sourceFiles lists production .ts files under src/ as posix paths relative to src/.
+// sourceFiles lists production .ts/.tsx files under src/ as posix paths relative to src/.
 export function sourceFiles(): string[] {
   return walk(SRC)
     .map((f) => f.slice(SRC.length + 1).split('\\').join('/'))
-    .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
+    .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))
 }
 
 function layerOf(rel: string): { layer: Layer | null; sub: string } {
@@ -526,7 +536,7 @@ export function importsOf(code: string): string[] {
 function resolveImport(fromRel: string, spec: string): Target {
   if (!spec.startsWith('.')) return { pkg: spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0]! }
   const joined = posix.normalize(posix.join(posix.dirname(fromRel), spec))
-  return { rel: joined.endsWith('.ts') ? joined : `${joined}.ts` }
+  return { rel: /\.tsx?$/.test(joined) ? joined : `${joined}.ts` }
 }
 
 // violation explains why fromRel may not import target, or returns null.
@@ -536,6 +546,7 @@ export function violation(fromRel: string, target: Target): string | null {
   if (from.layer === 'entry') return null
   if ('pkg' in target) {
     if (target.pkg === 'dexie' && from.layer === 'adapters' && from.sub === 'storage') return null
+    if ((target.pkg === 'react' || target.pkg === 'react-dom') && from.layer === 'ui') return null
     return `${from.layer} may not import the package ${target.pkg}`
   }
   const to = layerOf(target.rel)
@@ -597,14 +608,18 @@ describe('violation rules', () => {
     ['domain/url.ts', { pkg: 'dexie' }, true],
     ['application/sync.ts', { rel: 'domain/reading.ts' }, false],
     ['application/sync.ts', { rel: 'adapters/http/api-client.ts' }, true],
-    ['application/sync.ts', { rel: 'ui/dom.ts' }, true],
+    ['application/sync.ts', { rel: 'ui/popup/Popup.tsx' }, true],
     ['adapters/http/api-client.ts', { rel: 'application/ports.ts' }, false],
     ['adapters/http/api-client.ts', { rel: 'adapters/http/wire.ts' }, false],
     ['adapters/http/api-client.ts', { rel: 'adapters/storage/dexie-store.ts' }, true],
     ['adapters/storage/dexie-store.ts', { pkg: 'dexie' }, false],
     ['adapters/http/api-client.ts', { pkg: 'dexie' }, true],
-    ['ui/popup-view.ts', { rel: 'application/popup-model.ts' }, false],
-    ['ui/popup-view.ts', { rel: 'adapters/chrome/tabs.ts' }, true],
+    ['ui/popup/Popup.tsx', { rel: 'application/popup-model.ts' }, false],
+    ['ui/popup/Popup.tsx', { rel: 'adapters/chrome/tabs.ts' }, true],
+    ['ui/popup/Popup.tsx', { pkg: 'react' }, false],
+    ['entry/popup.tsx', { pkg: 'react-dom' }, false],
+    ['application/popup-model.ts', { pkg: 'react' }, true],
+    ['adapters/page/tracker-driver.ts', { pkg: 'react' }, true],
     ['entry/background.ts', { rel: 'adapters/storage/dexie-store.ts' }, false],
     ['lib/x.ts', { rel: 'domain/url.ts' }, true],
   ] as const)('%s → %j forbidden=%s', (from, target, forbidden) => {
@@ -5878,8 +5893,8 @@ git commit -m "feat(extension): chrome adapters and the background service worke
 
 **Files:**
 - Create: `extension/src/application/popup-model.ts`, `popup-model.test.ts`
-- Create: `extension/src/ui/dom.ts`, `extension/src/ui/popup-view.ts`, `popup-view.test.ts`, `extension/src/ui/popup.css`
-- Modify: `extension/src/entry/popup.ts` (replace the stub), `extension/popup.html` (add the stylesheet)
+- Create: `extension/src/ui/popup/messages.ts`, `Popup.tsx`, `Popup.test.tsx`, `PopupApp.tsx`, `PopupApp.test.tsx`, `popup.css`
+- Modify: `extension/src/entry/popup.tsx` (replace the stub), `extension/popup.html` (add the stylesheet)
 
 **Interfaces:**
 - **Consumes:**
@@ -5887,17 +5902,20 @@ git commit -m "feat(extension): chrome adapters and the background service worke
   - Task 4: `LocalStore`, `Api`, `Clock`.
   - Task 2: `todaySeconds`, `roundMinutes`, `LocalArticle`.
   - Task 9: `sendToBackground`, `sendToTab`.
+  - Task 1: React 19, `@testing-library/react`.
   - Task 10: `activeTabId`, `openTab`, `openOptions`, `compose`.
 - **Produces:**
   - `application/popup-model.ts`:
     - `ArticleView { url; title; minutes; progressPercent; completed: boolean | null; notionUrl: string | null }`;
     - `PopupModel`, a union over `kind` (`disconnected | needs_setup | revoked | active`);
     - `buildPopupModel(deps, session, currentUrl): Promise<PopupModel>`.
-  - `ui/dom.ts`: `h(tag, props, ...children)` and `clear(el)`.
-  - `ui/popup-view.ts`:
+  - `ui/popup/messages.ts`: `connectMessage(reason): string`.
+  - `ui/popup/Popup.tsx`:
     - `PopupActions { connect(); openOptions(); openUrl(url) }`;
-    - `renderPopup(root, model, actions, note?)`;
-    - `connectMessage(reason)`.
+    - `<Popup model actions note? />`, a pure view of one `PopupModel`.
+  - `ui/popup/PopupApp.tsx`:
+    - `PopupAppProps { load(): Promise<PopupModel>; refresh(): Promise<void>; connect(): Promise<ConnectResult>; openOptions(); openUrl(url) }`;
+    - `<PopupApp {...props} />`, which loads the model, refreshes `/v1/me`, reloads, and turns a failed connect into a note.
 
 **Popup states (spec T30):**
 - `disconnected`, or connected with no installation: "Connect Notion".
@@ -6115,44 +6133,40 @@ export async function buildPopupModel(deps: PopupDeps, session: SessionState, cu
 Run: `cd extension && pnpm test popup-model`
 Expected: PASS, 6 tests.
 
-- [ ] **Step 5: Write the failing view test**
+- [ ] **Step 5: Write the failing view tests**
 
-`extension/src/ui/popup-view.test.ts`:
+`extension/src/ui/popup/Popup.test.tsx`:
 
-```ts
+```tsx
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { PopupModel } from '../application/popup-model'
-import { connectMessage, renderPopup, type PopupActions } from './popup-view'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import type { PopupModel } from '../../application/popup-model'
+import { connectMessage } from './messages'
+import { Popup, type PopupActions } from './Popup'
 
-describe('renderPopup', () => {
-  let root: HTMLElement
+afterEach(cleanup)
+
+describe('<Popup>', () => {
   let actions: PopupActions
 
   beforeEach(() => {
-    document.body.innerHTML = '<main id="app"></main>'
-    root = document.getElementById('app')!
     actions = { connect: vi.fn(), openOptions: vi.fn(), openUrl: vi.fn() }
   })
-
-  const button = (label: string) =>
-    [...root.querySelectorAll('button')].find((b) => b.textContent === label) ?? null
 
   test.each([
     [{ kind: 'disconnected' }, 'Connect Notion', 'connect'],
     [{ kind: 'needs_setup', workspaceName: 'W', setupError: 'template_not_found' }, 'Finish setup', 'openOptions'],
     [{ kind: 'revoked', workspaceName: 'W' }, 'Reconnect', 'connect'],
   ] as const)('T30: %j shows "%s"', (model, label, action) => {
-    renderPopup(root, model as PopupModel, actions)
-    const b = button(label)
-    expect(b).not.toBeNull()
-    b!.click()
+    render(<Popup model={model as PopupModel} actions={actions} />)
+    fireEvent.click(screen.getByRole('button', { name: label }))
     expect(actions[action as keyof PopupActions]).toHaveBeenCalledTimes(1)
   })
 
   test('needs_setup explains the setup error', () => {
-    renderPopup(root, { kind: 'needs_setup', workspaceName: 'W', setupError: 'database_missing:Daily Log' }, actions)
-    expect(root.textContent).toContain('database_missing:Daily Log')
+    render(<Popup model={{ kind: 'needs_setup', workspaceName: 'W', setupError: 'database_missing:Daily Log' }} actions={actions} />)
+    expect(screen.getByText(/database_missing:Daily Log/)).toBeTruthy()
   })
 
   const active: PopupModel = {
@@ -6165,40 +6179,42 @@ describe('renderPopup', () => {
   }
 
   test("active shows today's minutes, the current article and recent reads", () => {
-    renderPopup(root, active, actions)
-    expect(root.querySelector('[data-role=today]')?.textContent).toBe('42 min')
-    const current = root.querySelector('[data-role=current]')!
+    const { container } = render(<Popup model={active} actions={actions} />)
+    expect(container.querySelector('[data-role=today]')?.textContent).toBe('42 min')
+    const current = container.querySelector('[data-role=current]')!
     expect(current.textContent).toContain('Current one')
-    expect(current.textContent).toContain('7 min')
-    expect(current.textContent).toContain('64%')
-    expect(current.textContent).toContain('✓')
-    expect(root.querySelectorAll('[data-role=recent] li')).toHaveLength(2)
-    expect(root.textContent).toContain('3 segments waiting to sync')
+    expect(current.textContent).toContain('7 min · 64% · ✓')
+    expect(container.querySelectorAll('[data-role=recent] li')).toHaveLength(2)
+    expect(screen.getByText('3 segments waiting to sync')).toBeTruthy()
   })
 
   test('recent items open the Notion page when there is one, else the article', () => {
-    renderPopup(root, active, actions)
-    const links = root.querySelectorAll<HTMLButtonElement>('[data-role=recent] li button')
-    links[0]!.click()
-    links[1]!.click()
+    const { container } = render(<Popup model={active} actions={actions} />)
+    const links = container.querySelectorAll<HTMLButtonElement>('[data-role=recent] li button')
+    fireEvent.click(links[0]!)
+    fireEvent.click(links[1]!)
     expect(actions.openUrl).toHaveBeenNthCalledWith(1, 'https://www.notion.so/a')
     expect(actions.openUrl).toHaveBeenNthCalledWith(2, 'https://e.com/b')
   })
 
   test('the library button opens library_url and is hidden without one', () => {
-    renderPopup(root, active, actions)
-    button('Open library in Notion')!.click()
+    const { rerender } = render(<Popup model={active} actions={actions} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Open library in Notion' }))
     expect(actions.openUrl).toHaveBeenCalledWith('https://www.notion.so/lib')
-    renderPopup(root, { ...active, libraryUrl: null, current: null, recent: [], unsynced: 0 }, actions)
-    expect(button('Open library in Notion')).toBeNull()
-    expect(root.textContent).toContain('Nothing read yet')
+    rerender(<Popup model={{ ...active, libraryUrl: null, current: null, recent: [], unsynced: 0 }} actions={actions} />)
+    expect(screen.queryByRole('button', { name: 'Open library in Notion' })).toBeNull()
+    expect(screen.getByText(/Nothing read yet/)).toBeTruthy()
   })
 
-  test('re-rendering replaces the previous content and shows a note', () => {
-    renderPopup(root, { kind: 'disconnected' }, actions)
-    renderPopup(root, { kind: 'disconnected' }, actions, connectMessage('access_denied'))
-    expect(root.querySelectorAll('button')).toHaveLength(1)
-    expect(root.querySelector('[role=status]')?.textContent).toBe('Notion access was not granted.')
+  test('a note is announced', () => {
+    render(<Popup model={{ kind: 'disconnected' }} actions={actions} note={connectMessage('access_denied')} />)
+    expect(screen.getByRole('status').textContent).toBe('Notion access was not granted.')
+  })
+
+  test('page titles render as text, never HTML', () => {
+    const evil = { ...active, recent: [{ ...active.recent[1]!, title: '<img src=x onerror=alert(1)>' }] }
+    const { container } = render(<Popup model={evil} actions={actions} />)
+    expect(container.querySelector('img')).toBeNull()
   })
 })
 
@@ -6209,67 +6225,79 @@ test('connectMessage maps reasons', () => {
 })
 ```
 
-- [ ] **Step 6: Run it to see it fail**
+`extension/src/ui/popup/PopupApp.test.tsx`:
 
-Run: `cd extension && pnpm test popup-view`
-Expected: FAIL, because `./popup-view` cannot be resolved.
+```tsx
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, expect, test, vi } from 'vitest'
+import type { PopupModel } from '../../application/popup-model'
+import type { ConnectResult } from '../../application/session'
+import { PopupApp, type PopupAppProps } from './PopupApp'
 
-- [ ] **Step 7: Implement the DOM helper, the view and the styles**
+afterEach(cleanup)
 
-`extension/src/ui/dom.ts`:
-
-```ts
-// h builds an element; text children become text nodes (never HTML), so page titles are safe.
-type Child = Node | string | number | null | undefined | false
-
-export interface Props {
-  class?: string
-  role?: string
-  data?: Record<string, string>
-  onClick?: () => void
-  type?: string
-  placeholder?: string
-  value?: string
-  disabled?: boolean
-  title?: string
-}
-
-export function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
-  const el = document.createElement(tag)
-  if (props.class) el.className = props.class
-  if (props.role) el.setAttribute('role', props.role)
-  if (props.title) el.title = props.title
-  for (const [k, v] of Object.entries(props.data ?? {})) el.dataset[k] = v
-  if (props.onClick) el.addEventListener('click', props.onClick)
-  if (props.type) el.setAttribute('type', props.type)
-  if (props.placeholder) el.setAttribute('placeholder', props.placeholder)
-  if (props.value !== undefined) (el as HTMLInputElement).value = props.value
-  if (props.disabled) (el as HTMLButtonElement).disabled = true
-  for (const c of children) {
-    if (c === null || c === undefined || c === false) continue
-    el.append(typeof c === 'object' ? c : String(c))
+function props(over: Partial<PopupAppProps> = {}): PopupAppProps {
+  return {
+    load: vi.fn(async (): Promise<PopupModel> => ({ kind: 'disconnected' })),
+    refresh: vi.fn(async () => {}),
+    connect: vi.fn(async (): Promise<ConnectResult> => ({ ok: false, reason: 'cancelled' })),
+    openOptions: vi.fn(),
+    openUrl: vi.fn(),
+    ...over,
   }
-  return el
 }
 
-export function clear(el: Element): void {
-  el.replaceChildren()
-}
+test('loads the model, refreshes /v1/me, then reloads', async () => {
+  const p = props()
+  render(<PopupApp {...p} />)
+  expect(await screen.findByRole('button', { name: 'Connect Notion' })).toBeTruthy()
+  await vi.waitFor(() => expect(p.load).toHaveBeenCalledTimes(2))
+  expect(p.refresh).toHaveBeenCalledTimes(1)
+})
+
+test('a failed connect shows why and reloads', async () => {
+  const p = props()
+  render(<PopupApp {...p} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Connect Notion' }))
+  expect((await screen.findByRole('status')).textContent).toBe('Connection cancelled.')
+  await vi.waitFor(() => expect(p.load).toHaveBeenCalledTimes(3))
+})
+
+test('a successful connect shows the new state', async () => {
+  let connected = false
+  const p = props({
+    load: vi.fn(async (): Promise<PopupModel> => connected
+      ? { kind: 'needs_setup', workspaceName: 'W', setupError: '' }
+      : { kind: 'disconnected' }),
+    connect: vi.fn(async (): Promise<ConnectResult> => {
+      connected = true
+      return { ok: true, installation: null }
+    }),
+  })
+  render(<PopupApp {...p} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Connect Notion' }))
+  expect(await screen.findByRole('button', { name: 'Finish setup' })).toBeTruthy()
+  expect(screen.queryByRole('status')).toBeNull()
+})
+
+test('a load failure is reported instead of a blank popup', async () => {
+  render(<PopupApp {...props({ load: vi.fn(async () => { throw new Error('db closed') }) })} />)
+  expect((await screen.findByRole('status')).textContent).toBe("Couldn't load your reading. Close and reopen the popup.")
+})
 ```
 
-`extension/src/ui/popup-view.ts`:
+- [ ] **Step 6: Run them to see them fail**
+
+Run: `cd extension && pnpm test ui/popup`
+Expected: FAIL, because `./messages`, `./Popup` and `./PopupApp` cannot be resolved.
+
+- [ ] **Step 7: Implement the components and the styles**
+
+`extension/src/ui/popup/messages.ts`:
 
 ```ts
-// renderPopup draws the popup for one PopupModel (spec T30).
-import type { ArticleView, PopupModel } from '../application/popup-model'
-import { clear, h } from './dom'
-
-export interface PopupActions {
-  connect(): void
-  openOptions(): void
-  openUrl(url: string): void
-}
-
+// connectMessage turns a ConnectResult reason into a sentence for the user.
 export function connectMessage(reason: string): string {
   switch (reason) {
     case 'cancelled':
@@ -6282,60 +6310,162 @@ export function connectMessage(reason: string): string {
       return `Connection failed (${reason}). Try again.`
   }
 }
+```
+
+`extension/src/ui/popup/Popup.tsx`:
+
+```tsx
+// <Popup> draws one PopupModel (spec T30). It holds no state: PopupApp owns loading.
+import type { ArticleView, PopupModel } from '../../application/popup-model'
+
+export interface PopupActions {
+  connect(): void
+  openOptions(): void
+  openUrl(url: string): void
+}
 
 function articleLine(a: ArticleView): string {
   return `${a.minutes} min · ${a.progressPercent}%${a.completed ? ' · ✓' : ''}`
 }
 
-function body(model: PopupModel, actions: PopupActions): Node[] {
+function Body({ model, actions }: { model: PopupModel; actions: PopupActions }) {
   switch (model.kind) {
     case 'disconnected':
-      return [
-        h('p', {}, 'Track your reading time and log it to Notion.'),
-        h('button', { class: 'primary', onClick: actions.connect }, 'Connect Notion'),
-      ]
+      return (
+        <>
+          <p>Track your reading time and log it to Notion.</p>
+          <button className="primary" onClick={actions.connect}>Connect Notion</button>
+        </>
+      )
     case 'needs_setup':
-      return [
-        h('p', {}, `Almost there: ${model.workspaceName} still needs its Reading Library.`),
-        model.setupError ? h('p', { class: 'muted' }, `Reason: ${model.setupError}`) : h('span'),
-        h('button', { class: 'primary', onClick: actions.openOptions }, 'Finish setup'),
-      ]
+      return (
+        <>
+          <p>Almost there: {model.workspaceName} still needs its Reading Library.</p>
+          {model.setupError && <p className="muted">Reason: {model.setupError}</p>}
+          <button className="primary" onClick={actions.openOptions}>Finish setup</button>
+        </>
+      )
     case 'revoked':
-      return [
-        h('p', {}, `Notion access for ${model.workspaceName} was removed. Your reading is kept and syncs after you reconnect.`),
-        h('button', { class: 'primary', onClick: actions.connect }, 'Reconnect'),
-      ]
+      return (
+        <>
+          <p>Notion access for {model.workspaceName} was removed. Your reading is kept and syncs after you reconnect.</p>
+          <button className="primary" onClick={actions.connect}>Reconnect</button>
+        </>
+      )
     case 'active': {
-      const nodes: Node[] = [
-        h('section', { class: 'today' }, h('span', { class: 'muted' }, 'Today'), h('strong', { data: { role: 'today' } }, `${model.todayMinutes} min`)),
-      ]
-      if (model.current) {
-        nodes.push(h('section', { data: { role: 'current' } },
-          h('h2', {}, 'Reading now'), h('p', { class: 'title' }, model.current.title), h('p', { class: 'muted' }, articleLine(model.current))))
-      }
-      nodes.push(model.recent.length === 0
-        ? h('p', { class: 'muted' }, 'Nothing read yet. Open an article to start.')
-        : h('section', {}, h('h2', {}, 'Recent'), h('ul', { data: { role: 'recent' } }, ...model.recent.map((a) =>
-          h('li', {}, h('button', { class: 'link', title: a.url, onClick: () => actions.openUrl(a.notionUrl ?? a.url) }, a.title),
-            h('span', { class: 'muted' }, articleLine(a)))))))
-      if (model.libraryUrl) {
-        const url = model.libraryUrl
-        nodes.push(h('button', { onClick: () => actions.openUrl(url) }, 'Open library in Notion'))
-      }
-      if (model.unsynced > 0) nodes.push(h('p', { class: 'muted small' }, `${model.unsynced} segments waiting to sync`))
-      return nodes
+      const library = model.libraryUrl
+      return (
+        <>
+          <section className="today">
+            <span className="muted">Today</span>
+            <strong data-role="today">{model.todayMinutes} min</strong>
+          </section>
+          {model.current && (
+            <section data-role="current">
+              <h2>Reading now</h2>
+              <p className="title">{model.current.title}</p>
+              <p className="muted">{articleLine(model.current)}</p>
+            </section>
+          )}
+          {model.recent.length === 0 ? (
+            <p className="muted">Nothing read yet. Open an article to start.</p>
+          ) : (
+            <section>
+              <h2>Recent</h2>
+              <ul data-role="recent">
+                {model.recent.map((a) => (
+                  <li key={a.url}>
+                    <button className="link" title={a.url} onClick={() => actions.openUrl(a.notionUrl ?? a.url)}>{a.title}</button>
+                    <span className="muted">{articleLine(a)}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {library && <button onClick={() => actions.openUrl(library)}>Open library in Notion</button>}
+          {model.unsynced > 0 && <p className="muted small">{model.unsynced} segments waiting to sync</p>}
+        </>
+      )
     }
   }
 }
 
-export function renderPopup(root: HTMLElement, model: PopupModel, actions: PopupActions, note?: string): void {
-  clear(root)
-  root.append(h('header', {}, h('h1', {}, 'Reading Tracker')), ...body(model, actions))
-  if (note) root.append(h('p', { role: 'status', class: 'note' }, note))
+export function Popup({ model, actions, note }: { model: PopupModel; actions: PopupActions; note?: string }) {
+  return (
+    <>
+      <header>
+        <h1>Reading Tracker</h1>
+      </header>
+      <Body model={model} actions={actions} />
+      {note && <p role="status" className="note">{note}</p>}
+    </>
+  )
 }
 ```
 
-`extension/src/ui/popup.css`:
+`extension/src/ui/popup/PopupApp.tsx`:
+
+```tsx
+// <PopupApp> loads the popup model, refreshes /v1/me in the background, and handles connect.
+// Connect itself runs in the service worker: the popup closes when the Notion window opens.
+import { useEffect, useState } from 'react'
+import type { PopupModel } from '../../application/popup-model'
+import type { ConnectResult } from '../../application/session'
+import { connectMessage } from './messages'
+import { Popup, type PopupActions } from './Popup'
+
+export interface PopupAppProps {
+  load(): Promise<PopupModel>
+  refresh(): Promise<void>
+  connect(): Promise<ConnectResult>
+  openOptions(): void
+  openUrl(url: string): void
+}
+
+const LOAD_FAILED = "Couldn't load your reading. Close and reopen the popup."
+
+export function PopupApp(props: PopupAppProps) {
+  const [model, setModel] = useState<PopupModel | null>(null)
+  const [note, setNote] = useState<string | undefined>()
+
+  useEffect(() => {
+    let live = true
+    const show = async () => {
+      const m = await props.load()
+      if (live) setModel(m)
+    }
+    show()
+      .then(() => props.refresh())
+      .then(show)
+      .catch(() => {
+        if (live) setNote(LOAD_FAILED)
+      })
+    return () => {
+      live = false
+    }
+    // Load once per popup opening; the props are fixed for the popup's lifetime.
+  }, [])
+
+  const actions: PopupActions = {
+    connect: () => {
+      props.connect().then(
+        async (res) => {
+          setNote(res.ok ? undefined : connectMessage(res.reason))
+          setModel(await props.load())
+        },
+        () => setNote(connectMessage('network_error')),
+      )
+    },
+    openOptions: props.openOptions,
+    openUrl: props.openUrl,
+  }
+
+  if (!model) return note ? <p role="status" className="note">{note}</p> : <p className="muted">Loading…</p>
+  return <Popup model={model} actions={actions} note={note} />
+}
+```
+
+`extension/src/ui/popup/popup.css`:
 
 ```css
 :root {
@@ -6367,45 +6497,38 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); tex
 
 - [ ] **Step 8: Write the popup entry and link the stylesheet**
 
-`extension/src/entry/popup.ts`:
+`extension/src/entry/popup.tsx`:
 
-```ts
-// Popup composition root (spec T30). Connect runs in the background because the popup
-// closes as soon as the Notion window takes focus.
+```tsx
+// Popup composition root (spec T30): real adapters in, <PopupApp> out.
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
 import { sendToBackground, sendToTab } from '../adapters/chrome/messaging'
 import { activeTabId, openOptions, openTab } from '../adapters/chrome/tabs'
 import { buildPopupModel } from '../application/popup-model'
-import { connectMessage, renderPopup, type PopupActions } from '../ui/popup-view'
+import { PopupApp } from '../ui/popup/PopupApp'
 import { compose } from './compose'
 
 const s = compose('popup')
-const root = document.getElementById('app') as HTMLElement
 
 async function currentCanonical(): Promise<string | null> {
   const tabId = await activeTabId()
   return tabId === null ? null : ((await sendToTab(tabId, { type: 'current-page' }))?.canonicalUrl ?? null)
 }
 
-const actions: PopupActions = {
-  connect: () => {
-    void sendToBackground({ type: 'connect' }).then(
-      (res) => render(res.ok ? undefined : connectMessage(res.reason)),
-      () => render(connectMessage('network_error')),
-    )
-  },
-  openOptions: () => void openOptions(),
-  openUrl: (url) => void openTab(url),
-}
-
-async function render(note?: string): Promise<void> {
-  const [session, current] = await Promise.all([s.session.state(), currentCanonical()])
-  renderPopup(root, await buildPopupModel(s, session, current), actions, note)
-}
-
-void render().then(async () => {
-  await s.session.refresh()
-  await render()
-})
+createRoot(document.getElementById('app') as HTMLElement).render(
+  <StrictMode>
+    <PopupApp
+      load={async () => buildPopupModel(s, await s.session.state(), await currentCanonical())}
+      refresh={async () => {
+        await s.session.refresh()
+      }}
+      connect={() => sendToBackground({ type: 'connect' })}
+      openOptions={() => void openOptions()}
+      openUrl={(url) => void openTab(url)}
+    />
+  </StrictMode>,
+)
 ```
 
 Replace `extension/popup.html` with:
@@ -6416,11 +6539,11 @@ Replace `extension/popup.html` with:
   <head>
     <meta charset="utf-8" />
     <title>Reading Tracker</title>
-    <link rel="stylesheet" href="/src/ui/popup.css" />
+    <link rel="stylesheet" href="/src/ui/popup/popup.css" />
   </head>
   <body>
     <main id="app"></main>
-    <script type="module" src="/src/entry/popup.ts"></script>
+    <script type="module" src="/src/entry/popup.tsx"></script>
   </body>
 </html>
 ```
@@ -6430,70 +6553,78 @@ Replace `extension/popup.html` with:
 Run: `cd extension && pnpm check`
 Expected:
 - All tests PASS.
-- The arch test passes: `ui/*` imports only application and ui, and `entry/popup.ts` composes adapters.
-- The build emits `popup.html` with a hashed CSS asset under `assets/`.
+- The arch test passes:
+  - `ui/popup/*` imports only application, ui and `react`;
+  - `entry/popup.tsx` composes adapters and `react-dom`;
+  - `application/*` imports no React.
+- The build emits `popup.html` with a hashed CSS asset under `assets/`. React lands in `popup.js` and its chunks, and `background.js` and `content.js` stay free of React. Check that with `grep -c react dist/content.js`, which should print `0`.
 
 - [ ] **Step 10: Commit**
 
 ```bash
 cd /Users/tuandoquoc/personal/reading-chrome-extension
-git add extension/src/application/popup-model.ts extension/src/application/popup-model.test.ts extension/src/ui extension/src/entry/popup.ts extension/popup.html
-git commit -m "feat(extension): popup with connect, setup, reconnect and today's reading"
+git add extension/src/application/popup-model.ts extension/src/application/popup-model.test.ts extension/src/ui extension/src/entry/popup.tsx extension/popup.html
+git commit -m "feat(extension): React popup with connect, setup, reconnect and today's reading"
 ```
 
 ---
 ### Task 12: Options page
 
 **Files:**
-- Create: `extension/src/ui/options-view.ts`, `options-view.test.ts`
-- Create: `extension/src/ui/options-controller.ts`, `options-controller.test.ts`
-- Create: `extension/src/ui/options.css`
-- Modify: `extension/src/entry/options.ts` (replace the stub), `extension/options.html` (stylesheet)
+- Create: `extension/src/ui/options/OptionsView.tsx`, `OptionsView.test.tsx`
+- Create: `extension/src/ui/options/options-controller.ts`, `options-controller.test.ts`
+- Create: `extension/src/ui/options/OptionsApp.tsx`, `OptionsApp.test.tsx`, `options.css`
+- Modify: `extension/src/entry/options.tsx` (replace the stub), `extension/options.html` (stylesheet)
 
 **Interfaces:**
 - **Consumes:**
-  - From Task 7: `SessionService`, `SetupService`, `DomainService`, `SessionState`, `ConnectResult`.
-  - From Task 4: `NotionPage`.
-  - From Task 2: `DomainLists`.
-  - From Task 11: `h`, `clear` and `connectMessage`.
-  - From Tasks 9–10: `sendToBackground` and `compose`.
+  - Task 7: `SessionService`, `SetupService`, `DomainService`, `SessionState`, `ConnectResult`.
+  - Task 4: `NotionPage`.
+  - Task 2: `DomainLists`.
+  - Task 11: `connectMessage`.
+  - Tasks 9–10: `sendToBackground`, `compose`.
+  - Task 1: React 19 and `@testing-library/react`.
 - **Produces:**
-  - From `ui/options-view.ts`:
+  - `ui/options/OptionsView.tsx`:
     - `OptionsState { session; domains; pages: NotionPage[] | null; busy: boolean; note: string | null }`;
     - `OptionsActions`;
-    - `renderOptions(root, state, actions)`.
-  - From `ui/options-controller.ts`:
-    - `OptionsServices`, `OptionsUi { render(state, actions); confirm(message): boolean }`;
+    - `<OptionsView state actions />`, a pure view.
+  - `ui/options/options-controller.ts` (plain TypeScript, no React):
+    - `OptionsServices` and `OptionsUi { render(state, actions); confirm(message): boolean }`;
     - `createOptionsController(services, ui)`, which returns `{ load(): Promise<void>; actions: OptionsActions; state(): OptionsState }`.
+  - `ui/options/OptionsApp.tsx`: `<OptionsApp services confirm />`. It wires the controller to React state, loads, refreshes `/v1/me`, and reloads.
 
 **Sections** (spec T31):
-- **Account:** connection status. Shows "Connect Notion" when disconnected, "Reconnect" when revoked, plus "Disconnect" (`POST /v1/auth/logout`) and "Delete account" (`DELETE /v1/me`, after a confirm dialog).
-- **Finish setup:** shown only while the installation is `needs_setup`. Search the pages the integration can see (`GET /v1/setup/pages`), then pick a parent page (`POST /v1/setup`).
+- **Account:** the connection status.
+  - "Connect Notion" when disconnected, "Reconnect" when revoked.
+  - "Disconnect" calls `POST /v1/auth/logout`.
+  - "Delete account" calls `DELETE /v1/me` after a confirm dialog.
+- **Finish setup:** shown only while the installation is `needs_setup`. Search the pages the integration can see (`GET /v1/setup/pages`), then pick a parent (`POST /v1/setup`).
 - **Tracked sites:**
-  - enable a domain: the optional host permission prompt, then content-script registration;
-  - list the enabled domains, each with a remove button;
-  - note that Medium and Freedium are always tracked.
-- **Never track:** a denied-domain list, which overrides everything.
+  - Enabling a domain shows the optional host-permission prompt, then registers the content script.
+  - Enabled domains are listed, each with a remove button.
+  - A note says Medium and Freedium are always tracked.
+- **Never track:** a denied-domain list that overrides everything.
 
-`enableDomain` calls `DomainService.enable` with no `await` before it, so the permission prompt stays inside the click's user gesture.
+`enableDomain` runs synchronously inside the form's submit handler, and its first `await` is `permissions.request`. That keeps the prompt inside the user gesture.
 
-- [ ] **Step 1: Write the failing view test**
+- [ ] **Step 1: Write the failing tests**
 
-`extension/src/ui/options-view.test.ts`:
+`extension/src/ui/options/OptionsView.test.tsx`:
 
-```ts
+```tsx
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { INSTALLATION } from '../../test/fakes'
-import { renderOptions, type OptionsActions, type OptionsState } from './options-view'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { INSTALLATION } from '../../../test/fakes'
+import { OptionsView, type OptionsActions, type OptionsState } from './OptionsView'
 
-describe('renderOptions', () => {
-  let root: HTMLElement
+afterEach(cleanup)
+
+describe('<OptionsView>', () => {
   let actions: OptionsActions
 
   beforeEach(() => {
-    document.body.innerHTML = '<main id="app"></main>'
-    root = document.getElementById('app')!
     actions = {
       connect: vi.fn(), disconnect: vi.fn(), deleteAccount: vi.fn(), searchPages: vi.fn(), choosePage: vi.fn(),
       enableDomain: vi.fn(), disableDomain: vi.fn(), denyDomain: vi.fn(), undenyDomain: vi.fn(),
@@ -6504,95 +6635,93 @@ describe('renderOptions', () => {
     session: { kind: 'connected', user: { id: 'u1', name: 'Tuan' }, installation: INSTALLATION },
     domains: { enabled: [], denied: [] }, pages: null, busy: false, note: null, ...over,
   })
-  const button = (label: string) => [...root.querySelectorAll('button')].find((b) => b.textContent === label) ?? null
-  const submit = (form: string, value: string) => {
-    const f = root.querySelector<HTMLFormElement>(`form[data-form=${form}]`)!
-    f.querySelector('input')!.value = value
-    f.dispatchEvent(new Event('submit', { cancelable: true }))
+  const view = (s: OptionsState) => render(<OptionsView state={s} actions={actions} />).container
+  const submit = (container: HTMLElement, form: string, value: string) => {
+    const f = container.querySelector<HTMLFormElement>(`form[data-form=${form}]`)!
+    fireEvent.change(within(f).getByRole('textbox'), { target: { value } })
+    fireEvent.submit(f)
   }
 
   test('disconnected: only Connect in the account section, no setup', () => {
-    renderOptions(root, state({ session: { kind: 'disconnected' } }), actions)
-    button('Connect Notion')!.click()
+    const c = view(state({ session: { kind: 'disconnected' } }))
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Notion' }))
     expect(actions.connect).toHaveBeenCalled()
-    expect(button('Disconnect')).toBeNull()
-    expect(root.querySelector('[data-section=setup]')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull()
+    expect(c.querySelector('[data-section=setup]')).toBeNull()
   })
 
   test('active: workspace shown, disconnect and delete wired, no setup', () => {
-    renderOptions(root, state(), actions)
-    expect(root.textContent).toContain("Tuan's Notion")
-    button('Disconnect')!.click()
-    button('Delete account')!.click()
+    const c = view(state())
+    expect(c.textContent).toContain("Tuan's Notion")
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete account' }))
     expect(actions.disconnect).toHaveBeenCalled()
     expect(actions.deleteAccount).toHaveBeenCalled()
-    expect(root.querySelector('[data-section=setup]')).toBeNull()
+    expect(c.querySelector('[data-section=setup]')).toBeNull()
   })
 
   test('revoked: Reconnect', () => {
-    renderOptions(root, state({ session: { kind: 'connected', user: null, installation: { ...INSTALLATION, status: 'revoked' } } }), actions)
-    button('Reconnect')!.click()
+    view(state({ session: { kind: 'connected', user: null, installation: { ...INSTALLATION, status: 'revoked' } } }))
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
     expect(actions.connect).toHaveBeenCalled()
   })
 
   test('T31: needs_setup shows the page picker', () => {
     const needsSetup = { ...INSTALLATION, status: 'needs_setup', setupError: 'template_not_found', libraryUrl: null }
-    renderOptions(root, state({
+    const c = view(state({
       session: { kind: 'connected', user: null, installation: needsSetup },
       pages: [{ id: 'p1', title: 'Reading', url: 'https://www.notion.so/p1' }],
-    }), actions)
-    expect(root.querySelector('[data-section=setup]')?.textContent).toContain('template_not_found')
-    submit('search', 'Read')
+    }))
+    expect(c.querySelector('[data-section=setup]')?.textContent).toContain('template_not_found')
+    submit(c, 'search', 'Read')
     expect(actions.searchPages).toHaveBeenCalledWith('Read')
-    button('Use this page')!.click()
+    fireEvent.click(screen.getByRole('button', { name: 'Use this page' }))
     expect(actions.choosePage).toHaveBeenCalledWith('p1')
   })
 
   test('an empty search result says so', () => {
-    renderOptions(root, state({
-      session: { kind: 'connected', user: null, installation: { ...INSTALLATION, status: 'needs_setup' } }, pages: [],
-    }), actions)
-    expect(root.textContent).toContain('No pages found')
+    view(state({ session: { kind: 'connected', user: null, installation: { ...INSTALLATION, status: 'needs_setup' } }, pages: [] }))
+    expect(screen.getByText(/No pages found/)).toBeTruthy()
   })
 
   test('T31: tracked and denied domains', () => {
-    renderOptions(root, state({ domains: { enabled: ['example.com'], denied: ['spam.net'] } }), actions)
-    submit('enable', 'blog.org')
-    submit('deny', 'ads.com')
+    const c = view(state({ domains: { enabled: ['example.com'], denied: ['spam.net'] } }))
+    submit(c, 'enable', 'blog.org')
+    submit(c, 'deny', 'ads.com')
     expect(actions.enableDomain).toHaveBeenCalledWith('blog.org')
     expect(actions.denyDomain).toHaveBeenCalledWith('ads.com')
-    root.querySelector<HTMLButtonElement>('[data-list=enabled] button')!.click()
-    root.querySelector<HTMLButtonElement>('[data-list=denied] button')!.click()
+    fireEvent.click(c.querySelector<HTMLButtonElement>('[data-list=enabled] button')!)
+    fireEvent.click(c.querySelector<HTMLButtonElement>('[data-list=denied] button')!)
     expect(actions.disableDomain).toHaveBeenCalledWith('example.com')
     expect(actions.undenyDomain).toHaveBeenCalledWith('spam.net')
-    expect(root.textContent).toContain('Medium and Freedium are always tracked')
+    expect(c.textContent).toContain('Medium and Freedium are always tracked')
   })
 
   test('busy disables buttons; the note is announced', () => {
-    renderOptions(root, state({ busy: true, note: 'Tracking blog.org.' }), actions)
-    expect([...root.querySelectorAll('button')].every((b) => b.disabled)).toBe(true)
-    expect(root.querySelector('[role=status]')?.textContent).toBe('Tracking blog.org.')
+    const c = view(state({ busy: true, note: 'Tracking blog.org.' }))
+    expect([...c.querySelectorAll('button')].every((b) => b.disabled)).toBe(true)
+    expect(screen.getByRole('status').textContent).toBe('Tracking blog.org.')
   })
 })
 ```
 
-- [ ] **Step 2: Write the failing controller test**
+Then write the controller and app tests:
 
-`extension/src/ui/options-controller.test.ts`:
+`extension/src/ui/options/options-controller.test.ts`:
 
 ```ts
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   FakeApi, FakeAuthFlow, FakeContentScripts, FakePermissions, FakePkce, INSTALLATION, MemoryLog, MemoryStore,
-} from '../../test/fakes'
-import { ApiError } from '../application/errors'
-import { DomainService } from '../application/domains'
-import { SessionService } from '../application/session'
-import { SetupService } from '../application/setup'
-import type { ConnectResult } from '../application/session'
+} from '../../../test/fakes'
+import { ApiError } from '../../application/errors'
+import { DomainService } from '../../application/domains'
+import { SessionService } from '../../application/session'
+import { SetupService } from '../../application/setup'
+import type { ConnectResult } from '../../application/session'
 import { createOptionsController } from './options-controller'
-import type { OptionsState } from './options-view'
+import type { OptionsState } from './OptionsView'
 
 describe('options controller', () => {
   let store: MemoryStore
@@ -6720,21 +6849,73 @@ describe('options controller', () => {
 })
 ```
 
-- [ ] **Step 3: Run them to see them fail**
+`extension/src/ui/options/OptionsApp.test.tsx`:
 
-Run: `cd extension && pnpm test options`
-Expected: FAIL, because `./options-view` and `./options-controller` cannot be resolved.
+```tsx
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, expect, test, vi } from 'vitest'
+import { FakeContentScripts, FakePermissions, MemoryStore } from '../../../test/fakes'
+import { DomainService } from '../../application/domains'
+import type { SessionState } from '../../application/session'
+import { OptionsApp } from './OptionsApp'
+import type { OptionsServices } from './options-controller'
 
-- [ ] **Step 4: Implement the view**
+afterEach(cleanup)
 
-`extension/src/ui/options-view.ts`:
+function services(): OptionsServices & { refreshed: () => number } {
+  let refreshes = 0
+  const session: SessionState = { kind: 'disconnected' }
+  return {
+    session: {
+      state: async () => session,
+      refresh: async () => {
+        refreshes++
+        return session
+      },
+      logout: async () => {},
+      deleteAccount: async () => {},
+    },
+    setup: { searchPages: async () => [], createDatabases: vi.fn() },
+    domains: new DomainService({ store: new MemoryStore(), permissions: new FakePermissions(), scripts: new FakeContentScripts() }),
+    connect: async () => ({ ok: false, reason: 'cancelled' }),
+    refreshed: () => refreshes,
+  }
+}
 
-```ts
-// renderOptions draws the options page (spec T31) for one OptionsState.
-import type { DomainLists } from '../domain/domains'
-import type { SessionState } from '../application/session'
-import type { NotionPage } from '../application/types'
-import { clear, h } from './dom'
+test('loads, refreshes /v1/me once, and renders the page', async () => {
+  const s = services()
+  render(<OptionsApp services={s} confirm={() => false} />)
+  expect(await screen.findByRole('button', { name: 'Connect Notion' })).toBeTruthy()
+  await vi.waitFor(() => expect(s.refreshed()).toBe(1))
+})
+
+test('actions re-render through React state', async () => {
+  render(<OptionsApp services={services()} confirm={() => false} />)
+  const input = (await screen.findAllByPlaceholderText('example.com'))[0]!
+  fireEvent.change(input, { target: { value: 'example.com' } })
+  fireEvent.submit(input.closest('form')!)
+  expect(await screen.findByText('Tracking example.com.')).toBeTruthy()
+  expect(screen.getByText('example.com', { selector: 'li span' })).toBeTruthy()
+})
+```
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `cd extension && pnpm test ui/options`
+Expected: FAIL. The modules `./OptionsView`, `./options-controller` and `./OptionsApp` cannot be resolved.
+
+- [ ] **Step 3: Implement the view**
+
+`extension/src/ui/options/OptionsView.tsx`:
+
+```tsx
+// <OptionsView> draws the options page (spec T31) for one OptionsState. It holds only
+// the text typed into its forms; everything else comes from the controller.
+import { useState, type FormEvent } from 'react'
+import type { DomainLists } from '../../domain/domains'
+import type { SessionState } from '../../application/session'
+import type { NotionPage } from '../../application/types'
 
 export interface OptionsState {
   session: SessionState
@@ -6756,27 +6937,58 @@ export interface OptionsActions {
   undenyDomain(domain: string): void
 }
 
-function form(name: string, placeholder: string, label: string, onSubmit: (value: string) => void, busy: boolean): HTMLFormElement {
-  const input = h('input', { type: 'text', placeholder })
-  const f = h('form', { data: { form: name } }, input, h('button', { type: 'submit', disabled: busy }, label))
-  f.addEventListener('submit', (e) => {
+interface TextFormProps {
+  name: string
+  placeholder: string
+  label: string
+  busy: boolean
+  onSubmit(value: string): void
+}
+
+function TextForm({ name, placeholder, label, busy, onSubmit }: TextFormProps) {
+  const [value, setValue] = useState('')
+  const submit = (e: FormEvent) => {
     e.preventDefault()
-    onSubmit(input.value)
-  })
-  return f
+    onSubmit(value) // synchronous: enableDomain's permission prompt stays in the gesture
+  }
+  return (
+    <form data-form={name} onSubmit={submit}>
+      <input type="text" placeholder={placeholder} value={value} onChange={(e) => setValue(e.target.value)} />
+      <button type="submit" disabled={busy}>{label}</button>
+    </form>
+  )
 }
 
-function domainList(name: string, domains: readonly string[], onRemove: (d: string) => void, busy: boolean, empty: string): HTMLElement {
-  if (domains.length === 0) return h('p', { class: 'muted' }, empty)
-  return h('ul', { data: { list: name } }, ...domains.map((d) =>
-    h('li', {}, h('span', {}, d), h('button', { onClick: () => onRemove(d), disabled: busy }, 'Remove'))))
+function DomainList({ name, domains, busy, empty, onRemove }: {
+  name: string
+  domains: readonly string[]
+  busy: boolean
+  empty: string
+  onRemove(domain: string): void
+}) {
+  if (domains.length === 0) return <p className="muted">{empty}</p>
+  return (
+    <ul data-list={name}>
+      {domains.map((d) => (
+        <li key={d}>
+          <span>{d}</span>
+          <button disabled={busy} onClick={() => onRemove(d)}>Remove</button>
+        </li>
+      ))}
+    </ul>
+  )
 }
 
-function account(s: OptionsState, a: OptionsActions): HTMLElement {
-  const { session, busy } = s
+function Account({ state, actions }: { state: OptionsState; actions: OptionsActions }) {
+  const { session, busy } = state
   if (session.kind === 'disconnected') {
-    return h('section', { data: { section: 'account' } }, h('h2', {}, 'Notion'),
-      h('p', {}, 'Not connected.'), h('button', { class: 'primary', onClick: a.connect, disabled: busy }, 'Connect Notion'))
+    return (
+      <section data-section="account">
+        <h2>Notion</h2>
+        <p>Not connected.</p>
+        <button className="primary" disabled={busy} onClick={actions.connect}>Connect Notion</button>
+      </section>
+    )
   }
   const inst = session.installation
   const who = session.user ? ` as ${session.user.name}` : ''
@@ -6784,61 +6996,88 @@ function account(s: OptionsState, a: OptionsActions): HTMLElement {
     : inst.status === 'active' ? `Connected to ${inst.workspaceName}${who}.`
       : inst.status === 'revoked' ? `Access to ${inst.workspaceName} was removed.`
         : `Connected to ${inst.workspaceName}${who}; setup is not finished.`
-  return h('section', { data: { section: 'account' } }, h('h2', {}, 'Notion'), h('p', {}, status),
-    h('div', { class: 'row' },
-      !inst || inst.status === 'revoked' ? h('button', { class: 'primary', onClick: a.connect, disabled: busy }, 'Reconnect') : null,
-      h('button', { onClick: a.disconnect, disabled: busy }, 'Disconnect'),
-      h('button', { class: 'danger', onClick: a.deleteAccount, disabled: busy }, 'Delete account')))
-}
-
-function setup(s: OptionsState, a: OptionsActions): HTMLElement | null {
-  const inst = s.session.kind === 'connected' ? s.session.installation : null
-  if (!inst || inst.status !== 'needs_setup') return null
-  return h('section', { data: { section: 'setup' } },
-    h('h2', {}, 'Finish setup'),
-    h('p', {}, 'Pick a Notion page; Reading Library and Daily Log are created inside it.'),
-    inst.setupError ? h('p', { class: 'muted' }, `Reason: ${inst.setupError}`) : null,
-    form('search', 'Search your pages', 'Search', a.searchPages, s.busy),
-    s.pages === null ? null
-      : s.pages.length === 0 ? h('p', { class: 'muted' }, 'No pages found. Share a page with the integration in Notion, then search again.')
-        : h('ul', { data: { list: 'pages' } }, ...s.pages.map((p) =>
-          h('li', {}, h('span', { title: p.url }, p.title || 'Untitled'), h('button', { onClick: () => a.choosePage(p.id), disabled: s.busy }, 'Use this page')))))
-}
-
-export function renderOptions(root: HTMLElement, s: OptionsState, a: OptionsActions): void {
-  clear(root)
-  root.append(
-    h('h1', {}, 'Reading Tracker'),
-    account(s, a),
-    setup(s, a) ?? '',
-    h('section', { data: { section: 'enabled' } },
-      h('h2', {}, 'Tracked sites'),
-      h('p', { class: 'muted' }, 'Medium and Freedium are always tracked. Add other sites to track them too.'),
-      form('enable', 'example.com', 'Track site', a.enableDomain, s.busy),
-      domainList('enabled', s.domains.enabled, a.disableDomain, s.busy, 'No other sites yet.')),
-    h('section', { data: { section: 'denied' } },
-      h('h2', {}, 'Never track'),
-      h('p', { class: 'muted' }, 'Sites listed here are never tracked, even if added above.'),
-      form('deny', 'example.com', 'Never track', a.denyDomain, s.busy),
-      domainList('denied', s.domains.denied, a.undenyDomain, s.busy, 'Nothing blocked.')),
+  return (
+    <section data-section="account">
+      <h2>Notion</h2>
+      <p>{status}</p>
+      <div className="row">
+        {(!inst || inst.status === 'revoked') && (
+          <button className="primary" disabled={busy} onClick={actions.connect}>Reconnect</button>
+        )}
+        <button disabled={busy} onClick={actions.disconnect}>Disconnect</button>
+        <button className="danger" disabled={busy} onClick={actions.deleteAccount}>Delete account</button>
+      </div>
+    </section>
   )
-  if (s.note) root.append(h('p', { role: 'status', class: 'note' }, s.note))
+}
+
+function Setup({ state, actions }: { state: OptionsState; actions: OptionsActions }) {
+  const inst = state.session.kind === 'connected' ? state.session.installation : null
+  if (!inst || inst.status !== 'needs_setup') return null
+  return (
+    <section data-section="setup">
+      <h2>Finish setup</h2>
+      <p>Pick a Notion page; Reading Library and Daily Log are created inside it.</p>
+      {inst.setupError && <p className="muted">Reason: {inst.setupError}</p>}
+      <TextForm name="search" placeholder="Search your pages" label="Search" busy={state.busy} onSubmit={actions.searchPages} />
+      {state.pages !== null && (state.pages.length === 0 ? (
+        <p className="muted">No pages found. Share a page with the integration in Notion, then search again.</p>
+      ) : (
+        <ul data-list="pages">
+          {state.pages.map((p) => (
+            <li key={p.id}>
+              <span title={p.url}>{p.title || 'Untitled'}</span>
+              <button disabled={state.busy} onClick={() => actions.choosePage(p.id)}>Use this page</button>
+            </li>
+          ))}
+        </ul>
+      ))}
+    </section>
+  )
+}
+
+export function OptionsView({ state, actions }: { state: OptionsState; actions: OptionsActions }) {
+  return (
+    <>
+      <h1>Reading Tracker</h1>
+      <Account state={state} actions={actions} />
+      <Setup state={state} actions={actions} />
+      <section data-section="enabled">
+        <h2>Tracked sites</h2>
+        <p className="muted">Medium and Freedium are always tracked. Add other sites to track them too.</p>
+        <TextForm name="enable" placeholder="example.com" label="Track site" busy={state.busy} onSubmit={actions.enableDomain} />
+        <DomainList name="enabled" domains={state.domains.enabled} busy={state.busy} empty="No other sites yet." onRemove={actions.disableDomain} />
+      </section>
+      <section data-section="denied">
+        <h2>Never track</h2>
+        <p className="muted">Sites listed here are never tracked, even if added above.</p>
+        <TextForm name="deny" placeholder="example.com" label="Never track" busy={state.busy} onSubmit={actions.denyDomain} />
+        <DomainList name="denied" domains={state.domains.denied} busy={state.busy} empty="Nothing blocked." onRemove={actions.undenyDomain} />
+      </section>
+      {state.note && <p role="status" className="note">{state.note}</p>}
+    </>
+  )
 }
 ```
 
+- [ ] **Step 4: Run the view test**
+
+Run: `cd extension && pnpm test OptionsView`
+Expected: PASS, 7 tests.
+
 - [ ] **Step 5: Implement the controller**
 
-`extension/src/ui/options-controller.ts`:
+`extension/src/ui/options/options-controller.ts`:
 
 ```ts
 // The options page's state machine: run an action, keep the page busy meanwhile,
 // then re-read what changed and re-render with a short note.
-import { isApiError } from '../application/errors'
-import type { DomainService } from '../application/domains'
-import type { ConnectResult, SessionService } from '../application/session'
-import type { SetupService } from '../application/setup'
-import type { OptionsActions, OptionsState } from './options-view'
-import { connectMessage } from './popup-view'
+import { isApiError } from '../../application/errors'
+import type { DomainService } from '../../application/domains'
+import type { ConnectResult, SessionService } from '../../application/session'
+import type { SetupService } from '../../application/setup'
+import { connectMessage } from '../popup/messages'
+import type { OptionsActions, OptionsState } from './OptionsView'
 
 export interface OptionsServices {
   session: Pick<SessionService, 'state' | 'refresh' | 'logout' | 'deleteAccount'>
@@ -6943,11 +7182,51 @@ export function createOptionsController(s: OptionsServices, ui: OptionsUi) {
 }
 ```
 
-`OptionsActions` methods are typed `void`, but these implementations return promises. That lets the tests await them, while the view only fires them. The type-check accepts this, because a function returning a promise is assignable to one returning `void`.
+`OptionsActions` methods are typed `void`, but these implementations return promises. That lets the tests await them, while the view only fires them. The type-check accepts this, because a function returning a promise is assignable to one returning `void`. The controller has no React in it: `OptionsApp` (next step) gives it a `render` callback that sets React state.
 
-- [ ] **Step 6: Styles, entry and HTML**
+- [ ] **Step 6: Implement OptionsApp, the styles, the entry and the HTML**
 
-`extension/src/ui/options.css`:
+`extension/src/ui/options/OptionsApp.tsx`:
+
+```tsx
+// <OptionsApp> connects the controller to React: the controller's render callback sets
+// state, and React draws <OptionsView>. It loads, refreshes /v1/me, then reloads.
+import { useEffect, useState } from 'react'
+import { createOptionsController, type OptionsServices } from './options-controller'
+import { OptionsView, type OptionsActions, type OptionsState } from './OptionsView'
+
+export interface OptionsAppProps {
+  services: OptionsServices
+  confirm(message: string): boolean
+}
+
+export function OptionsApp({ services, confirm }: OptionsAppProps) {
+  const [view, setView] = useState<{ state: OptionsState; actions: OptionsActions } | null>(null)
+
+  useEffect(() => {
+    let live = true
+    const controller = createOptionsController(services, {
+      render: (state, actions) => {
+        if (live) setView({ state, actions })
+      },
+      confirm,
+    })
+    void controller
+      .load()
+      .then(() => services.session.refresh())
+      .then(() => controller.load())
+    return () => {
+      live = false
+    }
+    // One controller per page load; services and confirm are fixed for the page's lifetime.
+  }, [])
+
+  if (!view) return <p className="muted">Loading…</p>
+  return <OptionsView state={view.state} actions={view.actions} />
+}
+```
+
+`extension/src/ui/options/options.css`:
 
 ```css
 :root {
@@ -6978,28 +7257,27 @@ button.danger { color: var(--danger); }
 .note { color: #9a6700; }
 ```
 
-`extension/src/entry/options.ts`:
+`extension/src/entry/options.tsx`:
 
-```ts
+```tsx
 // Options page composition root (spec T31). Connect goes through the background (like the
 // popup) so the outbox sync after connecting runs in the service worker.
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
 import { sendToBackground } from '../adapters/chrome/messaging'
-import { createOptionsController } from '../ui/options-controller'
-import { renderOptions } from '../ui/options-view'
+import { OptionsApp } from '../ui/options/OptionsApp'
 import { compose } from './compose'
 
 const s = compose('options')
-const root = document.getElementById('app') as HTMLElement
 
-const controller = createOptionsController(
-  { session: s.session, setup: s.setup, domains: s.domains, connect: () => sendToBackground({ type: 'connect' }) },
-  { render: (state, actions) => renderOptions(root, state, actions), confirm: (message) => window.confirm(message) },
+createRoot(document.getElementById('app') as HTMLElement).render(
+  <StrictMode>
+    <OptionsApp
+      services={{ session: s.session, setup: s.setup, domains: s.domains, connect: () => sendToBackground({ type: 'connect' }) }}
+      confirm={(message) => window.confirm(message)}
+    />
+  </StrictMode>,
 )
-
-void controller.load().then(async () => {
-  await s.session.refresh()
-  await controller.load()
-})
 ```
 
 Replace `extension/options.html` with:
@@ -7010,11 +7288,11 @@ Replace `extension/options.html` with:
   <head>
     <meta charset="utf-8" />
     <title>Reading Tracker — Options</title>
-    <link rel="stylesheet" href="/src/ui/options.css" />
+    <link rel="stylesheet" href="/src/ui/options/options.css" />
   </head>
   <body>
     <main id="app"></main>
-    <script type="module" src="/src/entry/options.ts"></script>
+    <script type="module" src="/src/entry/options.tsx"></script>
   </body>
 </html>
 ```
@@ -7024,15 +7302,15 @@ Replace `extension/options.html` with:
 Run: `cd extension && pnpm check`
 Expected:
 - All tests PASS.
-- The arch test passes: `ui/options-controller.ts` imports only application and ui.
+- The arch test passes: `ui/options/options-controller.ts` imports only application and ui, and the `.tsx` files import only `react` plus inner layers.
 - The build emits `options.html` with its CSS.
 
 - [ ] **Step 8: Commit**
 
 ```bash
 cd /Users/tuandoquoc/personal/reading-chrome-extension
-git add extension/src/ui extension/src/entry/options.ts extension/options.html
-git commit -m "feat(extension): options page for account, setup and tracked domains"
+git add extension/src/ui extension/src/entry/options.tsx extension/options.html
+git commit -m "feat(extension): React options page for account, setup and tracked domains"
 ```
 
 ---
@@ -7054,7 +7332,7 @@ The smoke script checks what unit tests cannot:
 - the built manifest loads;
 - the module service worker starts and imports its chunk;
 - `onInstalled` fetches `/v1/config` into IndexedDB and creates the `sync` and `daily` alarms;
-- the popup renders;
+- the React popup and options page render;
 - a real page on `medium.com` is tracked through the content script into a stored segment and article, with the Medium canonical URL and metadata.
 
 `medium.com` is mapped to a local HTTPS server with a throwaway self-signed certificate.
@@ -7067,7 +7345,7 @@ In `extension/test/arch.test.ts`, replace the test `'the walk finds the composit
   test('the walk finds every layer (not vacuous)', () => {
     for (const f of [
       'domain/tracker.ts', 'application/sync.ts', 'adapters/storage/dexie-store.ts',
-      'adapters/chrome/messaging.ts', 'ui/popup-view.ts', 'entry/background.ts', 'entry/content.ts',
+      'adapters/chrome/messaging.ts', 'ui/popup/Popup.tsx', 'ui/options/OptionsView.tsx', 'entry/background.ts', 'entry/content.ts',
     ]) {
       expect(files).toContain(f)
     }
@@ -7088,7 +7366,7 @@ Expected: PASS.
 //
 // Needs: `pnpm build` done, the backend's local server running at VITE_API_BASE
 // (backend/: make ddb-up && make run-local), and openssl on PATH.
-// It never touches Notion: it checks config, alarms, the popup and local tracking only.
+// It never touches Notion: it checks config, alarms, the popup, the options page and local tracking only.
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { createServer } from 'node:https'
@@ -7205,6 +7483,14 @@ async function main() {
     check(/Connect Notion/.test(popupText ?? ''), 'popup shows Connect Notion when disconnected')
     pc.close()
 
+    const options = await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/new?chrome-extension://${extId}/options.html`, { method: 'PUT' })).json()
+    await sleep(1500)
+    const oc = cdp(options.webSocketDebuggerUrl)
+    await oc.ready
+    const optionsText = await oc.evaluate('document.getElementById("app").innerText')
+    check(/Tracked sites/.test(optionsText ?? '') && /Never track/.test(optionsText ?? ''), 'options page renders')
+    oc.close()
+
     const tab = (await targets()).find((t) => t.type === 'page' && t.url === 'about:blank')
     const p = cdp(tab.webSocketDebuggerUrl)
     await p.ready
@@ -7266,12 +7552,13 @@ lsof -ti tcp:8080 | xargs kill
 
 On Linux, `CHROME_BIN` is `…/chrome-linux64/chrome`. If `/tmp` is not writable for you, write the backend log to a scratch directory instead.
 
-Expected: seven `PASS` lines, then `smoke: all checks passed`:
+Expected: eight `PASS` lines, then `smoke: all checks passed`:
 - `service worker started`;
 - `manifest incognito not_allowed`;
 - `alarms created: daily,sync`;
 - `config cached from /v1/config`;
 - `popup shows Connect Notion when disconnected`;
+- `options page renders`;
 - `segment stored for the Medium canonical: 6s` (any value ≥ 4 s);
 - `article metadata extracted: "Designing Idempotent APIs" by Jane Doe, 1503 words`.
 
@@ -7293,10 +7580,10 @@ Clean architecture. Dependencies point inward, and `test/arch.test.ts` enforces 
 | Domain | `src/domain` | URL normalization, Medium canonicals, tracker state machine, reading rules | domain only; no `chrome`, `window` or `document` |
 | Application | `src/application` | use cases (record, sync, config, session, setup, domains, popup model), ports, message protocol | domain, application |
 | Adapters | `src/adapters/{storage,http,crypto,chrome,site,page,system}` | Dexie, fetch, WebCrypto, `chrome.*`, site DOM extractors, DOM tracker driver | domain, application, and their own folder |
-| UI | `src/ui` | popup and options rendering and the options controller | domain, application, ui |
+| UI | `src/ui/{popup,options}` | React 19 components for the popup and options page, plus the plain-TypeScript options controller | domain, application, ui, `react` |
 | Entry | `src/entry` | composition roots: `background`, `content`, `popup`, `options` | everything |
 
-Only `adapters/storage` imports `dexie`. Only `adapters/chrome` and `entry` touch `chrome.*`.
+Only `adapters/storage` imports `dexie`. Only `ui` and `entry` import `react` / `react-dom`, so React ships in the popup and options pages, never in the service worker or the content script. Only `adapters/chrome` and `entry` touch `chrome.*`.
 
 How a read becomes a Notion page:
 1. The content script (`entry/content`) asks the background for a tracking plan.
@@ -7345,9 +7632,9 @@ Then:
 
 | Command | Does |
 |---|---|
-| `pnpm test` | unit tests (Vitest, jsdom, fake-indexeddb) including the layer rule |
+| `pnpm test` | unit tests (Vitest, jsdom, fake-indexeddb, React Testing Library) including the layer rule |
 | `pnpm typecheck` | `tsc --noEmit` |
-| `pnpm build` | two Vite builds: service worker and pages (ES modules), then the content script (one IIFE) |
+| `pnpm build` | two Vite builds: service worker and React pages (ES modules), then the content script (one IIFE, no React) |
 | `pnpm check` | typecheck, then test, then build |
 | `pnpm smoke` | real-browser check of config, alarms, popup and tracking. It needs `CHROME_BIN` (Chrome for Testing) and the local backend. |
 
@@ -7383,7 +7670,7 @@ Expected:
 - `no package-lock.json` is printed.
 - `no inlined thresholds` is printed.
 - The node line prints `3 not_allowed storage,alarms,identity,scripting false`.
-- Together with Step 3's seven PASS lines, this completes the verification.
+- Together with Step 3's eight PASS lines, this completes the verification.
 
 - [ ] **Step 6: Commit**
 
@@ -7413,8 +7700,8 @@ git commit -m "test(extension): real-browser smoke test, README and full verific
 | §3.4 prune synced segments > 30 days | 6, 10 |
 | T29 PKCE (64-char verifier), `launchWebAuthFlow`, code/error parsing, token exchange, `/v1/me` | 5, 7, 10 |
 | T29 AC: cancel or `access_denied` stores nothing | 7 |
-| T30 popup states, today's minutes, current article, last 5, library link | 11 |
-| T31 enabled domains (permission + `registerContentScripts`), denied domains, setup picker, disconnect, delete | 7, 10, 12 |
+| T30 popup states, today's minutes, current article, last 5, library link (React) | 11 |
+| T31 enabled domains (permission + `registerContentScripts`), denied domains, setup picker, disconnect, delete (React) | 7, 10, 12 |
 | §2.9 articles status used by the popup | 5, 11 |
 | C19 (only the `rt_` token), C23 (no 0-second segment, `pagehide`), C24 (incognito, enabled-only generic), C25 (≤ 50/push) | 1, 3, 4, 6, 7, 9 |
 | §7 thresholds, hosts and `API_BASE` never inlined | 1, 2, 7, 13 |
