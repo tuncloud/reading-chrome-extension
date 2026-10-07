@@ -32,6 +32,8 @@ How a read becomes a Notion page:
 
 Modules call Dexie, `fetch` and `chrome.*` directly. Tests use fake-indexeddb, `test/helpers.ts` (fresh DB, clock, API stub) and `test/chrome.ts` (a `chrome` mock).
 
+For a single end-to-end checklist (local development and first deploy), see [`docs/runbook.md`](../docs/runbook.md).
+
 ## Prerequisites
 
 - Node ≥ 22 and pnpm.

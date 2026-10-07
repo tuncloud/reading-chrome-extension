@@ -4,6 +4,8 @@ Go service behind the Reading Tracker Chrome extension: an API Lambda (Echo) and
 notion-writer worker Lambda (SQS FIFO), sharing one DynamoDB table.
 Spec: [`../docs/reading-tracker-agent-spec.md`](../docs/reading-tracker-agent-spec.md).
 
+For a single end-to-end checklist (local development and first deploy), see [`docs/runbook.md`](../docs/runbook.md).
+
 ## Prerequisites
 
 - Go 1.26
