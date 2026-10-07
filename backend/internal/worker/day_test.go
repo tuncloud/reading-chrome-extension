@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/queue"
 )
 
 const today = "2026-10-06"

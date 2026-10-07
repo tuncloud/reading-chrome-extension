@@ -7,9 +7,9 @@ import (
 
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/config"
-	"reading-tracker/backend/internal/queue"
 )
 
 func articleMsg() queue.Message { return queue.Article(testBot, domain.URLHash(artURL)) }

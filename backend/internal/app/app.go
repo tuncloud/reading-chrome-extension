@@ -15,9 +15,9 @@ import (
 
 	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/adapter/notion"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/httpapi"
 	"reading-tracker/backend/internal/platform/config"
-	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/worker"
 )
 

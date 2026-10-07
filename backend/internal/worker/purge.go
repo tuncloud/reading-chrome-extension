@@ -6,8 +6,8 @@ import (
 	"slices"
 
 	"reading-tracker/backend/internal/adapter/dynamo"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/queue"
 )
 
 // handlePurge deletes every DynamoDB item of a deleted user (spec §2.17). It never

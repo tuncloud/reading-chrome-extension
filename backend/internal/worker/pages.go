@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"reading-tracker/backend/internal/adapter/notion"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/queue"
 )
 
 var errPageGone = errors.New("worker: notion page archived")

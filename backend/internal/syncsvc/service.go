@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/queue"
+	"reading-tracker/backend/internal/usecase/port"
 )
 
 // ErrAllThrottled means every valid segment hit DynamoDB throttling → 503.
@@ -19,10 +19,9 @@ type Pusher interface {
 }
 
 type Service struct {
-	Store  Pusher
-	Queue  queue.Sender
-	Bucket time.Duration
-	Now    func() time.Time
+	Store Pusher
+	Queue port.SyncQueue
+	Now   func() time.Time
 }
 
 // Push validates, writes each segment in its own transaction (C25), and enqueues
@@ -95,8 +94,8 @@ func (s *Service) Push(ctx context.Context, installationID, deviceID string, req
 	if len(writes) > 0 && len(resp.Retry) == len(writes) {
 		return nil, ErrAllThrottled
 	}
-	if msgs := touched.messages(installationID); len(msgs) > 0 {
-		if err := s.Queue.Send(ctx, queue.Bucketed(now, s.Bucket, msgs...)...); err != nil {
+	if len(touched.hashes)+len(touched.dates) > 0 {
+		if err := s.Queue.EnqueueSync(ctx, installationID, touched.hashes, touched.dates); err != nil {
 			return nil, err
 		}
 	}
@@ -121,17 +120,4 @@ func (t *touchedKeys) add(w domain.SegmentWrite) {
 		t.seen[k] = true
 		t.dates = append(t.dates, w.Date)
 	}
-}
-
-// messages lists article messages before day messages, so a day page can relate
-// to article pages created in the same batch.
-func (t *touchedKeys) messages(inst string) []queue.Message {
-	msgs := make([]queue.Message, 0, len(t.hashes)+len(t.dates))
-	for _, h := range t.hashes {
-		msgs = append(msgs, queue.Article(inst, h))
-	}
-	for _, d := range t.dates {
-		msgs = append(msgs, queue.Day(inst, d))
-	}
-	return msgs
 }

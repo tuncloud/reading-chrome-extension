@@ -5,8 +5,8 @@ import (
 	"errors"
 
 	"reading-tracker/backend/internal/adapter/notion"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/queue"
 )
 
 // handleArticle implements spec §2.13. It always writes absolute values read from DynamoDB (C6).

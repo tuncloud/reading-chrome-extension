@@ -8,9 +8,9 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 
 	"reading-tracker/backend/internal/adapter/dynamo"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/app"
 	"reading-tracker/backend/internal/platform/config"
-	"reading-tracker/backend/internal/queue"
 )
 
 func main() {

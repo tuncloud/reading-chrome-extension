@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"reading-tracker/backend/internal/adapter/dynamo"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/queue"
 )
 
 // seedUser creates user u1 (Notion user n1) with device d1 and the test installation.

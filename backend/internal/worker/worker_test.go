@@ -13,9 +13,9 @@ import (
 
 	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/adapter/notion"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/crypto"
-	"reading-tracker/backend/internal/queue"
 )
 
 // C21: after the first failure, it and every later message are reported failed.

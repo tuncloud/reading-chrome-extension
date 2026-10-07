@@ -10,8 +10,8 @@ import (
 
 	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/adapter/notion"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/platform/config"
-	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/setup"
 	"reading-tracker/backend/internal/syncsvc"
 )
@@ -30,6 +30,7 @@ type Deps struct {
 type handlers struct {
 	Deps
 	gw    *notion.Gateway
+	sq    *queue.SyncQueue
 	setup *setup.Service
 	sync  *syncsvc.Service
 }
@@ -47,11 +48,13 @@ func New(d Deps) *echo.Echo {
 	if d.Sleep == nil {
 		d.Sleep = time.Sleep
 	}
+	sq := &queue.SyncQueue{Sender: d.Queue, Bucket: d.Config.DebounceBucket, Now: d.Now}
 	h := &handlers{
 		Deps:  d,
 		gw:    &notion.Gateway{Client: d.Notion},
-		setup: &setup.Service{Store: d.Store, Queue: d.Queue, Bucket: d.Config.DebounceBucket, Now: d.Now},
-		sync:  &syncsvc.Service{Store: d.Store, Queue: d.Queue, Bucket: d.Config.DebounceBucket, Now: d.Now},
+		sq:    sq,
+		setup: &setup.Service{Store: d.Store, Queue: sq},
+		sync:  &syncsvc.Service{Store: d.Store, Queue: sq, Now: d.Now},
 	}
 	v1 := e.Group("/v1")
 	v1.GET("/config", h.getConfig)

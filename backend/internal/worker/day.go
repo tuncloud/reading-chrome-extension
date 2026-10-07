@@ -6,8 +6,8 @@ import (
 	"slices"
 
 	"reading-tracker/backend/internal/adapter/notion"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/queue"
 )
 
 // handleDay implements spec §2.14.

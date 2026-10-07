@@ -4,17 +4,14 @@ package setup
 
 import (
 	"context"
-	"time"
 
 	"reading-tracker/backend/internal/adapter/dynamo"
-	"reading-tracker/backend/internal/queue"
+	"reading-tracker/backend/internal/usecase/port"
 )
 
 type Service struct {
-	Store  *dynamo.Store
-	Queue  queue.Sender
-	Bucket time.Duration
-	Now    func() time.Time
+	Store *dynamo.Store
+	Queue port.SyncQueue
 }
 
 // Resync enqueues every ART/DAY whose version is ahead of Notion; full re-sends every
@@ -24,15 +21,5 @@ func (s *Service) Resync(ctx context.Context, installationID string, full bool) 
 	if err != nil {
 		return err
 	}
-	msgs := make([]queue.Message, 0, len(hashes)+len(dates))
-	for _, h := range hashes {
-		msgs = append(msgs, queue.Article(installationID, h))
-	}
-	for _, d := range dates {
-		msgs = append(msgs, queue.Day(installationID, d))
-	}
-	if len(msgs) == 0 {
-		return nil
-	}
-	return s.Queue.Send(ctx, queue.Bucketed(s.Now(), s.Bucket, msgs...)...)
+	return s.Queue.EnqueueResync(ctx, installationID, hashes, dates)
 }

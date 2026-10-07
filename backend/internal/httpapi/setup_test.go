@@ -10,8 +10,8 @@ import (
 
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/queue"
 )
 
 const readURL = "https://a.example/1"

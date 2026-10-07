@@ -16,10 +16,10 @@ import (
 
 	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/adapter/notion"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
-	"reading-tracker/backend/internal/queue"
 )
 
 // VisibilityChanger hides a message for a back-off period.

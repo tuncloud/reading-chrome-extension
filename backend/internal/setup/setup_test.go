@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/setup"
 )
 
@@ -34,8 +34,7 @@ type fixture struct {
 func newFixture(t *testing.T) *fixture {
 	db := dynamotest.New(t)
 	rec := &queue.Recorder{}
-	svc := &setup.Service{Store: db.Store, Queue: rec,
-		Bucket: 120 * time.Second, Now: func() time.Time { return testNow }}
+	svc := &setup.Service{Store: db.Store, Queue: &queue.SyncQueue{Sender: rec, Bucket: 120 * time.Second, Now: func() time.Time { return testNow }}}
 	return &fixture{svc: svc, db: db, rec: rec}
 }
 

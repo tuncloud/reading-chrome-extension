@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/syncsvc"
 )
 
@@ -46,7 +46,8 @@ func (f *fakePusher) PushSegment(_ context.Context, w domain.SegmentWrite) (doma
 
 func newService() (*syncsvc.Service, *fakePusher, *queue.Recorder) {
 	p, rec := &fakePusher{throttle: map[string]bool{}}, &queue.Recorder{}
-	return &syncsvc.Service{Store: p, Queue: rec, Bucket: 120 * time.Second, Now: func() time.Time { return now }}, p, rec
+	q := &queue.SyncQueue{Sender: rec, Bucket: 120 * time.Second, Now: func() time.Time { return now }}
+	return &syncsvc.Service{Store: p, Queue: q, Now: q.Now}, p, rec
 }
 
 func article(u string) syncsvc.Article {
@@ -109,7 +110,9 @@ func TestPushEnqueuesOncePerKey(t *testing.T) {
 func TestPushDateUsesRequestTZ(t *testing.T) {
 	svc, p, rec := newService()
 	started := time.Date(2026, 10, 5, 18, 30, 0, 0, time.UTC)
-	svc.Now = func() time.Time { return started.Add(time.Hour) }
+	later := func() time.Time { return started.Add(time.Hour) }
+	svc.Now = later
+	svc.Queue.(*queue.SyncQueue).Now = later
 	req := syncsvc.PushRequest{TZ: "Asia/Ho_Chi_Minh", Articles: []syncsvc.Article{article(artURL)}, Segments: []syncsvc.Segment{seg(id(1), artURL, started, 60)}}
 	if _, err := svc.Push(ctx, bot, "dev-1", req); err != nil {
 		t.Fatal(err)

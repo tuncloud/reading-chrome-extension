@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
+	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/crypto"
-	"reading-tracker/backend/internal/queue"
 )
 
 // T17 AC: logout, then any call with the same token → 401.

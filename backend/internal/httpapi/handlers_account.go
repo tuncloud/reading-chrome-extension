@@ -4,8 +4,6 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-
-	"reading-tracker/backend/internal/queue"
 )
 
 // logout serves POST /v1/auth/logout (spec §2.17).
@@ -35,8 +33,7 @@ func (h *handlers) deleteMe(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	msg := queue.Purge(p.UserID, p.InstallationID())
-	if err := h.Queue.Send(ctx, queue.Outgoing{Message: msg, DedupID: msg.DedupID(now, h.Config.DebounceBucket)}); err != nil {
+	if err := h.sq.EnqueuePurge(ctx, p.UserID, p.InstallationID()); err != nil {
 		return err
 	}
 	if err := h.Store.MarkProfileDeleted(ctx, p.UserID, now); err != nil {
