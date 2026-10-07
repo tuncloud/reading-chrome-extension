@@ -1,38 +1,39 @@
-package worker
+package notionsync
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"time"
 
-	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/domain"
+	"reading-tracker/backend/internal/usecase/port"
 )
 
 // session runs Notion calls for one installation, refreshing the token once on 401.
-// FIFO grouping guarantees no concurrent refresh for the same installation (C8).
 type session struct {
-	w         *Worker
+	svc       *Service
 	inst      *domain.Installation
 	token     string
 	refreshed bool
 }
 
-func (w *Worker) openSession(inst *domain.Installation) (*session, error) {
-	tok, err := w.Keys.Open(inst.AccessTokenEnc, []byte(inst.ID))
+func (s *Service) openSession(inst *domain.Installation) (*session, error) {
+	tok, err := s.Sealer.Open(inst.AccessTokenEnc, []byte(inst.ID))
 	if err != nil {
-		return nil, fmt.Errorf("worker: decrypt access token: %w", err)
+		return nil, fmt.Errorf("notionsync: decrypt access token: %w", err)
 	}
-	return &session{w: w, inst: inst, token: string(tok)}, nil
+	return &session{svc: s, inst: inst, token: string(tok)}, nil
 }
+
+// db is the installation's current Notion target.
+func (s *session) db() domain.DBConfig { return s.inst.Databases() }
 
 // call runs fn with the current token. On 401 it refreshes once and retries. A 401
 // with a freshly refreshed token means the integration was removed → revoked.
 func (s *session) call(ctx context.Context, fn func(token string) error) error {
 	err := fn(s.token)
-	if !isStatus(err, http.StatusUnauthorized) {
+	if !port.IsNotionKind(err, port.NotionUnauthorized) {
 		return err
 	}
 	if s.refreshed {
@@ -41,7 +42,7 @@ func (s *session) call(ctx context.Context, fn func(token string) error) error {
 	if err := s.refresh(ctx); err != nil {
 		return err
 	}
-	if err = fn(s.token); isStatus(err, http.StatusUnauthorized) {
+	if err = fn(s.token); port.IsNotionKind(err, port.NotionUnauthorized) {
 		return s.revoke(ctx)
 	}
 	return err
@@ -54,35 +55,35 @@ func (s *session) refresh(ctx context.Context) error {
 		return s.revoke(ctx)
 	}
 	aad := []byte(s.inst.ID)
-	rt, err := s.w.Keys.Open(s.inst.RefreshTokenEnc, aad)
+	rt, err := s.svc.Sealer.Open(s.inst.RefreshTokenEnc, aad)
 	if err != nil {
-		return fmt.Errorf("worker: decrypt refresh token: %w", err)
+		return fmt.Errorf("notionsync: decrypt refresh token: %w", err)
 	}
-	res, err := s.w.Notion.RefreshToken(ctx, string(rt))
-	if e, ok := notion.AsAPIError(err); ok && e.Code == "invalid_grant" {
+	res, err := s.svc.Auth.RefreshToken(ctx, string(rt))
+	if port.IsNotionKind(err, port.NotionInvalidGrant) {
 		return s.revoke(ctx)
 	}
 	if err != nil {
 		return err
 	}
-	access, err := s.w.Keys.Seal([]byte(res.AccessToken), aad)
+	access, err := s.svc.Sealer.Seal([]byte(res.AccessToken), aad)
 	if err != nil {
 		return err
 	}
 	refresh := s.inst.RefreshTokenEnc
 	if res.RefreshToken != "" {
-		if refresh, err = s.w.Keys.Seal([]byte(res.RefreshToken), aad); err != nil {
+		if refresh, err = s.svc.Sealer.Seal([]byte(res.RefreshToken), aad); err != nil {
 			return err
 		}
 	}
 	err = s.persistTokens(ctx, access, refresh)
 	if errors.Is(err, domain.ErrConditionFailed) {
 		// Someone rotated first; use what they stored.
-		fresh, gerr := s.w.Store.GetInstallation(ctx, s.inst.ID)
+		fresh, gerr := s.svc.Installations.GetInstallation(ctx, s.inst.ID)
 		if gerr != nil {
 			return gerr
 		}
-		tok, oerr := s.w.Keys.Open(fresh.AccessTokenEnc, aad)
+		tok, oerr := s.svc.Sealer.Open(fresh.AccessTokenEnc, aad)
 		if oerr != nil {
 			return oerr
 		}
@@ -104,28 +105,27 @@ const (
 )
 
 // persistTokens stores the rotated tokens, retrying transient failures in-process:
-// Notion has already rotated the refresh token, so losing this write would leave only
-// a dead refresh token and force a reconnect (C7). A condition failure (someone else
-// rotated, or an earlier attempt landed after all) is returned at once.
+// Notion has already rotated the refresh token, so losing this write would force a
+// reconnect (C7). A condition failure is returned at once.
 func (s *session) persistTokens(ctx context.Context, access, refresh string) error {
 	var err error
 	for attempt := 1; attempt <= tokenWriteAttempts; attempt++ {
-		err = s.w.Store.UpdateInstallationTokens(ctx, s.inst.ID, access, refresh, s.inst.TokenVersion, s.w.Now())
+		err = s.svc.Installations.UpdateInstallationTokens(ctx, s.inst.ID, access, refresh, s.inst.TokenVersion, s.svc.Now())
 		if err == nil || errors.Is(err, domain.ErrConditionFailed) {
 			return err
 		}
 		if attempt < tokenWriteAttempts {
-			s.w.Sleep(time.Duration(attempt) * tokenWriteBackoff)
+			s.svc.sleep(time.Duration(attempt) * tokenWriteBackoff)
 		}
 	}
-	s.w.Log.ErrorContext(ctx, "worker: persisting rotated tokens failed", "installation_id", s.inst.ID, "err", err)
+	s.svc.Log.ErrorContext(ctx, "notionsync: persisting rotated tokens failed", "installation_id", s.inst.ID, "err", err)
 	return err
 }
 
 func (s *session) revoke(ctx context.Context) error {
-	if err := s.w.Store.SetInstallationStatus(ctx, s.inst.ID, domain.StatusRevoked, "", s.w.Now()); err != nil {
+	if err := s.svc.Installations.SetInstallationStatus(ctx, s.inst.ID, domain.StatusRevoked, "", s.svc.Now()); err != nil {
 		return err
 	}
-	s.w.Log.WarnContext(ctx, "worker: installation revoked", "installation_id", s.inst.ID)
+	s.svc.Log.WarnContext(ctx, "notionsync: installation revoked", "installation_id", s.inst.ID)
 	return errAck
 }

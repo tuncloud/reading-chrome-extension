@@ -284,18 +284,20 @@ func TestArticleAndDayPageLinks(t *testing.T) {
 	s := dynamotest.New(t).Store
 	h := domain.URLHash(articleURL)
 	push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow))
-	must(t, s.SetArticlePage(ctx, "bot-1", h, "page-1", "https://notion.so/page-1"))
-	must(t, s.SetDayPage(ctx, "bot-1", "2026-10-06", "day-page-1"))
+	must(t, s.SetArticlePage(ctx, "bot-1", h, "page-1", "https://notion.so/page-1", "ds-1"))
+	must(t, s.SetDayPage(ctx, "bot-1", "2026-10-06", "day-page-1", "ds-2"))
 	a, _ := s.GetArticle(ctx, "bot-1", h)
 	d, _ := s.GetDay(ctx, "bot-1", "2026-10-06")
-	if a.NotionPageID != "page-1" || a.NotionURL != "https://notion.so/page-1" || d.NotionPageID != "day-page-1" {
+	if a.NotionPageID != "page-1" || a.NotionURL != "https://notion.so/page-1" || d.NotionPageID != "day-page-1" ||
+		a.NotionDataSourceID != "ds-1" || d.NotionDataSourceID != "ds-2" {
 		t.Fatalf("links not saved: %+v %+v", a, d)
 	}
 	must(t, s.ClearArticlePage(ctx, "bot-1", h))
 	must(t, s.ClearDayPage(ctx, "bot-1", "2026-10-06"))
 	a, _ = s.GetArticle(ctx, "bot-1", h)
 	d, _ = s.GetDay(ctx, "bot-1", "2026-10-06")
-	if a.NotionPageID != "" || a.NotionURL != "" || d.NotionPageID != "" {
+	if a.NotionPageID != "" || a.NotionURL != "" || d.NotionPageID != "" ||
+		a.NotionDataSourceID != "" || d.NotionDataSourceID != "" {
 		t.Fatalf("links not cleared: %+v %+v", a, d)
 	}
 }

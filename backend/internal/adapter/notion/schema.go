@@ -1,9 +1,11 @@
 package notion
 
+import "reading-tracker/backend/internal/domain"
+
 // Database titles the template must contain (spec §2.11).
 const (
-	LibraryTitle = "Reading Library"
-	DailyTitle   = "Daily Log"
+	LibraryTitle = domain.LibraryName
+	DailyTitle   = domain.DailyLogName
 )
 
 // articlesProp is the Daily Log relation that must target the Library's data source.

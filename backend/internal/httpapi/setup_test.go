@@ -25,7 +25,7 @@ func (env *testEnv) seedSyncedRead() {
 		StartedAt: env.now, EndedAt: env.now.Add(time.Minute), ActiveSeconds: 60, MaxProgress: 0.5,
 		Article: domain.ArticleMeta{CanonicalURL: readURL, Source: "generic"}})
 	must(t, err)
-	must(t, env.db.Store.SetArticlePage(ctx, testBotID, domain.URLHash(readURL), "page-old", "https://www.notion.so/page-old"))
+	must(t, env.db.Store.SetArticlePage(ctx, testBotID, domain.URLHash(readURL), "page-old", "https://www.notion.so/page-old", "ds-1"))
 	must(t, env.db.Store.MarkArticleSynced(ctx, testBotID, domain.URLHash(readURL), 1, false, env.now))
 	must(t, env.db.Store.MarkDaySynced(ctx, testBotID, "2026-10-06", 1))
 }

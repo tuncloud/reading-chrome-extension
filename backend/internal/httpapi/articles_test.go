@@ -29,7 +29,7 @@ func TestArticlesStatus(t *testing.T) {
 		SessionID: "s", URLHash: domain.URLHash(u), Date: "2026-10-06", StartedAt: env.now, EndedAt: env.now.Add(time.Minute),
 		ActiveSeconds: 60, MaxProgress: 0.97, Article: domain.ArticleMeta{CanonicalURL: u, Source: "medium"}})
 	must(t, err)
-	must(t, env.db.Store.SetArticlePage(ctx, testBotID, domain.URLHash(u), "page-1", "https://www.notion.so/page-1"))
+	must(t, env.db.Store.SetArticlePage(ctx, testBotID, domain.URLHash(u), "page-1", "https://www.notion.so/page-1", "ds-1"))
 
 	rec := env.do("POST", "/v1/articles/status", map[string]any{"canonical_urls": []string{u, "https://unknown.example/x"}}, tok)
 	if rec.Code != 200 {

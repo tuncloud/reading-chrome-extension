@@ -1,11 +1,9 @@
-package worker
+package notion
 
 import (
-	"math"
 	"strings"
 
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/textutil"
 )
 
@@ -17,26 +15,11 @@ const (
 	maxRelations    = 100
 )
 
-// isCompleted implements spec §2.13 step 2; once true it stays true.
-func isCompleted(a *domain.Article, t config.Tracking) bool {
-	if a.Completed {
-		return true
-	}
-	if a.MaxProgress < t.CompleteProgress {
-		return false
-	}
-	if a.WordCount == 0 {
-		return true
-	}
-	est := float64(a.WordCount) / float64(t.WordsPerMinute) * 60
-	return float64(a.TotalSeconds) >= t.CompleteTimeRatio*est
-}
-
 // articleMetrics are the server-owned properties written on every update (§3.3).
-func articleMetrics(p map[string]string, a *domain.Article, completed bool) map[string]any {
+func articleMetrics(p map[string]string, a domain.Article, completed bool) map[string]any {
 	return map[string]any{
 		p["last_read"]: dateValue(a.LastReadAt),
-		p["minutes"]:   map[string]any{"number": roundMinutes(a.TotalSeconds)},
+		p["minutes"]:   map[string]any{"number": domain.RoundMinutes(a.TotalSeconds)},
 		p["progress"]:  map[string]any{"number": a.MaxProgress},
 		p["sessions"]:  map[string]any{"number": a.Sessions},
 		p["completed"]: map[string]any{"checkbox": completed},
@@ -45,7 +28,7 @@ func articleMetrics(p map[string]string, a *domain.Article, completed bool) map[
 
 // articleCreateBody adds the write-once descriptive properties to the metrics.
 // It never includes Tags, Status, Rating or Notes (C1).
-func articleCreateBody(dsID string, p map[string]string, a *domain.Article, completed bool) map[string]any {
+func articleCreateBody(dsID string, p map[string]string, a domain.Article, completed bool) map[string]any {
 	props := articleMetrics(p, a, completed)
 	title := a.Title
 	if title == "" {
@@ -86,8 +69,6 @@ func dateValue(ts string) map[string]any {
 	}
 	return map[string]any{"date": map[string]any{"start": ts}}
 }
-
-func roundMinutes(secs int64) int64 { return int64(math.Round(float64(secs) / 60)) }
 
 // selectName makes s a valid select option: Notion forbids commas and caps length.
 func selectName(s string) string {

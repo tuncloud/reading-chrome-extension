@@ -1,4 +1,4 @@
-package worker
+package notionsync
 
 import (
 	"bytes"
@@ -17,7 +17,6 @@ import (
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
 )
 
@@ -40,7 +39,9 @@ func (f *fakeVisibility) ChangeVisibility(_ context.Context, _ string, d time.Du
 
 type wenv struct {
 	t      *testing.T
-	w      *Worker
+	s      *Service
+	c      *queue.Consumer
+	gw     *notion.Gateway
 	db     *dynamotest.Env
 	ns     *notiontest.Server
 	q      *queue.Recorder
@@ -68,23 +69,23 @@ func newEnvWithKeys(t *testing.T, keys string) *wenv {
 	t.Helper()
 	kr, err := crypto.ParseKeyring(keys)
 	must(t, err)
-	pub, err := config.LoadPublic("")
-	must(t, err)
 	e := &wenv{t: t, db: dynamotest.New(t), ns: notiontest.New(t), q: &queue.Recorder{}, vis: &fakeVisibility{},
 		keys: kr, now: testNow, logs: &bytes.Buffer{}}
 	e.tpl = e.ns.AddTemplate("tpl-1")
-	e.w = New(Deps{
-		Store:      e.db.Store,
-		Notion:     &notion.Client{BaseURL: e.ns.URL, Version: "2025-09-03", ClientID: "cid", ClientSecret: "csecret"},
-		Keys:       kr,
-		Queue:      e.q,
-		Visibility: e.vis,
-		Tracking:   pub.Tracking,
-		Now:        func() time.Time { return e.now },
-		Jitter:     func() time.Duration { return 2 * time.Second },
-		Sleep:      func(d time.Duration) { e.sleeps = append(e.sleeps, d) },
-		Log:        slog.New(slog.NewTextHandler(e.logs, nil)),
-	})
+	e.gw = &notion.Gateway{Client: &notion.Client{BaseURL: e.ns.URL, Version: "2025-09-03", ClientID: "cid", ClientSecret: "csecret"}}
+	clock := func() time.Time { return e.now }
+	log := slog.New(slog.NewTextHandler(e.logs, nil))
+	e.s = &Service{
+		Installations: e.db.Store, Reading: e.db.Store, Users: e.db.Store, Devices: e.db.Store, Purger: e.db.Store,
+		Pages: e.gw, Auth: e.gw, Sealer: kr,
+		Queue:  &queue.SyncQueue{Sender: e.q, Bucket: 120 * time.Second, Now: clock},
+		Policy: domain.SyncPolicy{MinCreateSeconds: 30, CompleteProgress: 0.9, CompleteTimeRatio: 0.3, WordsPerMinute: 230},
+		Now:    clock,
+		Jitter: func() time.Duration { return 2 * time.Second },
+		Sleep:  func(d time.Duration) { e.sleeps = append(e.sleeps, d) },
+		Log:    log,
+	}
+	e.c = &queue.Consumer{Handler: e.s, Visibility: e.vis, Log: log}
 	return e
 }
 
@@ -135,7 +136,7 @@ func (e *wenv) handle(msgs ...queue.Message) []events.SQSBatchItemFailure {
 		must(e.t, err)
 		ev.Records = append(ev.Records, events.SQSMessage{MessageId: fmt.Sprintf("m%d", i), ReceiptHandle: fmt.Sprintf("rh%d", i), Body: string(body)})
 	}
-	resp, err := e.w.HandleSQS(ctx, ev)
+	resp, err := e.c.HandleSQS(ctx, ev)
 	must(e.t, err)
 	return resp.BatchItemFailures
 }

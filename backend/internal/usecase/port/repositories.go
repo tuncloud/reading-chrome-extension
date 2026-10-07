@@ -54,12 +54,18 @@ type Reading interface {
 	PushSegment(ctx context.Context, w domain.SegmentWrite) (domain.PushOutcome, error)
 	GetArticle(ctx context.Context, inst, hash string) (*domain.Article, error)
 	BatchGetArticles(ctx context.Context, inst string, hashes []string) (map[string]*domain.Article, error)
-	SetArticlePage(ctx context.Context, inst, hash, pageID, url string) error
+	SetArticlePage(ctx context.Context, inst, hash, pageID, url, dataSourceID string) error
 	ClearArticlePage(ctx context.Context, inst, hash string) error
 	MarkArticleSynced(ctx context.Context, inst, hash string, version int64, completed bool, now time.Time) error
 	GetDay(ctx context.Context, inst, date string) (*domain.Day, error)
-	SetDayPage(ctx context.Context, inst, date, pageID string) error
+	SetDayPage(ctx context.Context, inst, date, pageID, dataSourceID string) error
 	ClearDayPage(ctx context.Context, inst, date string) error
 	MarkDaySynced(ctx context.Context, inst, date string, version int64) error
 	PendingSync(ctx context.Context, inst string, all bool) (hashes, dates []string, err error)
+}
+
+// DataPurger deletes every stored item of an installation or user (spec §2.17).
+type DataPurger interface {
+	DeleteInstallationData(ctx context.Context, botID string) error
+	DeleteUserData(ctx context.Context, uid string) error
 }

@@ -17,13 +17,15 @@ func (s *Store) GetDay(ctx context.Context, inst, date string) (*domain.Day, err
 	return r.toDomain(), nil
 }
 
-func (s *Store) SetDayPage(ctx context.Context, inst, date, pageID string) error {
-	return s.update(ctx, InstPK(inst), DaySK(date), "SET #p = :p", "attribute_exists(pk)",
-		map[string]string{"#p": "notion_page_id"}, map[string]types.AttributeValue{":p": str(pageID)})
+func (s *Store) SetDayPage(ctx context.Context, inst, date, pageID, dataSourceID string) error {
+	return s.update(ctx, InstPK(inst), DaySK(date), "SET #p = :p, #d = :d", "attribute_exists(pk)",
+		map[string]string{"#p": "notion_page_id", "#d": "notion_ds_id"},
+		map[string]types.AttributeValue{":p": str(pageID), ":d": str(dataSourceID)})
 }
 
 func (s *Store) ClearDayPage(ctx context.Context, inst, date string) error {
-	return s.update(ctx, InstPK(inst), DaySK(date), "REMOVE #p", "", map[string]string{"#p": "notion_page_id"}, nil)
+	return s.update(ctx, InstPK(inst), DaySK(date), "REMOVE #p, #d", "",
+		map[string]string{"#p": "notion_page_id", "#d": "notion_ds_id"}, nil)
 }
 
 func (s *Store) MarkDaySynced(ctx context.Context, inst, date string, version int64) error {

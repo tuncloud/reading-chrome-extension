@@ -1,4 +1,4 @@
-package worker
+package notionsync
 
 import (
 	"testing"
@@ -129,7 +129,7 @@ func TestDayPageInOldDailyLogIsRecreated(t *testing.T) {
 	old := e.ns.AddTemplate("old-tpl")
 	stale := e.ns.AddPage(old.DailyDS, map[string]any{pid("Date"): map[string]any{"date": map[string]any{"start": today}}})
 	e.read(artURL, 0, 60, 0.5)
-	must(t, e.db.Store.SetDayPage(ctx, testBot, today, stale.ID))
+	must(t, e.db.Store.SetDayPage(ctx, testBot, today, stale.ID, ""))
 
 	if f := e.handle(dayMsg()); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
@@ -147,5 +147,37 @@ func TestDayPageInOldDailyLogIsRecreated(t *testing.T) {
 	pg := e.onlyDayPage()
 	if d, _ = e.db.Store.GetDay(ctx, testBot, today); d.NotionPageID != pg.ID || num(pg, "Minutes") != 1 {
 		t.Fatalf("day %+v, new page %s", d, pg.ID)
+	}
+}
+
+func TestDayInOldDatabaseIsRecreatedBeforePatch(t *testing.T) {
+	e := newEnv(t)
+	e.seedInstallation("tok", "rt")
+	e.read(artURL, 0, 60, 0.5)
+	e.handle(dayMsg())
+	old := e.onlyDayPage()
+
+	e.ns.AddDatabase("daily2-db", "daily2-ds", notiontest.DailySchema)
+	db := e.tpl.DBConfig()
+	db.DailyDBID, db.DailyDSID = "daily2-db", "daily2-ds"
+	must(t, e.db.Store.SaveInstallationDatabases(ctx, testBot, db, e.now))
+	e.read(artURL, 1, 60, 0.6)
+	e.q.Drain()
+
+	if f := e.handle(dayMsg()); len(f) != 0 {
+		t.Fatalf("failures %+v", f)
+	}
+	if n := len(e.ns.Calls("PATCH", "/v1/pages/"+old.ID)); n != 0 {
+		t.Fatalf("PATCHed the old day page %d times", n)
+	}
+	sent := e.q.Drain()
+	if len(sent) != 1 || sent[0].Message != dayMsg() {
+		t.Fatalf("requeue %+v", sent)
+	}
+	e.handle(sent[0].Message)
+	d, err := e.db.Store.GetDay(ctx, testBot, today)
+	must(t, err)
+	if pages := e.ns.Pages("daily2-ds"); len(pages) != 1 || d.NotionPageID != pages[0].ID || d.NotionDataSourceID != "daily2-ds" {
+		t.Fatalf("day not re-created in the new Daily Log: %+v", d)
 	}
 }

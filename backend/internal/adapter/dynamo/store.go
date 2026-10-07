@@ -163,4 +163,5 @@ var (
 	_ port.OAuthGrants   = (*Store)(nil)
 	_ port.Installations = (*Store)(nil)
 	_ port.Reading       = (*Store)(nil)
+	_ port.DataPurger    = (*Store)(nil)
 )

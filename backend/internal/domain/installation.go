@@ -54,3 +54,15 @@ func (i *Installation) ApplyDatabases(db DBConfig) {
 	i.LibraryDBID, i.LibraryDSID, i.LibraryURL = db.LibraryDBID, db.LibraryDSID, db.LibraryURL
 	i.DailyDBID, i.DailyDSID, i.Props = db.DailyDBID, db.DailyDSID, db.Props
 }
+
+// Database names the user sees and setup_error reasons use (spec §2.11, §3.3).
+const (
+	LibraryName  = "Reading Library"
+	DailyLogName = "Daily Log"
+)
+
+// Databases is the installation's current Notion target.
+func (i Installation) Databases() DBConfig {
+	return DBConfig{LibraryDBID: i.LibraryDBID, LibraryDSID: i.LibraryDSID, LibraryURL: i.LibraryURL,
+		DailyDBID: i.DailyDBID, DailyDSID: i.DailyDSID, Props: i.Props}
+}

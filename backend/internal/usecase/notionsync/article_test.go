@@ -1,4 +1,4 @@
-package worker
+package notionsync
 
 import (
 	"reflect"
@@ -9,7 +9,6 @@ import (
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/platform/config"
 )
 
 func articleMsg() queue.Message { return queue.Article(testBot, domain.URLHash(artURL)) }
@@ -243,25 +242,6 @@ func TestArticleLongURLAndCommaSiteStillCreate(t *testing.T) {
 	}
 }
 
-func TestCompletedRule(t *testing.T) {
-	tr := config.Tracking{CompleteProgress: 0.9, CompleteTimeRatio: 0.3, WordsPerMinute: 230}
-	cases := []struct {
-		a    domain.Article
-		want bool
-	}{
-		{domain.Article{MaxProgress: 0.95, WordCount: 1000, TotalSeconds: 100}, true}, // 100 ≥ 0.3 × 260.9
-		{domain.Article{MaxProgress: 0.95, WordCount: 1000, TotalSeconds: 50}, false}, // skimmed
-		{domain.Article{MaxProgress: 0.95, WordCount: 0, TotalSeconds: 5}, true},      // unknown length
-		{domain.Article{MaxProgress: 0.5, WordCount: 0, TotalSeconds: 999}, false},
-		{domain.Article{MaxProgress: 0.1, Completed: true}, true}, // sticky
-	}
-	for i, c := range cases {
-		if got := isCompleted(&c.a, tr); got != c.want {
-			t.Errorf("case %d: got %v", i, got)
-		}
-	}
-}
-
 // I1 / scenario 10: a page still in a previous Library (the databases were replaced by
 // setup) counts as gone: the id is cleared, the message requeued, and the page re-created
 // in the current Library.
@@ -272,7 +252,7 @@ func TestArticlePageInOldLibraryIsRecreated(t *testing.T) {
 	stale := e.ns.AddPage(old.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
 	e.ns.DeleteDataSource(old.LibraryDS)
 	e.read(artURL, 0, 120, 0.5)
-	must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), stale.ID, stale.URL))
+	must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), stale.ID, stale.URL, ""))
 
 	if f := e.handle(articleMsg()); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
@@ -288,5 +268,50 @@ func TestArticlePageInOldLibraryIsRecreated(t *testing.T) {
 	pg := e.onlyLibraryPage()
 	if a := e.article(artURL); a.NotionPageID != pg.ID || a.NotionURL != pg.URL || a.NotionSyncedVersion != 1 {
 		t.Fatalf("article %+v, new page %s", a, pg.ID)
+	}
+}
+
+// switchLibrary points the installation at a second, surviving Library data source,
+// as setup on a different parent page would (R1).
+func (e *wenv) switchLibrary() string {
+	e.t.Helper()
+	e.ns.AddDatabase("lib2-db", "lib2-ds", notiontest.LibrarySchema)
+	db := e.tpl.DBConfig()
+	db.LibraryDBID, db.LibraryDSID = "lib2-db", "lib2-ds"
+	must(e.t, e.db.Store.SaveInstallationDatabases(ctx, testBot, db, e.now))
+	return "lib2-ds"
+}
+
+// Review focus 4 / R1: a page in a database the installation no longer targets is
+// re-created in the current one without PATCHing the old page (whose property ids
+// the new database does not have), even though the old database still exists.
+func TestArticleInOldDatabaseIsRecreatedBeforePatch(t *testing.T) {
+	e := newEnv(t)
+	e.seedInstallation("tok", "rt")
+	e.read(artURL, 0, 120, 0.5)
+	e.handle(articleMsg())
+	old := e.onlyLibraryPage()
+	if a := e.article(artURL); a.NotionDataSourceID != e.tpl.LibraryDS {
+		t.Fatalf("data source not recorded: %+v", a)
+	}
+
+	newDS := e.switchLibrary()
+	e.read(artURL, 1, 60, 0.6)
+	e.q.Drain()
+	if f := e.handle(articleMsg()); len(f) != 0 {
+		t.Fatalf("failures %+v", f)
+	}
+	if n := len(e.ns.Calls("PATCH", "/v1/pages/"+old.ID)); n != 0 {
+		t.Fatalf("PATCHed the old page %d times", n)
+	}
+	sent := e.q.Drain()
+	if len(sent) != 1 || sent[0].Message != articleMsg() {
+		t.Fatalf("requeue %+v", sent)
+	}
+	e.handle(sent[0].Message)
+	pages := e.ns.Pages(newDS)
+	a := e.article(artURL)
+	if len(pages) != 1 || a.NotionPageID != pages[0].ID || a.NotionDataSourceID != newDS {
+		t.Fatalf("not re-created in the new Library: pages %d, article %+v", len(pages), a)
 	}
 }

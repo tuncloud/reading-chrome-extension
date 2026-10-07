@@ -16,9 +16,11 @@ import (
 	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/queue"
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/httpapi"
 	"reading-tracker/backend/internal/platform/config"
-	"reading-tracker/backend/internal/worker"
+	"reading-tracker/backend/internal/platform/crypto"
+	"reading-tracker/backend/internal/usecase/notionsync"
 )
 
 // Logger writes JSON logs to stdout (CloudWatch).
@@ -47,10 +49,36 @@ func APIDeps(cfg *config.Config, st *dynamo.Store, q queue.Sender, log *slog.Log
 	return httpapi.Deps{Config: cfg, Store: st, Notion: NotionClient(cfg, nil), Queue: q, Now: time.Now, Log: log}
 }
 
-// Worker assembles the notion-writer: paced Notion client (C22) and the shared keyring.
-func Worker(cfg *config.Config, st *dynamo.Store, q queue.Sender, vis worker.VisibilityChanger, log *slog.Logger) *worker.Worker {
-	return worker.New(worker.Deps{
-		Store: st, Notion: NotionClient(cfg, notion.NewMinInterval(350*time.Millisecond)), Keys: cfg.Keys,
-		Queue: q, Visibility: vis, Tracking: cfg.Public.Tracking, Now: time.Now, Log: log,
-	})
+// WorkerDeps are the notion-writer's collaborators.
+type WorkerDeps struct {
+	Store      *dynamo.Store
+	Notion     *notion.Client
+	Keys       *crypto.Keyring
+	Queue      queue.Sender
+	Visibility queue.VisibilityChanger
+	Tracking   config.Tracking
+	Now        func() time.Time
+	Jitter     func() time.Duration
+	Sleep      func(time.Duration)
+	Log        *slog.Logger
+}
+
+// NewWorker assembles the Notion sync behind the SQS consumer.
+func NewWorker(d WorkerDeps) *queue.Consumer {
+	gw := &notion.Gateway{Client: d.Notion}
+	svc := &notionsync.Service{
+		Installations: d.Store, Reading: d.Store, Users: d.Store, Devices: d.Store, Purger: d.Store,
+		Pages: gw, Auth: gw, Sealer: d.Keys,
+		Queue: &queue.SyncQueue{Sender: d.Queue, Now: d.Now},
+		Policy: domain.SyncPolicy{MinCreateSeconds: d.Tracking.MinCreateSeconds, CompleteProgress: d.Tracking.CompleteProgress,
+			CompleteTimeRatio: d.Tracking.CompleteTimeRatio, WordsPerMinute: d.Tracking.WordsPerMinute},
+		Now: d.Now, Jitter: d.Jitter, Sleep: d.Sleep, Log: d.Log,
+	}
+	return &queue.Consumer{Handler: svc, Visibility: d.Visibility, Log: d.Log}
+}
+
+// Worker is the production notion-writer: paced Notion client (C22).
+func Worker(cfg *config.Config, st *dynamo.Store, q queue.Sender, vis queue.VisibilityChanger, log *slog.Logger) *queue.Consumer {
+	return NewWorker(WorkerDeps{Store: st, Notion: NotionClient(cfg, notion.NewMinInterval(350*time.Millisecond)),
+		Keys: cfg.Keys, Queue: q, Visibility: vis, Tracking: cfg.Public.Tracking, Now: time.Now, Log: log})
 }

@@ -63,15 +63,15 @@ func (s *Store) BatchGetArticles(ctx context.Context, inst string, hashes []stri
 	return out, nil
 }
 
-func (s *Store) SetArticlePage(ctx context.Context, inst, hash, pageID, url string) error {
-	return s.update(ctx, InstPK(inst), ArticleSK(hash), "SET #p = :p, #u = :u", "attribute_exists(pk)",
-		map[string]string{"#p": "notion_page_id", "#u": "notion_url"},
-		map[string]types.AttributeValue{":p": str(pageID), ":u": str(url)})
+func (s *Store) SetArticlePage(ctx context.Context, inst, hash, pageID, url, dataSourceID string) error {
+	return s.update(ctx, InstPK(inst), ArticleSK(hash), "SET #p = :p, #u = :u, #d = :d", "attribute_exists(pk)",
+		map[string]string{"#p": "notion_page_id", "#u": "notion_url", "#d": "notion_ds_id"},
+		map[string]types.AttributeValue{":p": str(pageID), ":u": str(url), ":d": str(dataSourceID)})
 }
 
 func (s *Store) ClearArticlePage(ctx context.Context, inst, hash string) error {
-	return s.update(ctx, InstPK(inst), ArticleSK(hash), "REMOVE #p, #u", "",
-		map[string]string{"#p": "notion_page_id", "#u": "notion_url"}, nil)
+	return s.update(ctx, InstPK(inst), ArticleSK(hash), "REMOVE #p, #u, #d", "",
+		map[string]string{"#p": "notion_page_id", "#u": "notion_url", "#d": "notion_ds_id"}, nil)
 }
 
 // MarkArticleSynced records the version written to Notion (spec §2.13 step 5).

@@ -94,3 +94,22 @@ func IsNotionKind(err error, k NotionErrorKind) bool {
 	e, ok := NotionErrorOf(err)
 	return ok && e.Kind == k
 }
+
+// Page is a Notion page the sync wrote or adopted.
+type Page struct {
+	ID  string
+	URL string
+}
+
+// NotionPages writes the Reading Library and Daily Log rows (spec §2.13, §2.14).
+// It writes only server-owned properties, by stored property id (C1, C9). Find and
+// Create return NotionDataSourceMissing on a 404. Update returns NotionPageGone when
+// the page is missing, archived, trashed, or now lives in another data source.
+type NotionPages interface {
+	FindArticlePage(ctx context.Context, token string, db domain.DBConfig, canonicalURL string) (*Page, error)
+	CreateArticlePage(ctx context.Context, token string, db domain.DBConfig, a domain.Article, completed bool) (*Page, error)
+	UpdateArticlePage(ctx context.Context, token string, db domain.DBConfig, pageID string, a domain.Article, completed bool) error
+	FindDayPage(ctx context.Context, token string, db domain.DBConfig, date string) (*Page, error)
+	CreateDayPage(ctx context.Context, token string, db domain.DBConfig, d domain.Day, articlePageIDs []string) (*Page, error)
+	UpdateDayPage(ctx context.Context, token string, db domain.DBConfig, pageID string, d domain.Day, articlePageIDs []string) error
+}
