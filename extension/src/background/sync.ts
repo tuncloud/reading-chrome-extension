@@ -19,6 +19,7 @@ const DAY = 24 * 60 * MINUTE
 export interface SyncDeps {
   db: Db
   api: Pick<ApiClient, 'push'>
+  // timeZone is the IANA zone the user reads in, sent as tz on push.
   clock: { now(): Date; timeZone(): string }
   log: Log
 }

@@ -99,6 +99,7 @@ function fromSegment(s: StoredSegment): SegmentRow {
 export class Db {
   constructor(private readonly db: ReadingDb) {}
 
+  // applyRead stores a new segment and folds it into its article in one transaction; it returns false, changing nothing, when the segment id is already stored.
   applyRead(segment: StoredSegment, merge: (prev: LocalArticle | undefined) => LocalArticle): Promise<boolean> {
     const { db } = this
     return db.transaction('rw', db.articles, db.segments, async () => {
@@ -110,6 +111,7 @@ export class Db {
     })
   }
 
+  // unsyncedSegments returns up to limit unsynced segments, oldest started_at first.
   async unsyncedSegments(limit: number): Promise<StoredSegment[]> {
     const rows = await this.db.segments
       .where('[synced+started_at]')
@@ -137,20 +139,24 @@ export class Db {
     return rows.flatMap((r) => (r ? [toArticle(r)] : []))
   }
 
+  // recentArticles returns the latest last_read_at first.
   async recentArticles(limit: number): Promise<LocalArticle[]> {
     const rows = await this.db.articles.orderBy('last_read_at').reverse().limit(limit).toArray()
     return rows.map(toArticle)
   }
 
+  // segmentsSince returns segments with started_at >= iso.
   async segmentsSince(iso: string): Promise<StoredSegment[]> {
     const rows = await this.db.segments.where('started_at').aboveOrEqual(iso).toArray()
     return rows.map(toSegment)
   }
 
+  // pruneSynced deletes synced segments that started before beforeIso and returns how many.
   pruneSynced(beforeIso: string): Promise<number> {
     return this.db.segments.where('[synced+started_at]').between([1, Dexie.minKey], [1, beforeIso]).delete()
   }
 
+  // clearReading deletes every article and segment; kv is kept.
   async clearReading(): Promise<void> {
     const { db } = this
     await db.transaction('rw', db.articles, db.segments, async () => {
