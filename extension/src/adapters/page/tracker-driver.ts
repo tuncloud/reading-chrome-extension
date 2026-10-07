@@ -100,13 +100,8 @@ export function startTracking(d: DriverDeps): Driver {
     }
   }
   const onVisibility = () => flush(tracker.setVisible(doc.visibilityState === 'visible', now()))
-  // Capturing listeners also see element-level focus/blur; only the window's own count.
-  const onFocus = (e: Event) => {
-    if (e.target === win) flush(tracker.setFocused(true, now()))
-  }
-  const onBlur = (e: Event) => {
-    if (e.target === win) flush(tracker.setFocused(false, now()))
-  }
+  const onFocus = () => flush(tracker.setFocused(true, now()))
+  const onBlur = () => flush(tracker.setFocused(false, now()))
   const onPageHide = () => {
     updateProgress()
     flush(tracker.pagehide(now()))
@@ -124,23 +119,25 @@ export function startTracking(d: DriverDeps): Driver {
     flush(tracker.tick(now()))
   }
 
-  const listen: [EventTarget, string, EventListener][] = [
-    ...INPUT_EVENTS.map((type): [EventTarget, string, EventListener] => [win, type, onInput]),
-    [win, 'scroll', onScroll],
-    [win, 'mousemove', onMouseMove],
-    [doc, 'visibilitychange', onVisibility],
-    [win, 'focus', onFocus],
-    [win, 'blur', onBlur],
-    [win, 'pagehide', onPageHide],
+  // focus and blur do not bubble: a non-capturing window listener sees only the window's own,
+  // not those of elements inside the page (a capturing one would, and tracking would stop).
+  const listen: [EventTarget, string, EventListener, boolean][] = [
+    ...INPUT_EVENTS.map((type): [EventTarget, string, EventListener, boolean] => [win, type, onInput, true]),
+    [win, 'scroll', onScroll, true],
+    [win, 'mousemove', onMouseMove, true],
+    [doc, 'visibilitychange', onVisibility, true],
+    [win, 'focus', onFocus, false],
+    [win, 'blur', onBlur, false],
+    [win, 'pagehide', onPageHide, true],
   ]
-  for (const [target, type, fn] of listen) target.addEventListener(type, fn, { passive: true, capture: true })
+  for (const [target, type, fn, capture] of listen) target.addEventListener(type, fn, { passive: true, capture })
   const timer = win.setInterval(tick, TICK_MS)
 
   function stop() {
     if (stopped) return
     stopped = true
     win.clearInterval(timer)
-    for (const [target, type, fn] of listen) target.removeEventListener(type, fn, { capture: true })
+    for (const [target, type, fn, capture] of listen) target.removeEventListener(type, fn, { capture })
   }
 
   return {
