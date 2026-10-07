@@ -35,7 +35,12 @@ func main() {
 		os.Exit(1)
 	}
 	st := store.New(ddb, cfg.TableName)
-	q := &queue.Local{Delay: localDelay(cfg), Log: log}
+	delay := localDelay(cfg)
+	if delay < cfg.DebounceBucket {
+		log.Warn("LOCAL_QUEUE_DELAY_SECONDS is below DEBOUNCE_BUCKET_SECONDS; the last updates of a bucket may not reach Notion until the next read (C5: D >= B)",
+			"delay", delay.String(), "bucket", cfg.DebounceBucket.String())
+	}
+	q := &queue.Local{Delay: delay, Log: log}
 	q.Handle = app.Worker(cfg, st, q, q, log).HandleSQS
 	e := httpapi.New(app.APIDeps(cfg, st, q, log))
 	addr := os.Getenv("LISTEN_ADDR")
