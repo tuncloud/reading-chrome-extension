@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   let driver: Driver | null = null
 
   const send = (article: ArticleMeta, segment: Segment) =>
-    sendToBackground({ type: 'record', article, segment }).then(
+    sendToBackground({ type: 'record', host: location.hostname, article, segment }).then(
       () => undefined,
       (e: unknown) => {
         if (e instanceof ExtensionGoneError) throw e // stops the driver

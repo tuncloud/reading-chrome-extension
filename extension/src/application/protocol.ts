@@ -12,7 +12,7 @@ export interface TrackingPlan {
 
 export type BackgroundRequest =
   | { type: 'tracking-plan'; host: string }
-  | { type: 'record'; article: ArticleMeta; segment: Segment }
+  | { type: 'record'; host: string; article: ArticleMeta; segment: Segment }
   | { type: 'connect' }
   | { type: 'sync-now' }
 

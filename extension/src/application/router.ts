@@ -24,8 +24,12 @@ export function createRouter(s: RouterServices): (msg: unknown) => Promise<unkno
         const adapter = await s.domains.plan(msg.host, config)
         return adapter ? { adapter, config } : null
       }
-      case 'record':
+      case 'record': {
+        // Tabs opened before a domain was denied or removed keep their tracker; the background decides.
+        const config = await s.config.current()
+        if (!config || !(await s.domains.plan(msg.host, config))) return { stored: false }
         return { stored: await s.recorder.record(msg.article, msg.segment) }
+      }
       case 'connect':
         return s.session.connect()
       case 'sync-now':

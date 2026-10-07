@@ -31,10 +31,19 @@ describe('router', () => {
     const s = services()
     const route = createRouter(s)
     const segment = { id: 's1', sessionId: 'x', seq: 0, canonicalUrl: META.canonicalUrl, startedAt: '', endedAt: '', activeSeconds: 5, maxProgress: 0 }
-    expect(await route({ type: 'record', article: META, segment })).toEqual({ stored: true })
+    expect(await route({ type: 'record', host: 'medium.com', article: META, segment })).toEqual({ stored: true })
     expect(s.recorder.record).toHaveBeenCalledWith(META, segment)
     expect(await route({ type: 'connect' })).toEqual({ ok: false, reason: 'cancelled' })
     expect(await route({ type: 'sync-now' })).toBe('synced')
+  })
+
+  test('I3: a record from a host that is no longer tracked is not stored', async () => {
+    const s = services()
+    const route = createRouter(s)
+    const segment = { id: 's1', sessionId: 'x', seq: 0, canonicalUrl: META.canonicalUrl, startedAt: '', endedAt: '', activeSeconds: 5, maxProgress: 0 }
+    expect(await route({ type: 'record', host: 'denied.example.com', article: META, segment })).toEqual({ stored: false })
+    expect(s.recorder.record).not.toHaveBeenCalled()
+    expect(await createRouter(services(null))({ type: 'record', host: 'medium.com', article: META, segment })).toEqual({ stored: false })
   })
 
   test('unknown messages are rejected', async () => {
