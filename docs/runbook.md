@@ -221,7 +221,7 @@ pnpm build
 - Load `extension/dist` unpacked as in Part 1, step 4, removing the local build first.
 - To distribute it as a zip: `cd extension/dist && zip -r ../reading-tracker.zip .`
 
-`pnpm dev` keeps building against `.env.local` (localhost) only while you run it. Run `pnpm build` again before going back to the deployed API.
+`pnpm build` and `pnpm dev` both build in production mode, so while `.env.production.local` exists, both target the deployed API. To develop against the local backend again, delete `extension/.env.production.local`, then rebuild.
 
 ### 9. Smoke-test the deployment (spec T32)
 
