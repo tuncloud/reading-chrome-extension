@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 DDB_CONTAINER := reading-ddb
 
-.PHONY: test ddb-up ddb-down run-local
+.PHONY: test ddb-up ddb-down run-local build build-api build-worker
 
 test:
 	go test ./...
@@ -21,3 +21,14 @@ ddb-down:
 
 run-local: .env.local
 	set -a && source .env.local && set +a && go run ./cmd/local
+
+LAMBDA_ENV   := GOOS=linux GOARCH=arm64 CGO_ENABLED=0
+LAMBDA_FLAGS := -tags lambda.norpc -trimpath -ldflags="-s -w"
+
+build: build-api build-worker
+
+build-api:
+	$(LAMBDA_ENV) go build $(LAMBDA_FLAGS) -o build/api/bootstrap ./cmd/api
+
+build-worker:
+	$(LAMBDA_ENV) go build $(LAMBDA_FLAGS) -o build/worker/bootstrap ./cmd/worker

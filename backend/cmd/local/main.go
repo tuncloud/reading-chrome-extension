@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/aws/aws-lambda-go/events"
-
 	"reading-tracker/backend/internal/app"
 	"reading-tracker/backend/internal/config"
 	"reading-tracker/backend/internal/httpapi"
@@ -37,12 +35,8 @@ func main() {
 		os.Exit(1)
 	}
 	st := store.New(ddb, cfg.TableName)
-	q := &queue.Local{Delay: localDelay(cfg), Log: log, Handle: func(_ context.Context, ev events.SQSEvent) (events.SQSEventResponse, error) {
-		for _, r := range ev.Records {
-			log.Info("local queue: delivered", "body", r.Body)
-		}
-		return events.SQSEventResponse{}, nil
-	}}
+	q := &queue.Local{Delay: localDelay(cfg), Log: log}
+	q.Handle = app.Worker(cfg, st, q, q, log).HandleSQS
 	e := httpapi.New(app.APIDeps(cfg, st, q, log))
 	addr := os.Getenv("LISTEN_ADDR")
 	if addr == "" {

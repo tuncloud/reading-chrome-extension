@@ -1,0 +1,18 @@
+{
+  "Records": [
+    {
+      "messageId": "00000000-0000-0000-0000-000000000001",
+      "receiptHandle": "local-receipt",
+      "body": "{\"type\":\"article\",\"installation_id\":\"bot-local\",\"url_hash\":\"0123456789abcdef0123456789abcdef\"}",
+      "attributes": {
+        "ApproximateReceiveCount": "1",
+        "MessageGroupId": "bot-local",
+        "MessageDeduplicationId": "article#bot-local#0123456789abcdef0123456789abcdef#0"
+      },
+      "messageAttributes": {},
+      "eventSource": "aws:sqs",
+      "eventSourceARN": "arn:aws:sqs:ap-southeast-1:000000000000:notion-sync-dev.fifo",
+      "awsRegion": "ap-southeast-1"
+    }
+  ]
+}
