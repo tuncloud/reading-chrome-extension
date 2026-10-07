@@ -16,7 +16,13 @@ async function startup(): Promise<void> {
   await s.config.refreshIfStale()
   await s.config.ensureSchedule()
   await new ChromeScheduler().every(DAILY_ALARM, DAY_MINUTES)
-  await s.domains.reconcile()
+  try {
+    await s.domains.reconcile()
+  } catch (e: unknown) {
+    s.log.warn(`reconcile failed: ${e instanceof Error ? e.message : String(e)}`)
+  }
+  await s.sync.prune()
+  await s.session.refresh()
   await s.sync.run()
 }
 
@@ -29,7 +35,7 @@ chrome.runtime.onStartup.addListener(() => run(startup, 'startup'))
 
 onAlarm((name) => {
   if (name === SYNC_ALARM) run(() => s.sync.run(), 'sync')
-  if (name === DAILY_ALARM) {
+  else if (name === DAILY_ALARM) {
     run(async () => {
       await s.config.refreshIfStale()
       await s.sync.prune()

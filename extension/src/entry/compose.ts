@@ -39,7 +39,7 @@ export function compose(scope: string): Services {
   const config = new ConfigService({ store, api, clock, scheduler: new ChromeScheduler(), log })
   const sync = new SyncService({ store, api, clock, log })
   const syncSoon = () => {
-    void sync.run()
+    sync.run().catch((e: unknown) => log.warn(`sync failed: ${e instanceof Error ? e.message : String(e)}`))
   }
   return {
     store, api, clock, log, config, sync,
