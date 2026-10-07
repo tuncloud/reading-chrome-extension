@@ -9,7 +9,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 
 	"reading-tracker/backend/internal/adapter/dynamo"
-	"reading-tracker/backend/internal/notion"
+	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/setup"
@@ -29,6 +29,7 @@ type Deps struct {
 
 type handlers struct {
 	Deps
+	gw    *notion.Gateway
 	setup *setup.Service
 	sync  *syncsvc.Service
 }
@@ -48,7 +49,8 @@ func New(d Deps) *echo.Echo {
 	}
 	h := &handlers{
 		Deps:  d,
-		setup: &setup.Service{Notion: d.Notion, Store: d.Store, Queue: d.Queue, Bucket: d.Config.DebounceBucket, Now: d.Now},
+		gw:    &notion.Gateway{Client: d.Notion},
+		setup: &setup.Service{Store: d.Store, Queue: d.Queue, Bucket: d.Config.DebounceBucket, Now: d.Now},
 		sync:  &syncsvc.Service{Store: d.Store, Queue: d.Queue, Bucket: d.Config.DebounceBucket, Now: d.Now},
 	}
 	v1 := e.Group("/v1")

@@ -14,6 +14,7 @@ import (
 	"github.com/aws/smithy-go"
 
 	"reading-tracker/backend/internal/domain"
+	"reading-tracker/backend/internal/usecase/port"
 )
 
 // API is the subset of *dynamodb.Client the store uses; tests wrap it to inject errors.
@@ -155,3 +156,11 @@ const maxBatchAttempts = 8
 func backoff(attempt int) time.Duration {
 	return time.Duration(min(1<<attempt, 64)) * 25 * time.Millisecond
 }
+
+var (
+	_ port.Users         = (*Store)(nil)
+	_ port.Devices       = (*Store)(nil)
+	_ port.OAuthGrants   = (*Store)(nil)
+	_ port.Installations = (*Store)(nil)
+	_ port.Reading       = (*Store)(nil)
+)

@@ -3,8 +3,8 @@ package worker
 import (
 	"testing"
 
+	"reading-tracker/backend/internal/adapter/notion/notiontest"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/notion/notiontest"
 	"reading-tracker/backend/internal/queue"
 )
 

@@ -21,14 +21,13 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
+	"reading-tracker/backend/internal/adapter/notion"
+	"reading-tracker/backend/internal/adapter/notion/notiontest"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/httpapi"
-	"reading-tracker/backend/internal/notion"
-	"reading-tracker/backend/internal/notion/notiontest"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/setup"
 	"reading-tracker/backend/internal/worker"
 )
 
@@ -226,7 +225,7 @@ func TestDeletedLibraryRecoversAfterSetup(t *testing.T) {
 
 	// The user deletes the Library: its data source is gone and it no longer shows under the page.
 	ns.DeleteDataSource(tpl.LibraryDS)
-	ns.SetBlocks(tpl.ID, notiontest.ChildDatabase(tpl.DailyDB, setup.DailyTitle))
+	ns.SetBlocks(tpl.ID, notiontest.ChildDatabase(tpl.DailyDB, notion.DailyTitle))
 	sys.read(token, urlB, "00000000-0000-4000-8000-00000000000b")
 	deliver(t, sys.wk, sys.q)
 	inst, err := sys.db.Store.GetInstallation(context.Background(), "bot-e2e")

@@ -1,4 +1,4 @@
-package setup
+package notion
 
 // Database titles the template must contain (spec §2.11).
 const (

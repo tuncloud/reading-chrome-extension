@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	"reading-tracker/backend/internal/adapter/notion"
+	"reading-tracker/backend/internal/adapter/notion/notiontest"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/notion/notiontest"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/setup"
 )
 
 func articleMsg() queue.Message { return queue.Article(testBot, domain.URLHash(artURL)) }
@@ -60,7 +60,7 @@ func TestArticleCreateWritesServerOwnedPropsOnly(t *testing.T) {
 	e.handle(articleMsg())
 	pg := e.onlyLibraryPage()
 	allowed := map[string]bool{}
-	for _, p := range setup.LibraryProps {
+	for _, p := range notion.LibraryProps {
 		allowed[pid(p.Name)] = true
 	}
 	for k := range pg.Properties {

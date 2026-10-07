@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/queue"
 )
 

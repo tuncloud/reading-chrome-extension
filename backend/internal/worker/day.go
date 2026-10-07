@@ -5,10 +5,9 @@ import (
 	"errors"
 	"slices"
 
+	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/setup"
 )
 
 // handleDay implements spec §2.14.
@@ -36,7 +35,7 @@ func (w *Worker) handleDay(ctx context.Context, m queue.Message) error {
 
 	if day.NotionPageID == "" {
 		if err := w.createDayPage(ctx, sess, day, props); err != nil {
-			return w.dataSourceError(ctx, inst, setup.DailyTitle, err)
+			return w.dataSourceError(ctx, inst, notion.DailyTitle, err)
 		}
 	} else {
 		err := sess.call(ctx, func(tok string) error { return w.updatePage(ctx, tok, day.NotionPageID, inst.DailyDSID, props) })

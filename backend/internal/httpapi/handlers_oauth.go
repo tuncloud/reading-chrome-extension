@@ -12,9 +12,8 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/platform/crypto"
-	"reading-tracker/backend/internal/setup"
+	"reading-tracker/backend/internal/usecase/port"
 )
 
 const (
@@ -48,7 +47,7 @@ func (h *handlers) oauthStart(c echo.Context) error {
 	if err := h.Store.PutOAuthState(c.Request().Context(), state, st, h.Now().Add(oauthStateTTL)); err != nil {
 		return err
 	}
-	return c.Redirect(http.StatusFound, h.Notion.AuthorizeURL(h.redirectURI(c), state))
+	return c.Redirect(http.StatusFound, h.gw.AuthorizeURL(h.redirectURI(c), state))
 }
 
 // allowedExtRedirect accepts only https://<id>.chromiumapp.org/… for configured ids.
@@ -88,12 +87,12 @@ func (h *handlers) oauthCallback(c echo.Context) error {
 	if e := q.Get("error"); e != "" {
 		return redirectWith(c, st.ExtRedirect, "error", e)
 	}
-	tok, err := h.Notion.ExchangeCode(ctx, q.Get("code"), h.redirectURI(c))
+	tok, err := h.gw.ExchangeCode(ctx, q.Get("code"), h.redirectURI(c))
 	if err != nil {
 		h.Log.WarnContext(ctx, "oauth: code exchange failed", "err", err)
 		return redirectWith(c, st.ExtRedirect, "error", "exchange_failed")
 	}
-	if tok.BotID == "" || tok.Owner.User.ID == "" {
+	if tok.BotID == "" || tok.OwnerUserID == "" {
 		return redirectWith(c, st.ExtRedirect, "error", "unsupported_owner")
 	}
 	uid, err := h.resolveUser(ctx, tok)
@@ -128,8 +127,8 @@ func redirectWith(c echo.Context, base, key, val string) error {
 
 // resolveUser maps the Notion owner to our user, creating one if needed (§2.2 step 4).
 // A user whose deletion is pending is treated as absent.
-func (h *handlers) resolveUser(ctx context.Context, tok *notion.TokenResponse) (string, error) {
-	nuid := tok.Owner.User.ID
+func (h *handlers) resolveUser(ctx context.Context, tok *port.NotionGrant) (string, error) {
+	nuid := tok.OwnerUserID
 	uid, err := h.Store.UserIDForNotionUser(ctx, nuid)
 	switch {
 	case err == nil:
@@ -144,13 +143,13 @@ func (h *handlers) resolveUser(ctx context.Context, tok *notion.TokenResponse) (
 		return "", err
 	}
 	uid = ulid.Make().String()
-	return uid, h.Store.CreateUser(ctx, uid, domain.User{NotionUserID: nuid, Name: tok.Owner.User.Name,
-		Email: tok.Owner.User.Person.Email, CreatedAt: domain.Timestamp(h.Now())})
+	return uid, h.Store.CreateUser(ctx, uid, domain.User{NotionUserID: nuid, Name: tok.OwnerName,
+		Email: tok.OwnerEmail, CreatedAt: domain.Timestamp(h.Now())})
 }
 
 // upsertInstallation stores INST#<bot_id>/META with sealed tokens (C18) and decides
 // its status (§2.2 steps 5–7).
-func (h *handlers) upsertInstallation(ctx context.Context, uid string, tok *notion.TokenResponse) (*domain.Installation, error) {
+func (h *handlers) upsertInstallation(ctx context.Context, uid string, tok *port.NotionGrant) (*domain.Installation, error) {
 	now := h.Now()
 	inst, err := h.Store.GetInstallation(ctx, tok.BotID)
 	if errors.Is(err, domain.ErrNotFound) {
@@ -181,9 +180,9 @@ func (h *handlers) upsertInstallation(ctx context.Context, uid string, tok *noti
 	switch {
 	case tok.DuplicatedTemplateID != "":
 		inst.DuplicatedTemplateID = tok.DuplicatedTemplateID
-		db, err := h.setup.ResolveTemplate(ctx, tok.AccessToken, tok.DuplicatedTemplateID)
+		db, err := h.gw.ResolveTemplate(ctx, tok.AccessToken, tok.DuplicatedTemplateID)
 		if err != nil {
-			inst.Status, inst.SetupError = domain.StatusNeedsSetup, setup.Reason(err)
+			inst.Status, inst.SetupError = domain.StatusNeedsSetup, domain.SetupReason(err)
 			h.Log.WarnContext(ctx, "oauth: template resolution failed", "reason", inst.SetupError, "err", err)
 		} else {
 			inst.ApplyDatabases(db)

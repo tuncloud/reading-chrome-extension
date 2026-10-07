@@ -13,9 +13,9 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 
 	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
+	"reading-tracker/backend/internal/adapter/notion"
+	"reading-tracker/backend/internal/adapter/notion/notiontest"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/notion"
-	"reading-tracker/backend/internal/notion/notiontest"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/queue"

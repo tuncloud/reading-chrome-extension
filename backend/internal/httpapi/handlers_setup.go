@@ -10,8 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/notion"
-	"reading-tracker/backend/internal/setup"
+	"reading-tracker/backend/internal/usecase/port"
 )
 
 // installationToken loads the active installation and decrypts its access token.
@@ -36,19 +35,25 @@ func (h *handlers) installationToken(ctx context.Context, p *Principal) (*domain
 
 // notionErr maps Notion failures in API calls to §2.0 errors.
 func notionErr(err error) error {
-	e, ok := notion.AsAPIError(err)
+	e, ok := port.NotionErrorOf(err)
 	if !ok {
 		return err
 	}
 	switch {
-	case e.Status == http.StatusUnauthorized:
+	case e.Kind == port.NotionUnauthorized:
 		return errConflict("Notion authorization expired; reconnect")
-	case e.Status == http.StatusNotFound:
+	case e.Kind == port.NotionNotFound:
 		return errNotFound("Notion object not found or not shared with the integration")
-	case e.Status == http.StatusBadRequest:
+	case e.Kind == port.NotionRejected && e.Status == http.StatusBadRequest:
 		return errInvalid("Notion rejected the request: %s", e.Message)
 	}
 	return err
+}
+
+type pageView struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	URL   string `json:"url"`
 }
 
 // setupPages serves GET /v1/setup/pages (spec §2.6).
@@ -58,11 +63,15 @@ func (h *handlers) setupPages(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	pages, err := h.Notion.SearchPages(ctx, token, c.QueryParam("q"))
+	pages, err := h.gw.SearchPages(ctx, token, c.QueryParam("q"))
 	if err != nil {
 		return notionErr(err)
 	}
-	return c.JSON(http.StatusOK, map[string]any{"pages": pages})
+	views := make([]pageView, len(pages))
+	for i, p := range pages {
+		views[i] = pageView{ID: p.ID, Title: p.Title, URL: p.URL}
+	}
+	return c.JSON(http.StatusOK, map[string]any{"pages": views})
 }
 
 type setupRequest struct {
@@ -86,10 +95,10 @@ func (h *handlers) postSetup(c echo.Context) error {
 	if inst.Status == domain.StatusActive {
 		return errConflict("installation is already set up")
 	}
-	db, err := h.setup.CreateDatabases(ctx, token, req.ParentPageID)
+	db, err := h.gw.ProvisionDatabases(ctx, token, req.ParentPageID)
 	if err != nil {
 		// A reused same-titled database may have a missing or wrong-typed property.
-		var se *setup.Error
+		var se *domain.SetupError
 		if errors.As(err, &se) {
 			return errConflict("setup failed: " + se.Reason)
 		}

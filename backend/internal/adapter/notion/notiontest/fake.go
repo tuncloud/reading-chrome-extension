@@ -17,8 +17,8 @@ import (
 	"sync"
 	"testing"
 
+	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/setup"
 )
 
 type Request struct {
@@ -69,10 +69,10 @@ type Template struct{ ID, LibraryDB, LibraryDS, DailyDB, DailyDS string }
 // DBConfig is what template resolution should produce for this template.
 func (t Template) DBConfig() domain.DBConfig {
 	props := map[string]string{}
-	for _, p := range setup.LibraryProps {
+	for _, p := range notion.LibraryProps {
 		props[p.Key] = PropID(p.Name)
 	}
-	for _, p := range setup.DailyProps {
+	for _, p := range notion.DailyProps {
 		props[p.Key] = PropID(p.Name)
 	}
 	return domain.DBConfig{LibraryDBID: t.LibraryDB, LibraryDSID: t.LibraryDS, LibraryURL: "https://www.notion.so/" + t.LibraryDB,
@@ -120,7 +120,7 @@ func (s *Server) AddTemplate(id string) Template {
 	s.AddDatabase(tpl.DailyDB, tpl.DailyDS, DailySchema)
 	s.SetRelationTarget(tpl.DailyDS, "Articles", tpl.LibraryDS)
 	s.SetBlocks(id, map[string]any{"object": "block", "id": "intro", "type": "paragraph"},
-		ChildDatabase(tpl.LibraryDB, setup.LibraryTitle), ChildDatabase(tpl.DailyDB, setup.DailyTitle))
+		ChildDatabase(tpl.LibraryDB, notion.LibraryTitle), ChildDatabase(tpl.DailyDB, notion.DailyTitle))
 	return tpl
 }
 

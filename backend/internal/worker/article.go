@@ -4,10 +4,9 @@ import (
 	"context"
 	"errors"
 
+	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/setup"
 )
 
 // handleArticle implements spec §2.13. It always writes absolute values read from DynamoDB (C6).
@@ -34,7 +33,7 @@ func (w *Worker) handleArticle(ctx context.Context, m queue.Message) error {
 			return nil
 		}
 		if err := w.createArticlePage(ctx, sess, m.URLHash, art, completed); err != nil {
-			return w.dataSourceError(ctx, inst, setup.LibraryTitle, err)
+			return w.dataSourceError(ctx, inst, notion.LibraryTitle, err)
 		}
 	} else {
 		err := sess.call(ctx, func(tok string) error {

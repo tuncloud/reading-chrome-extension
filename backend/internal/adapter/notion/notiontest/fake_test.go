@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"reading-tracker/backend/internal/notion"
-	"reading-tracker/backend/internal/notion/notiontest"
+	"reading-tracker/backend/internal/adapter/notion"
+	"reading-tracker/backend/internal/adapter/notion/notiontest"
 )
 
 var ctx = context.Background()

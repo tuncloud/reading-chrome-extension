@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"reading-tracker/backend/internal/adapter/notion"
+	"reading-tracker/backend/internal/adapter/notion/notiontest"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/notion/notiontest"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/setup"
 )
 
 const readURL = "https://a.example/1"
@@ -134,7 +134,7 @@ func TestPostSetupBrokenExistingDatabaseIsConflict(t *testing.T) {
 		}
 	}
 	env.notion.AddDatabase("bad-lib-db", "bad-lib-ds", broken)
-	env.notion.SetBlocks("parent-1", notiontest.ChildDatabase("bad-lib-db", setup.LibraryTitle))
+	env.notion.SetBlocks("parent-1", notiontest.ChildDatabase("bad-lib-db", notion.LibraryTitle))
 
 	rec := env.do("POST", "/v1/setup", map[string]string{"parent_page_id": "parent-1"}, tok)
 	if rec.Code != 409 || errorCode(t, rec) != "conflict" || !strings.Contains(rec.Body.String(), "property_missing:Progress") {

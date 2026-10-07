@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/domain"
-	"reading-tracker/backend/internal/notion"
 )
 
 // session runs Notion calls for one installation, refreshing the token once on 401.
