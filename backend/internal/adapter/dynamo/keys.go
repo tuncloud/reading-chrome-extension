@@ -1,9 +1,4 @@
-package store
-
-import (
-	"crypto/sha256"
-	"encoding/hex"
-)
+package dynamo
 
 // Sort keys and key builders for every item in spec §3.1.
 const (
@@ -27,9 +22,3 @@ func SegmentSK(segmentID string) string { return "SEG#" + segmentID }
 func DaySK(date string) string          { return "DAY#" + date }
 func OAuthStatePK(state string) string  { return "OAUTHSTATE#" + state }
 func AuthCodePK(code string) string     { return "AUTHCODE#" + code }
-
-// URLHash is hex(SHA-256(canonical_url))[:32] (spec §2.8 step 1).
-func URLHash(canonicalURL string) string {
-	sum := sha256.Sum256([]byte(canonicalURL))
-	return hex.EncodeToString(sum[:])[:32]
-}

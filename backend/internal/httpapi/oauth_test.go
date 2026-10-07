@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/crypto"
-	"reading-tracker/backend/internal/store"
 )
 
 // fmtAV renders an attribute value (e.g. &{secret {}}) so scans can look for plaintext.
@@ -105,7 +105,7 @@ func TestOAuthCallbackHappyPathWithTemplate(t *testing.T) {
 	}
 	inst, err := env.db.Store.GetInstallation(context.Background(), testBotID)
 	must(t, err)
-	if inst.Status != store.StatusActive || inst.LibraryDSID != tpl.LibraryDS || inst.DuplicatedTemplateID != "tpl-1" || inst.TokenVersion != 1 {
+	if inst.Status != domain.StatusActive || inst.LibraryDSID != tpl.LibraryDS || inst.DuplicatedTemplateID != "tpl-1" || inst.TokenVersion != 1 {
 		t.Fatalf("installation %+v", inst)
 	}
 	for _, item := range env.db.Scan(t) {
@@ -136,7 +136,7 @@ func TestOAuthCallbackWithoutTemplateNeedsSetup(t *testing.T) {
 	env.connect(t, tokenResponse(nil))
 	inst, err := env.db.Store.GetInstallation(context.Background(), testBotID)
 	must(t, err)
-	if inst.Status != store.StatusNeedsSetup || inst.SetupError != "" {
+	if inst.Status != domain.StatusNeedsSetup || inst.SetupError != "" {
 		t.Fatalf("installation %+v", inst)
 	}
 }
@@ -147,7 +147,7 @@ func TestOAuthCallbackBrokenTemplateRecordsReason(t *testing.T) {
 	env.notion.RemoveProperty(tpl.LibraryDS, "Progress")
 	env.connect(t, tokenResponse("tpl-1"))
 	inst, _ := env.db.Store.GetInstallation(context.Background(), testBotID)
-	if inst.Status != store.StatusNeedsSetup || inst.SetupError != "property_missing:Progress" {
+	if inst.Status != domain.StatusNeedsSetup || inst.SetupError != "property_missing:Progress" {
 		t.Fatalf("installation %+v", inst)
 	}
 }
@@ -193,16 +193,16 @@ func TestOAuthReconnectWithoutTemplateKeepsDatabases(t *testing.T) {
 	tpl := env.notion.AddTemplate("tpl-1")
 	env.connect(t, tokenResponse("tpl-1"))
 	ctx := context.Background()
-	must(t, env.db.Store.SetInstallationStatus(ctx, testBotID, store.StatusRevoked, "", env.now))
-	_, err := env.db.Store.PushSegment(ctx, store.SegmentWrite{InstallationID: testBotID, DeviceID: "d", SegmentID: "00000000-0000-4000-8000-000000000001",
-		SessionID: "s", URLHash: store.URLHash("https://a.example/x"), Date: "2026-10-06", StartedAt: env.now, EndedAt: env.now.Add(time.Minute),
-		ActiveSeconds: 60, Article: store.ArticleMeta{CanonicalURL: "https://a.example/x", Source: "generic"}})
+	must(t, env.db.Store.SetInstallationStatus(ctx, testBotID, domain.StatusRevoked, "", env.now))
+	_, err := env.db.Store.PushSegment(ctx, domain.SegmentWrite{InstallationID: testBotID, DeviceID: "d", SegmentID: "00000000-0000-4000-8000-000000000001",
+		SessionID: "s", URLHash: domain.URLHash("https://a.example/x"), Date: "2026-10-06", StartedAt: env.now, EndedAt: env.now.Add(time.Minute),
+		ActiveSeconds: 60, Article: domain.ArticleMeta{CanonicalURL: "https://a.example/x", Source: "generic"}})
 	must(t, err)
 	env.queue.Drain()
 
 	env.connect(t, tokenResponse(nil))
 	inst, _ := env.db.Store.GetInstallation(ctx, testBotID)
-	if inst.Status != store.StatusActive || inst.LibraryDSID != tpl.LibraryDS || inst.TokenVersion != 2 {
+	if inst.Status != domain.StatusActive || inst.LibraryDSID != tpl.LibraryDS || inst.TokenVersion != 2 {
 		t.Fatalf("installation %+v", inst)
 	}
 	if msgs := env.queue.Messages(); len(msgs) != 2 {
@@ -222,7 +222,7 @@ func TestOAuthReconnectWithNewTemplateResyncsEverything(t *testing.T) {
 	tpl2 := env.notion.AddTemplate("tpl-2")
 	env.connect(t, tokenResponse("tpl-2"))
 	inst, _ := env.db.Store.GetInstallation(context.Background(), testBotID)
-	if inst.Status != store.StatusActive || inst.LibraryDSID != tpl2.LibraryDS {
+	if inst.Status != domain.StatusActive || inst.LibraryDSID != tpl2.LibraryDS {
 		t.Fatalf("installation %+v", inst)
 	}
 	if got := env.queue.Messages(); !reflect.DeepEqual(got, fullResync()) {
@@ -236,7 +236,7 @@ func TestOAuthReconnectSameDatabasesSkipsSyncedItems(t *testing.T) {
 	env.notion.AddTemplate("tpl-1")
 	env.connect(t, tokenResponse("tpl-1"))
 	env.seedSyncedRead()
-	must(t, env.db.Store.SetInstallationStatus(context.Background(), testBotID, store.StatusRevoked, "", env.now))
+	must(t, env.db.Store.SetInstallationStatus(context.Background(), testBotID, domain.StatusRevoked, "", env.now))
 	env.queue.Drain()
 
 	env.connect(t, tokenResponse(nil))
@@ -259,13 +259,13 @@ func TestOAuthCallbackResyncFailureNeedsSetupUntilReconnect(t *testing.T) {
 	env.connect(t, tokenResponse("tpl-2")) // still redirects with a code
 	inst, err := env.db.Store.GetInstallation(context.Background(), testBotID)
 	must(t, err)
-	if inst.Status != store.StatusNeedsSetup || inst.SetupError != "resync_failed" {
+	if inst.Status != domain.StatusNeedsSetup || inst.SetupError != "resync_failed" {
 		t.Fatalf("installation %+v", inst)
 	}
 
 	env.queue.Err = nil
 	env.connect(t, tokenResponse(nil))
-	if inst, _ = env.db.Store.GetInstallation(context.Background(), testBotID); inst.Status != store.StatusActive || inst.SetupError != "" {
+	if inst, _ = env.db.Store.GetInstallation(context.Background(), testBotID); inst.Status != domain.StatusActive || inst.SetupError != "" {
 		t.Fatalf("installation %+v", inst)
 	}
 	if got := env.queue.Messages(); !reflect.DeepEqual(got, fullResync()) {

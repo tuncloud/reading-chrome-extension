@@ -20,6 +20,8 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/labstack/echo/v4"
 
+	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/httpapi"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/notion/notiontest"
@@ -27,8 +29,6 @@ import (
 	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/setup"
-	"reading-tracker/backend/internal/store"
-	"reading-tracker/backend/internal/store/storetest"
 	"reading-tracker/backend/internal/worker"
 )
 
@@ -83,7 +83,7 @@ func segment(id string, start time.Time, secs int, progress float64, seq int) ma
 // system is the API, worker, queue and fake Notion wired together on one clock.
 type system struct {
 	t   *testing.T
-	db  *storetest.Env
+	db  *dynamotest.Env
 	ns  *notiontest.Server
 	tpl notiontest.Template
 	q   *queue.Recorder
@@ -93,7 +93,7 @@ type system struct {
 }
 
 func newSystem(t *testing.T) *system {
-	sys := &system{t: t, db: storetest.New(t), ns: notiontest.New(t), q: &queue.Recorder{}, now: time.Date(2026, 10, 6, 3, 0, 0, 0, time.UTC)}
+	sys := &system{t: t, db: dynamotest.New(t), ns: notiontest.New(t), q: &queue.Recorder{}, now: time.Date(2026, 10, 6, 3, 0, 0, 0, time.UTC)}
 	sys.tpl = sys.ns.AddTemplate("tpl-1")
 	clock := func() time.Time { return sys.now }
 	vars := map[string]string{
@@ -230,7 +230,7 @@ func TestDeletedLibraryRecoversAfterSetup(t *testing.T) {
 	sys.read(token, urlB, "00000000-0000-4000-8000-00000000000b")
 	deliver(t, sys.wk, sys.q)
 	inst, err := sys.db.Store.GetInstallation(context.Background(), "bot-e2e")
-	if err != nil || inst.Status != store.StatusNeedsSetup || inst.SetupError != "database_missing:Reading Library" {
+	if err != nil || inst.Status != domain.StatusNeedsSetup || inst.SetupError != "database_missing:Reading Library" {
 		t.Fatalf("installation %+v %v", inst, err)
 	}
 

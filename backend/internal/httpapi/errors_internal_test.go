@@ -6,20 +6,17 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/aws/smithy-go"
 	"github.com/labstack/echo/v4"
+
+	"reading-tracker/backend/internal/domain"
 )
 
 // Spec §2.0: a throttled DynamoDB read (requireDevice does three per request) is a
 // retryable 503 capacity_exceeded, not a 500.
 func TestToAPIErrorMapsThrottlingTo503(t *testing.T) {
 	cases := map[string]error{
-		"provisioned throughput": &types.ProvisionedThroughputExceededException{Message: aws.String("x")},
-		"wrapped":                fmt.Errorf("get device: %w", &types.ProvisionedThroughputExceededException{Message: aws.String("x")}),
-		"throttling":             &smithy.GenericAPIError{Code: "ThrottlingException", Message: "x"},
-		"request limit":          &smithy.GenericAPIError{Code: "RequestLimitExceeded", Message: "x"},
+		"sentinel": domain.ErrThrottled,
+		"wrapped":  fmt.Errorf("get profile: %w", fmt.Errorf("%w: slow down", domain.ErrThrottled)),
 	}
 	for name, err := range cases {
 		ae := toAPIError(err)

@@ -17,14 +17,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/labstack/echo/v4"
 
+	"reading-tracker/backend/internal/adapter/dynamo"
+	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/httpapi"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/notion/notiontest"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
-	"reading-tracker/backend/internal/store/storetest"
 )
 
 const (
@@ -36,7 +37,7 @@ var testVerifier = strings.Repeat("v", 64)
 
 type testEnv struct {
 	t      *testing.T
-	db     *storetest.Env
+	db     *dynamotest.Env
 	notion *notiontest.Server
 	queue  *queue.Recorder
 	cfg    *config.Config
@@ -48,7 +49,7 @@ type testEnv struct {
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
-	env := &testEnv{t: t, db: storetest.New(t), notion: notiontest.New(t), queue: &queue.Recorder{}, logs: &bytes.Buffer{},
+	env := &testEnv{t: t, db: dynamotest.New(t), notion: notiontest.New(t), queue: &queue.Recorder{}, logs: &bytes.Buffer{},
 		now: time.Date(2026, 10, 6, 3, 12, 0, 0, time.UTC)}
 	vars := map[string]string{
 		"APP_ENV": "test", "TABLE_NAME": env.db.Table, "QUEUE_URL": "local", "NOTION_CLIENT_ID": "cid",
@@ -127,25 +128,25 @@ func must(t *testing.T, err error) {
 func (env *testEnv) seedUser() (uid, token string) {
 	t, ctx := env.t, context.Background()
 	uid = "01J9ZK5USER00000000000001"
-	must(t, env.db.Store.CreateUser(ctx, uid, store.Profile{NotionUserID: "nuser-1", Name: "Tuan Do", CreatedAt: store.Timestamp(env.now)}))
+	must(t, env.db.Store.CreateUser(ctx, uid, domain.User{NotionUserID: "nuser-1", Name: "Tuan Do", CreatedAt: domain.Timestamp(env.now)}))
 	token, err := crypto.NewDeviceToken()
 	must(t, err)
-	must(t, env.db.Store.CreateDevice(ctx, uid, "dev-1", store.Device{Name: "MacBook Chrome",
-		TokenHMAC: crypto.TokenHMAC(env.cfg.DeviceTokenPepper, token), CreatedAt: store.Timestamp(env.now), LastSeenAt: store.Timestamp(env.now)}))
+	must(t, env.db.Store.CreateDevice(ctx, uid, "dev-1", domain.Device{Name: "MacBook Chrome",
+		TokenHMAC: crypto.TokenHMAC(env.cfg.DeviceTokenPepper, token), CreatedAt: domain.Timestamp(env.now), LastSeenAt: domain.Timestamp(env.now)}))
 	return uid, token
 }
 
 // seedInstallation stores an installation for uid with tokens sealed the way the callback seals them.
-func (env *testEnv) seedInstallation(uid, status string) *store.Installation {
+func (env *testEnv) seedInstallation(uid, status string) *domain.Installation {
 	t, ctx := env.t, context.Background()
 	tpl := env.notion.AddTemplate("tpl-1")
 	access, err := env.cfg.Keys.Seal([]byte("secret-access-token"), []byte(testBotID))
 	must(t, err)
 	refresh, err := env.cfg.Keys.Seal([]byte("secret-refresh-token"), []byte(testBotID))
 	must(t, err)
-	inst := &store.Installation{UserID: uid, WorkspaceID: "ws-1", WorkspaceName: "Tuan's Notion", Status: status,
-		AccessTokenEnc: access, RefreshTokenEnc: refresh, TokenVersion: 1, CreatedAt: store.Timestamp(env.now), UpdatedAt: store.Timestamp(env.now)}
-	if status == store.StatusActive {
+	inst := &domain.Installation{UserID: uid, WorkspaceID: "ws-1", WorkspaceName: "Tuan's Notion", Status: status,
+		AccessTokenEnc: access, RefreshTokenEnc: refresh, TokenVersion: 1, CreatedAt: domain.Timestamp(env.now), UpdatedAt: domain.Timestamp(env.now)}
+	if status == domain.StatusActive {
 		inst.ApplyDatabases(tpl.DBConfig())
 	}
 	must(t, env.db.Store.PutInstallation(ctx, testBotID, inst))
@@ -160,7 +161,7 @@ func (env *testEnv) setDeviceAttr(uid, deviceID, attr, value string) {
 	env.t.Helper()
 	_, err := env.db.DB.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
 		TableName:                 aws.String(env.db.Table),
-		Key:                       map[string]types.AttributeValue{"pk": &types.AttributeValueMemberS{Value: store.UserPK(uid)}, "sk": &types.AttributeValueMemberS{Value: store.DeviceSK(deviceID)}},
+		Key:                       map[string]types.AttributeValue{"pk": &types.AttributeValueMemberS{Value: dynamo.UserPK(uid)}, "sk": &types.AttributeValueMemberS{Value: dynamo.DeviceSK(deviceID)}},
 		UpdateExpression:          aws.String("SET #a = :v"),
 		ExpressionAttributeNames:  map[string]string{"#a": attr},
 		ExpressionAttributeValues: map[string]types.AttributeValue{":v": &types.AttributeValueMemberS{Value: value}},

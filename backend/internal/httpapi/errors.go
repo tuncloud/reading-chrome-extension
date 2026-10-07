@@ -9,7 +9,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"reading-tracker/backend/internal/store"
+	"reading-tracker/backend/internal/domain"
 )
 
 // apiError renders as {"error":{"code","message"}} (spec §2.0).
@@ -61,7 +61,7 @@ func toAPIError(err error) *apiError {
 			return &apiError{he.Code, "invalid_request", http.StatusText(he.Code)}
 		}
 	}
-	if store.IsThrottle(err) {
+	if errors.Is(err, domain.ErrThrottled) {
 		return errCapacity()
 	}
 	return &apiError{http.StatusInternalServerError, "internal", "internal error"}

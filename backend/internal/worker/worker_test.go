@@ -11,10 +11,11 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
+	"reading-tracker/backend/internal/adapter/dynamo"
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
 )
 
 // C21: after the first failure, it and every later message are reported failed.
@@ -168,7 +169,7 @@ func TestSessionRefreshInvalidGrantRevokes(t *testing.T) {
 	if err := s.call(ctx, searchCall(e)); !errors.Is(err, errAck) {
 		t.Fatalf("err %v", err)
 	}
-	if got, _ := e.db.Store.GetInstallation(ctx, testBot); got.Status != store.StatusRevoked {
+	if got, _ := e.db.Store.GetInstallation(ctx, testBot); got.Status != domain.StatusRevoked {
 		t.Fatalf("status %s", got.Status)
 	}
 }
@@ -184,7 +185,7 @@ func TestSessionStillUnauthorizedAfterRefreshRevokes(t *testing.T) {
 	if err := s.call(ctx, searchCall(e)); !errors.Is(err, errAck) {
 		t.Fatalf("err %v", err)
 	}
-	if got, _ := e.db.Store.GetInstallation(ctx, testBot); got.Status != store.StatusRevoked {
+	if got, _ := e.db.Store.GetInstallation(ctx, testBot); got.Status != domain.StatusRevoked {
 		t.Fatalf("status %s", got.Status)
 	}
 }
@@ -208,7 +209,7 @@ func TestRefreshReencryptsWithCurrentKey(t *testing.T) {
 
 // tokenWriteFailDB fails the first n token-rotation writes with a transient error.
 type tokenWriteFailDB struct {
-	store.API
+	dynamo.API
 	n int
 }
 
@@ -225,7 +226,7 @@ func (d *tokenWriteFailDB) UpdateItem(ctx context.Context, in *dynamodb.UpdateIt
 func TestSessionRefreshRetriesTokenWrite(t *testing.T) {
 	e := newEnv(t)
 	inst := e.seedInstallation("old-access", "old-refresh")
-	e.w.Store = store.New(&tokenWriteFailDB{API: e.db.DB, n: 2}, e.db.Table)
+	e.w.Store = dynamo.New(&tokenWriteFailDB{API: e.db.DB, n: 2}, e.db.Table)
 	e.ns.RejectToken("old-access")
 	e.ns.SetRefreshResponse(map[string]any{"access_token": "new-access", "refresh_token": "new-refresh"})
 
@@ -246,7 +247,7 @@ func TestSessionRefreshRetriesTokenWrite(t *testing.T) {
 func TestSessionRefreshTokenWriteGivesUpAfterThreeAttempts(t *testing.T) {
 	e := newEnv(t)
 	inst := e.seedInstallation("old-access", "old-refresh")
-	e.w.Store = store.New(&tokenWriteFailDB{API: e.db.DB, n: 3}, e.db.Table)
+	e.w.Store = dynamo.New(&tokenWriteFailDB{API: e.db.DB, n: 3}, e.db.Table)
 	e.ns.RejectToken("old-access")
 	e.ns.SetRefreshResponse(map[string]any{"access_token": "new-access", "refresh_token": "new-refresh"})
 

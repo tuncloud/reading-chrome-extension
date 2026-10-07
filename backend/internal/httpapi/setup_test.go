@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/notion/notiontest"
 	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/setup"
-	"reading-tracker/backend/internal/store"
 )
 
 const readURL = "https://a.example/1"
@@ -20,25 +20,25 @@ const readURL = "https://a.example/1"
 // already synced to Notion, as if the worker had processed them.
 func (env *testEnv) seedSyncedRead() {
 	t, ctx := env.t, context.Background()
-	_, err := env.db.Store.PushSegment(ctx, store.SegmentWrite{InstallationID: testBotID, DeviceID: "d",
-		SegmentID: "00000000-0000-4000-8000-000000000001", SessionID: "s", URLHash: store.URLHash(readURL), Date: "2026-10-06",
+	_, err := env.db.Store.PushSegment(ctx, domain.SegmentWrite{InstallationID: testBotID, DeviceID: "d",
+		SegmentID: "00000000-0000-4000-8000-000000000001", SessionID: "s", URLHash: domain.URLHash(readURL), Date: "2026-10-06",
 		StartedAt: env.now, EndedAt: env.now.Add(time.Minute), ActiveSeconds: 60, MaxProgress: 0.5,
-		Article: store.ArticleMeta{CanonicalURL: readURL, Source: "generic"}})
+		Article: domain.ArticleMeta{CanonicalURL: readURL, Source: "generic"}})
 	must(t, err)
-	must(t, env.db.Store.SetArticlePage(ctx, testBotID, store.URLHash(readURL), "page-old", "https://www.notion.so/page-old"))
-	must(t, env.db.Store.MarkArticleSynced(ctx, testBotID, store.URLHash(readURL), 1, false, env.now))
+	must(t, env.db.Store.SetArticlePage(ctx, testBotID, domain.URLHash(readURL), "page-old", "https://www.notion.so/page-old"))
+	must(t, env.db.Store.MarkArticleSynced(ctx, testBotID, domain.URLHash(readURL), 1, false, env.now))
 	must(t, env.db.Store.MarkDaySynced(ctx, testBotID, "2026-10-06", 1))
 }
 
 // fullResync is what a resync must enqueue for seedSyncedRead once the databases changed.
 func fullResync() []queue.Message {
-	return []queue.Message{queue.Article(testBotID, store.URLHash(readURL)), queue.Day(testBotID, "2026-10-06")}
+	return []queue.Message{queue.Article(testBotID, domain.URLHash(readURL)), queue.Day(testBotID, "2026-10-06")}
 }
 
 func TestSetupPagesSearchesNotionWithDecryptedToken(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusNeedsSetup)
+	env.seedInstallation(uid, domain.StatusNeedsSetup)
 	env.notion.SetSearchResults(map[string]any{"object": "page", "id": "p1", "url": "https://www.notion.so/p1",
 		"properties": map[string]any{"title": map[string]any{"id": "title", "type": "title", "title": []any{map[string]any{"plain_text": "Reading"}}}}})
 
@@ -61,7 +61,7 @@ func TestSetupPagesSearchesNotionWithDecryptedToken(t *testing.T) {
 func TestSetupPagesNotionUnauthorizedIsConflict(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusNeedsSetup)
+	env.seedInstallation(uid, domain.StatusNeedsSetup)
 	env.notion.RejectToken("secret-access-token")
 	if rec := env.do("GET", "/v1/setup/pages", nil, tok); rec.Code != 409 || errorCode(t, rec) != "conflict" {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
@@ -72,7 +72,7 @@ func TestSetupPagesNotionUnauthorizedIsConflict(t *testing.T) {
 func TestPostSetupCreatesDatabases(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusNeedsSetup)
+	env.seedInstallation(uid, domain.StatusNeedsSetup)
 	rec := env.do("POST", "/v1/setup", map[string]string{"parent_page_id": "parent-1"}, tok)
 	if rec.Code != 200 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
@@ -88,7 +88,7 @@ func TestPostSetupCreatesDatabases(t *testing.T) {
 		t.Fatalf("%d database creates", n)
 	}
 	inst, _ := env.db.Store.GetInstallation(context.Background(), testBotID)
-	if inst.Status != store.StatusActive || len(inst.Props) != 16 || inst.SetupError != "" {
+	if inst.Status != domain.StatusActive || len(inst.Props) != 16 || inst.SetupError != "" {
 		t.Fatalf("installation %+v", inst)
 	}
 }
@@ -96,7 +96,7 @@ func TestPostSetupCreatesDatabases(t *testing.T) {
 func TestPostSetupConflictWhenActive(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusActive)
+	env.seedInstallation(uid, domain.StatusActive)
 	if rec := env.do("POST", "/v1/setup", map[string]string{"parent_page_id": "p"}, tok); rec.Code != 409 {
 		t.Fatalf("%d", rec.Code)
 	}
@@ -105,7 +105,7 @@ func TestPostSetupConflictWhenActive(t *testing.T) {
 func TestPostSetupUnknownParentIsNotFound(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusNeedsSetup)
+	env.seedInstallation(uid, domain.StatusNeedsSetup)
 	env.notion.FailNext("POST", "/v1/databases", notiontest.Fail{Status: 404, Code: "object_not_found", Message: "no page"})
 	if rec := env.do("POST", "/v1/setup", map[string]string{"parent_page_id": "nope"}, tok); rec.Code != 404 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
@@ -115,7 +115,7 @@ func TestPostSetupUnknownParentIsNotFound(t *testing.T) {
 func TestPostSetupRequiresParent(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusNeedsSetup)
+	env.seedInstallation(uid, domain.StatusNeedsSetup)
 	if rec := env.do("POST", "/v1/setup", map[string]string{}, tok); rec.Code != 400 {
 		t.Fatalf("%d", rec.Code)
 	}
@@ -126,7 +126,7 @@ func TestPostSetupRequiresParent(t *testing.T) {
 func TestPostSetupBrokenExistingDatabaseIsConflict(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusNeedsSetup)
+	env.seedInstallation(uid, domain.StatusNeedsSetup)
 	broken := map[string]string{}
 	for name, typ := range notiontest.LibrarySchema {
 		if name != "Progress" {
@@ -142,7 +142,7 @@ func TestPostSetupBrokenExistingDatabaseIsConflict(t *testing.T) {
 	}
 	inst, err := env.db.Store.GetInstallation(context.Background(), testBotID)
 	must(t, err)
-	if inst.Status != store.StatusNeedsSetup {
+	if inst.Status != domain.StatusNeedsSetup {
 		t.Fatalf("installation status %q", inst.Status)
 	}
 }
@@ -152,10 +152,10 @@ func TestPostSetupBrokenExistingDatabaseIsConflict(t *testing.T) {
 func TestPostSetupAfterDeletedLibraryResyncsEverything(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	inst := env.seedInstallation(uid, store.StatusActive)
+	inst := env.seedInstallation(uid, domain.StatusActive)
 	env.seedSyncedRead()
 	env.notion.DeleteDataSource(inst.LibraryDSID)
-	must(t, env.db.Store.SetInstallationStatus(context.Background(), testBotID, store.StatusNeedsSetup, "database_missing:Reading Library", env.now))
+	must(t, env.db.Store.SetInstallationStatus(context.Background(), testBotID, domain.StatusNeedsSetup, "database_missing:Reading Library", env.now))
 
 	rec := env.do("POST", "/v1/setup", map[string]string{"parent_page_id": "parent-2"}, tok)
 	if rec.Code != 200 {
@@ -172,7 +172,7 @@ func TestPostSetupAfterDeletedLibraryResyncsEverything(t *testing.T) {
 func TestPostSetupResyncFailureNeedsSetupUntilRetried(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusNeedsSetup)
+	env.seedInstallation(uid, domain.StatusNeedsSetup)
 	env.seedSyncedRead()
 	env.queue.Err = errors.New("sqs down")
 
@@ -186,7 +186,7 @@ func TestPostSetupResyncFailureNeedsSetupUntilRetried(t *testing.T) {
 	}
 	inst, err := env.db.Store.GetInstallation(context.Background(), testBotID)
 	must(t, err)
-	if inst.Status != store.StatusNeedsSetup || inst.SetupError != "resync_failed" {
+	if inst.Status != domain.StatusNeedsSetup || inst.SetupError != "resync_failed" {
 		t.Fatalf("installation %+v", inst)
 	}
 	if !strings.Contains(env.logs.String(), "level=ERROR") {

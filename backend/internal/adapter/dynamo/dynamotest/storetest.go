@@ -1,5 +1,5 @@
-// Package storetest provisions throwaway tables on DynamoDB Local (`make ddb-up`).
-package storetest
+// Package dynamotest provisions throwaway tables on DynamoDB Local (`make ddb-up`).
+package dynamotest
 
 import (
 	"context"
@@ -14,12 +14,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
-	"reading-tracker/backend/internal/store"
+	"reading-tracker/backend/internal/adapter/dynamo"
 )
 
 // Env is one fresh table plus a Store bound to it.
 type Env struct {
-	Store *store.Store
+	Store *dynamo.Store
 	DB    *dynamodb.Client
 	Table string
 }
@@ -49,13 +49,13 @@ func New(t testing.TB) *Env {
 	name := fmt.Sprintf("reading-test-%d", rand.Int64())
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := store.CreateTable(ctx, db, name); err != nil {
+	if err := dynamo.CreateTable(ctx, db, name); err != nil {
 		t.Fatalf("DynamoDB Local not reachable at %s (run `make ddb-up`): %v", Endpoint(), err)
 	}
 	t.Cleanup(func() {
 		_, _ = db.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String(name)})
 	})
-	return &Env{Store: store.New(db, name), DB: db, Table: name}
+	return &Env{Store: dynamo.New(db, name), DB: db, Table: name}
 }
 
 // Scan returns every item in the table.

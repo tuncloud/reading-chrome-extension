@@ -4,9 +4,9 @@ import (
 	"math"
 	"strings"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/textutil"
-	"reading-tracker/backend/internal/store"
 )
 
 // Notion request limits (appendix §8 + request-limits reference).
@@ -18,7 +18,7 @@ const (
 )
 
 // isCompleted implements spec §2.13 step 2; once true it stays true.
-func isCompleted(a *store.Article, t config.Tracking) bool {
+func isCompleted(a *domain.Article, t config.Tracking) bool {
 	if a.Completed {
 		return true
 	}
@@ -33,7 +33,7 @@ func isCompleted(a *store.Article, t config.Tracking) bool {
 }
 
 // articleMetrics are the server-owned properties written on every update (§3.3).
-func articleMetrics(p map[string]string, a *store.Article, completed bool) map[string]any {
+func articleMetrics(p map[string]string, a *domain.Article, completed bool) map[string]any {
 	return map[string]any{
 		p["last_read"]: dateValue(a.LastReadAt),
 		p["minutes"]:   map[string]any{"number": roundMinutes(a.TotalSeconds)},
@@ -45,7 +45,7 @@ func articleMetrics(p map[string]string, a *store.Article, completed bool) map[s
 
 // articleCreateBody adds the write-once descriptive properties to the metrics.
 // It never includes Tags, Status, Rating or Notes (C1).
-func articleCreateBody(dsID string, p map[string]string, a *store.Article, completed bool) map[string]any {
+func articleCreateBody(dsID string, p map[string]string, a *domain.Article, completed bool) map[string]any {
 	props := articleMetrics(p, a, completed)
 	title := a.Title
 	if title == "" {

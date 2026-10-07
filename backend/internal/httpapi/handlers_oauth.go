@@ -11,10 +11,10 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/oklog/ulid/v2"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/setup"
-	"reading-tracker/backend/internal/store"
 )
 
 const (
@@ -44,7 +44,7 @@ func (h *handlers) oauthStart(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	st := store.OAuthState{ExtRedirect: ext, CodeChallenge: challenge}
+	st := domain.OAuthState{ExtRedirect: ext, CodeChallenge: challenge}
 	if err := h.Store.PutOAuthState(c.Request().Context(), state, st, h.Now().Add(oauthStateTTL)); err != nil {
 		return err
 	}
@@ -79,7 +79,7 @@ func (h *handlers) oauthCallback(c echo.Context) error {
 		return c.String(http.StatusBadRequest, linkExpired)
 	}
 	st, err := h.Store.ConsumeOAuthState(ctx, state, h.Now())
-	if errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, domain.ErrNotFound) {
 		return c.String(http.StatusBadRequest, linkExpired)
 	}
 	if err != nil {
@@ -108,7 +108,7 @@ func (h *handlers) oauthCallback(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	ac := store.AuthCode{UserID: uid, InstallationID: inst.ID(), CodeChallenge: st.CodeChallenge, ExtRedirect: st.ExtRedirect}
+	ac := domain.AuthCode{UserID: uid, InstallationID: inst.ID, CodeChallenge: st.CodeChallenge, ExtRedirect: st.ExtRedirect}
 	if err := h.Store.PutAuthCode(ctx, code, ac, h.Now().Add(authCodeTTL)); err != nil {
 		return err
 	}
@@ -137,24 +137,24 @@ func (h *handlers) resolveUser(ctx context.Context, tok *notion.TokenResponse) (
 		if perr == nil && prof.DeletedAt == "" {
 			return uid, nil
 		}
-		if perr != nil && !errors.Is(perr, store.ErrNotFound) {
+		if perr != nil && !errors.Is(perr, domain.ErrNotFound) {
 			return "", perr
 		}
-	case !errors.Is(err, store.ErrNotFound):
+	case !errors.Is(err, domain.ErrNotFound):
 		return "", err
 	}
 	uid = ulid.Make().String()
-	return uid, h.Store.CreateUser(ctx, uid, store.Profile{NotionUserID: nuid, Name: tok.Owner.User.Name,
-		Email: tok.Owner.User.Person.Email, CreatedAt: store.Timestamp(h.Now())})
+	return uid, h.Store.CreateUser(ctx, uid, domain.User{NotionUserID: nuid, Name: tok.Owner.User.Name,
+		Email: tok.Owner.User.Person.Email, CreatedAt: domain.Timestamp(h.Now())})
 }
 
 // upsertInstallation stores INST#<bot_id>/META with sealed tokens (C18) and decides
 // its status (§2.2 steps 5–7).
-func (h *handlers) upsertInstallation(ctx context.Context, uid string, tok *notion.TokenResponse) (*store.Installation, error) {
+func (h *handlers) upsertInstallation(ctx context.Context, uid string, tok *notion.TokenResponse) (*domain.Installation, error) {
 	now := h.Now()
 	inst, err := h.Store.GetInstallation(ctx, tok.BotID)
-	if errors.Is(err, store.ErrNotFound) {
-		inst, err = &store.Installation{CreatedAt: store.Timestamp(now)}, nil
+	if errors.Is(err, domain.ErrNotFound) {
+		inst, err = &domain.Installation{CreatedAt: domain.Timestamp(now)}, nil
 	}
 	if err != nil {
 		return nil, err
@@ -172,27 +172,27 @@ func (h *handlers) upsertInstallation(ctx context.Context, uid string, tok *noti
 	}
 	inst.TokenExpiresAt = ""
 	if tok.ExpiresIn > 0 {
-		inst.TokenExpiresAt = store.Timestamp(now.Add(time.Duration(tok.ExpiresIn) * time.Second))
+		inst.TokenExpiresAt = domain.Timestamp(now.Add(time.Duration(tok.ExpiresIn) * time.Second))
 	}
 	inst.TokenVersion++
 	inst.UserID, inst.WorkspaceID, inst.WorkspaceName, inst.WorkspaceIcon = uid, tok.WorkspaceID, tok.WorkspaceName, tok.WorkspaceIcon
-	inst.UpdatedAt, inst.SetupError = store.Timestamp(now), ""
+	inst.UpdatedAt, inst.SetupError = domain.Timestamp(now), ""
 
 	switch {
 	case tok.DuplicatedTemplateID != "":
 		inst.DuplicatedTemplateID = tok.DuplicatedTemplateID
 		db, err := h.setup.ResolveTemplate(ctx, tok.AccessToken, tok.DuplicatedTemplateID)
 		if err != nil {
-			inst.Status, inst.SetupError = store.StatusNeedsSetup, setup.Reason(err)
+			inst.Status, inst.SetupError = domain.StatusNeedsSetup, setup.Reason(err)
 			h.Log.WarnContext(ctx, "oauth: template resolution failed", "reason", inst.SetupError, "err", err)
 		} else {
 			inst.ApplyDatabases(db)
-			inst.Status = store.StatusActive
+			inst.Status = domain.StatusActive
 		}
 	case inst.HasDatabases():
-		inst.Status = store.StatusActive // reconnect to an already set-up workspace
+		inst.Status = domain.StatusActive // reconnect to an already set-up workspace
 	default:
-		inst.Status = store.StatusNeedsSetup
+		inst.Status = domain.StatusNeedsSetup
 	}
 
 	if err := h.Store.PutInstallation(ctx, tok.BotID, inst); err != nil {
@@ -204,7 +204,7 @@ func (h *handlers) upsertInstallation(ctx context.Context, uid string, tok *noti
 	if err := h.Store.SetActiveInstallation(ctx, uid, tok.BotID); err != nil {
 		return nil, err
 	}
-	if inst.Status == store.StatusActive {
+	if inst.Status == domain.StatusActive {
 		// New databases (e.g. a newly duplicated template) → re-send everything (scenario 10).
 		// So does recovering from a failed resync, which may have been a full one.
 		full := inst.LibraryDSID != prevLibrary || inst.DailyDSID != prevDaily || prevSetupError == setupErrResyncFailed

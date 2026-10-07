@@ -9,14 +9,14 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/setup"
-	"reading-tracker/backend/internal/store"
 )
 
 // installationToken loads the active installation and decrypts its access token.
 // The API never refreshes (C8): a Notion 401 here surfaces as 409 for the client to reconnect.
-func (h *handlers) installationToken(ctx context.Context, p *Principal) (*store.Installation, string, error) {
+func (h *handlers) installationToken(ctx context.Context, p *Principal) (*domain.Installation, string, error) {
 	inst, err := h.activeInstallation(ctx, p)
 	if err != nil {
 		return nil, "", err
@@ -24,10 +24,10 @@ func (h *handlers) installationToken(ctx context.Context, p *Principal) (*store.
 	if inst == nil {
 		return nil, "", errNoInstallation()
 	}
-	if inst.Status == store.StatusRevoked {
+	if inst.Status == domain.StatusRevoked {
 		return nil, "", errConflict("Notion connection revoked; reconnect")
 	}
-	tok, err := h.Config.Keys.Open(inst.AccessTokenEnc, []byte(inst.ID()))
+	tok, err := h.Config.Keys.Open(inst.AccessTokenEnc, []byte(inst.ID))
 	if err != nil {
 		return nil, "", err
 	}
@@ -83,7 +83,7 @@ func (h *handlers) postSetup(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if inst.Status == store.StatusActive {
+	if inst.Status == domain.StatusActive {
 		return errConflict("installation is already set up")
 	}
 	db, err := h.setup.CreateDatabases(ctx, token, req.ParentPageID)
@@ -95,11 +95,11 @@ func (h *handlers) postSetup(c echo.Context) error {
 		}
 		return notionErr(err)
 	}
-	if err := h.Store.SaveInstallationDatabases(ctx, inst.ID(), db, h.Now()); err != nil {
+	if err := h.Store.SaveInstallationDatabases(ctx, inst.ID, db, h.Now()); err != nil {
 		return err
 	}
 	inst.ApplyDatabases(db)
-	inst.Status, inst.SetupError = store.StatusActive, ""
+	inst.Status, inst.SetupError = domain.StatusActive, ""
 	// Setup always points the installation at (possibly) different databases, so pages
 	// synced into the old ones must be written again: full resync (scenario 10).
 	if err := h.resync(ctx, inst, true); err != nil {
@@ -119,20 +119,20 @@ const (
 // retrying briefly. If it still fails, the installation goes back to needs_setup with
 // setup_error "resync_failed" instead of staying active with a stranded backlog:
 // re-running setup or reconnecting re-runs the resync (a full one, see upsertInstallation).
-func (h *handlers) resync(ctx context.Context, inst *store.Installation, full bool) error {
+func (h *handlers) resync(ctx context.Context, inst *domain.Installation, full bool) error {
 	var err error
 	for attempt := 1; attempt <= resyncAttempts; attempt++ {
-		if err = h.setup.Resync(ctx, inst.ID(), full); err == nil {
+		if err = h.setup.Resync(ctx, inst.ID, full); err == nil {
 			return nil
 		}
 		if attempt < resyncAttempts {
 			h.Sleep(time.Duration(attempt) * resyncBackoff)
 		}
 	}
-	h.Log.ErrorContext(ctx, "resync enqueue failed; installation needs setup", "installation_id", inst.ID(), "err", err)
-	if err := h.Store.SetInstallationStatus(ctx, inst.ID(), store.StatusNeedsSetup, setupErrResyncFailed, h.Now()); err != nil {
+	h.Log.ErrorContext(ctx, "resync enqueue failed; installation needs setup", "installation_id", inst.ID, "err", err)
+	if err := h.Store.SetInstallationStatus(ctx, inst.ID, domain.StatusNeedsSetup, setupErrResyncFailed, h.Now()); err != nil {
 		return err
 	}
-	inst.Status, inst.SetupError = store.StatusNeedsSetup, setupErrResyncFailed
+	inst.Status, inst.SetupError = domain.StatusNeedsSetup, setupErrResyncFailed
 	return nil
 }

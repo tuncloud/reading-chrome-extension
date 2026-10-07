@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/crypto"
-	"reading-tracker/backend/internal/store"
 )
 
 type tokenResp struct {
@@ -104,7 +104,7 @@ func TestAuthTokenDefaultDeviceName(t *testing.T) {
 	r := decode[tokenResp](t, rec)
 	dev, err := env.db.Store.GetDevice(context.Background(), r.User.ID, r.DeviceID)
 	must(t, err)
-	if dev.Name != "Unknown device" || dev.RevokedAt != "" || dev.LastSeenAt != store.Timestamp(env.now) {
+	if dev.Name != "Unknown device" || dev.RevokedAt != "" || dev.LastSeenAt != domain.Timestamp(env.now) {
 		t.Fatalf("device %+v", dev)
 	}
 }

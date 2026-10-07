@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
-	"reading-tracker/backend/internal/store"
 )
 
 func TestConfigEndpoint(t *testing.T) {
@@ -41,7 +41,7 @@ func TestMeRejectsRevokedDeviceWithTokenLookupIntact(t *testing.T) {
 	if rec := env.do("GET", "/v1/me", nil, tok); rec.Code != 200 {
 		t.Fatalf("before revoke: %d %s", rec.Code, rec.Body)
 	}
-	env.setDeviceAttr(uid, "dev-1", "revoked_at", store.Timestamp(env.now))
+	env.setDeviceAttr(uid, "dev-1", "revoked_at", domain.Timestamp(env.now))
 	rec := env.do("GET", "/v1/me", nil, tok)
 	if rec.Code != 401 || errorCode(t, rec) != "unauthorized" {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
@@ -73,16 +73,16 @@ func TestAuthTouchesLastSeenOnlyWhenOverAnHourOld(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
 
-	stale := store.Timestamp(env.now.Add(-2 * time.Hour))
+	stale := domain.Timestamp(env.now.Add(-2 * time.Hour))
 	env.setDeviceAttr(uid, "dev-1", "last_seen_at", stale)
 	if rec := env.do("GET", "/v1/me", nil, tok); rec.Code != 200 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
-	if got := env.lastSeen(uid, "dev-1"); got != store.Timestamp(env.now) {
+	if got := env.lastSeen(uid, "dev-1"); got != domain.Timestamp(env.now) {
 		t.Fatalf("2h-old last_seen_at not refreshed: %s", got)
 	}
 
-	recent := store.Timestamp(env.now.Add(-30 * time.Minute))
+	recent := domain.Timestamp(env.now.Add(-30 * time.Minute))
 	env.setDeviceAttr(uid, "dev-1", "last_seen_at", recent)
 	if rec := env.do("GET", "/v1/me", nil, tok); rec.Code != 200 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
@@ -121,7 +121,7 @@ type meResponse struct {
 func TestMeReturnsUserDeviceAndInstallation(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusActive)
+	env.seedInstallation(uid, domain.StatusActive)
 	rec := env.do("GET", "/v1/me", nil, tok)
 	if rec.Code != 200 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
@@ -148,7 +148,7 @@ func TestMeWithoutInstallationReturnsNull(t *testing.T) {
 func TestNeedsSetupInstallationShowsErrorAndNullLibrary(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	inst := env.seedInstallation(uid, store.StatusNeedsSetup)
+	inst := env.seedInstallation(uid, domain.StatusNeedsSetup)
 	inst.SetupError = "template_not_found"
 	must(t, env.db.Store.PutInstallation(t.Context(), testBotID, inst))
 	rec := env.do("GET", "/v1/me", nil, tok)

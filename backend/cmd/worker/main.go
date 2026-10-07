@@ -7,10 +7,10 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 
+	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/app"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
 )
 
 func main() {
@@ -26,6 +26,6 @@ func main() {
 		os.Exit(1)
 	}
 	q := &queue.SQS{API: app.SQS(awsCfg), QueueURL: cfg.QueueURL}
-	w := app.Worker(cfg, store.New(app.DynamoDB(awsCfg), cfg.TableName), q, q, log)
+	w := app.Worker(cfg, dynamo.New(app.DynamoDB(awsCfg), cfg.TableName), q, q, log)
 	lambda.Start(w.HandleSQS)
 }

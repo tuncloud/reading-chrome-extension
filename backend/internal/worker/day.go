@@ -5,10 +5,10 @@ import (
 	"errors"
 	"slices"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/setup"
-	"reading-tracker/backend/internal/store"
 )
 
 // handleDay implements spec §2.14.
@@ -17,14 +17,14 @@ func (w *Worker) handleDay(ctx context.Context, m queue.Message) error {
 	if inst == nil || err != nil {
 		return err
 	}
-	day, err := w.Store.GetDay(ctx, inst.ID(), m.Date)
-	if errors.Is(err, store.ErrNotFound) {
+	day, err := w.Store.GetDay(ctx, inst.ID, m.Date)
+	if errors.Is(err, domain.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	pageIDs, err := w.dayArticlePages(ctx, inst.ID(), day.ArticleHashes)
+	pageIDs, err := w.dayArticlePages(ctx, inst.ID, day.ArticleHashes)
 	if err != nil {
 		return err
 	}
@@ -41,7 +41,7 @@ func (w *Worker) handleDay(ctx context.Context, m queue.Message) error {
 	} else {
 		err := sess.call(ctx, func(tok string) error { return w.updatePage(ctx, tok, day.NotionPageID, inst.DailyDSID, props) })
 		if isPageGone(err) {
-			if err := w.Store.ClearDayPage(ctx, inst.ID(), m.Date); err != nil {
+			if err := w.Store.ClearDayPage(ctx, inst.ID, m.Date); err != nil {
 				return err
 			}
 			return w.requeue(ctx, m)
@@ -50,7 +50,7 @@ func (w *Worker) handleDay(ctx context.Context, m queue.Message) error {
 			return err
 		}
 	}
-	return w.Store.MarkDaySynced(ctx, inst.ID(), m.Date, day.Version)
+	return w.Store.MarkDaySynced(ctx, inst.ID, m.Date, day.Version)
 }
 
 // dayArticlePages returns the Notion page ids of the day's articles that have one (≤ 100).
@@ -72,7 +72,7 @@ func (w *Worker) dayArticlePages(ctx context.Context, inst string, hashes []stri
 	return ids, nil
 }
 
-func dayMetrics(p map[string]string, d *store.Day, pageIDs []string) map[string]any {
+func dayMetrics(p map[string]string, d *domain.Day, pageIDs []string) map[string]any {
 	rel := make([]any, len(pageIDs))
 	for i, id := range pageIDs {
 		rel[i] = map[string]any{"id": id}
@@ -84,7 +84,7 @@ func dayMetrics(p map[string]string, d *store.Day, pageIDs []string) map[string]
 }
 
 // createDayPage adopts the row for this date if one exists, else creates it.
-func (w *Worker) createDayPage(ctx context.Context, sess *session, day *store.Day, metrics map[string]any) error {
+func (w *Worker) createDayPage(ctx context.Context, sess *session, day *domain.Day, metrics map[string]any) error {
 	inst := sess.inst
 	var page *notion.Page
 	err := sess.call(ctx, func(tok string) error {
@@ -128,5 +128,5 @@ func (w *Worker) createDayPage(ctx context.Context, sess *session, day *store.Da
 			return err
 		}
 	}
-	return w.Store.SetDayPage(ctx, inst.ID(), day.Date, page.ID)
+	return w.Store.SetDayPage(ctx, inst.ID, day.Date, page.ID)
 }

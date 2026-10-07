@@ -7,21 +7,21 @@ import (
 	"net/http"
 	"time"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/notion"
-	"reading-tracker/backend/internal/store"
 )
 
 // session runs Notion calls for one installation, refreshing the token once on 401.
 // FIFO grouping guarantees no concurrent refresh for the same installation (C8).
 type session struct {
 	w         *Worker
-	inst      *store.Installation
+	inst      *domain.Installation
 	token     string
 	refreshed bool
 }
 
-func (w *Worker) openSession(inst *store.Installation) (*session, error) {
-	tok, err := w.Keys.Open(inst.AccessTokenEnc, []byte(inst.ID()))
+func (w *Worker) openSession(inst *domain.Installation) (*session, error) {
+	tok, err := w.Keys.Open(inst.AccessTokenEnc, []byte(inst.ID))
 	if err != nil {
 		return nil, fmt.Errorf("worker: decrypt access token: %w", err)
 	}
@@ -53,7 +53,7 @@ func (s *session) refresh(ctx context.Context) error {
 	if s.inst.RefreshTokenEnc == "" {
 		return s.revoke(ctx)
 	}
-	aad := []byte(s.inst.ID())
+	aad := []byte(s.inst.ID)
 	rt, err := s.w.Keys.Open(s.inst.RefreshTokenEnc, aad)
 	if err != nil {
 		return fmt.Errorf("worker: decrypt refresh token: %w", err)
@@ -76,9 +76,9 @@ func (s *session) refresh(ctx context.Context) error {
 		}
 	}
 	err = s.persistTokens(ctx, access, refresh)
-	if errors.Is(err, store.ErrConditionFailed) {
+	if errors.Is(err, domain.ErrConditionFailed) {
 		// Someone rotated first; use what they stored.
-		fresh, gerr := s.w.Store.GetInstallation(ctx, s.inst.ID())
+		fresh, gerr := s.w.Store.GetInstallation(ctx, s.inst.ID)
 		if gerr != nil {
 			return gerr
 		}
@@ -110,22 +110,22 @@ const (
 func (s *session) persistTokens(ctx context.Context, access, refresh string) error {
 	var err error
 	for attempt := 1; attempt <= tokenWriteAttempts; attempt++ {
-		err = s.w.Store.UpdateInstallationTokens(ctx, s.inst.ID(), access, refresh, s.inst.TokenVersion, s.w.Now())
-		if err == nil || errors.Is(err, store.ErrConditionFailed) {
+		err = s.w.Store.UpdateInstallationTokens(ctx, s.inst.ID, access, refresh, s.inst.TokenVersion, s.w.Now())
+		if err == nil || errors.Is(err, domain.ErrConditionFailed) {
 			return err
 		}
 		if attempt < tokenWriteAttempts {
 			s.w.Sleep(time.Duration(attempt) * tokenWriteBackoff)
 		}
 	}
-	s.w.Log.ErrorContext(ctx, "worker: persisting rotated tokens failed", "installation_id", s.inst.ID(), "err", err)
+	s.w.Log.ErrorContext(ctx, "worker: persisting rotated tokens failed", "installation_id", s.inst.ID, "err", err)
 	return err
 }
 
 func (s *session) revoke(ctx context.Context) error {
-	if err := s.w.Store.SetInstallationStatus(ctx, s.inst.ID(), store.StatusRevoked, "", s.w.Now()); err != nil {
+	if err := s.w.Store.SetInstallationStatus(ctx, s.inst.ID, domain.StatusRevoked, "", s.w.Now()); err != nil {
 		return err
 	}
-	s.w.Log.WarnContext(ctx, "worker: installation revoked", "installation_id", s.inst.ID())
+	s.w.Log.WarnContext(ctx, "worker: installation revoked", "installation_id", s.inst.ID)
 	return errAck
 }

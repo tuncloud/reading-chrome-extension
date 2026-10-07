@@ -6,16 +6,16 @@ import (
 	"strings"
 	"time"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
 )
 
 // ErrAllThrottled means every valid segment hit DynamoDB throttling → 503.
 var ErrAllThrottled = errors.New("syncsvc: all segments throttled")
 
-// Pusher applies one segment exactly once (*store.Store).
+// Pusher applies one segment exactly once (*dynamo.Store).
 type Pusher interface {
-	PushSegment(ctx context.Context, w store.SegmentWrite) (store.PushOutcome, error)
+	PushSegment(ctx context.Context, w domain.SegmentWrite) (domain.PushOutcome, error)
 }
 
 type Service struct {
@@ -34,7 +34,7 @@ func (s *Service) Push(ctx context.Context, installationID, deviceID string, req
 	}
 	now := s.Now()
 
-	articles := map[string]store.ArticleMeta{}
+	articles := map[string]domain.ArticleMeta{}
 	invalid := map[string]bool{}
 	for _, a := range req.Articles {
 		key := strings.TrimSpace(a.CanonicalURL)
@@ -52,7 +52,7 @@ func (s *Service) Push(ctx context.Context, installationID, deviceID string, req
 	}
 
 	resp := newResponse()
-	var writes []store.SegmentWrite
+	var writes []domain.SegmentWrite
 	for _, seg := range req.Segments {
 		start, end, reason := validateSegment(seg, now)
 		key := strings.TrimSpace(seg.CanonicalURL)
@@ -67,9 +67,9 @@ func (s *Service) Push(ctx context.Context, installationID, deviceID string, req
 			resp.Rejected = append(resp.Rejected, Rejection{ID: seg.ID, Reason: reason})
 			continue
 		}
-		writes = append(writes, store.SegmentWrite{
+		writes = append(writes, domain.SegmentWrite{
 			InstallationID: installationID, DeviceID: deviceID, SegmentID: seg.ID, SessionID: seg.SessionID, Seq: seg.Seq,
-			URLHash: store.URLHash(meta.CanonicalURL), Date: start.In(loc).Format(time.DateOnly),
+			URLHash: domain.URLHash(meta.CanonicalURL), Date: start.In(loc).Format(time.DateOnly),
 			StartedAt: start, EndedAt: end, ActiveSeconds: seg.ActiveSeconds, MaxProgress: seg.MaxProgress, Article: meta,
 		})
 	}
@@ -81,14 +81,14 @@ func (s *Service) Push(ctx context.Context, installationID, deviceID string, req
 			return nil, err
 		}
 		switch out {
-		case store.PushAccepted:
+		case domain.PushAccepted:
 			resp.Accepted = append(resp.Accepted, w.SegmentID)
 			touched.add(w)
-		case store.PushDuplicate:
+		case domain.PushDuplicate:
 			// Re-enqueue: the push that committed it may have failed to enqueue (interpretation 3).
 			resp.Duplicate = append(resp.Duplicate, w.SegmentID)
 			touched.add(w)
-		case store.PushRetry:
+		case domain.PushRetry:
 			resp.Retry = append(resp.Retry, w.SegmentID)
 		}
 	}
@@ -109,7 +109,7 @@ type touchedKeys struct {
 	seen          map[string]bool
 }
 
-func (t *touchedKeys) add(w store.SegmentWrite) {
+func (t *touchedKeys) add(w domain.SegmentWrite) {
 	if t.seen == nil {
 		t.seen = map[string]bool{}
 	}

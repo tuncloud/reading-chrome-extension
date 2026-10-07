@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
 )
 
 // T17 AC: logout, then any call with the same token → 401.
@@ -26,11 +26,11 @@ func TestDeleteMeRevokesAllDevicesAndEnqueuesPurge(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusActive)
+	env.seedInstallation(uid, domain.StatusActive)
 	tok2, err := crypto.NewDeviceToken()
 	must(t, err)
-	must(t, env.db.Store.CreateDevice(ctx, uid, "dev-2", store.Device{Name: "Firefox", TokenHMAC: crypto.TokenHMAC(env.cfg.DeviceTokenPepper, tok2),
-		CreatedAt: store.Timestamp(env.now), LastSeenAt: store.Timestamp(env.now)}))
+	must(t, env.db.Store.CreateDevice(ctx, uid, "dev-2", domain.Device{Name: "Firefox", TokenHMAC: crypto.TokenHMAC(env.cfg.DeviceTokenPepper, tok2),
+		CreatedAt: domain.Timestamp(env.now), LastSeenAt: domain.Timestamp(env.now)}))
 
 	if rec := env.do("DELETE", "/v1/me", nil, tok); rec.Code != 202 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
@@ -40,7 +40,7 @@ func TestDeleteMeRevokesAllDevicesAndEnqueuesPurge(t *testing.T) {
 	}
 	// Every device is revoked, not just the caller's: the token lookups are gone and revoked_at is set.
 	for id, token := range map[string]string{"dev-1": tok, "dev-2": tok2} {
-		if _, err := env.db.Store.GetDeviceToken(ctx, crypto.TokenHMAC(env.cfg.DeviceTokenPepper, token)); !errors.Is(err, store.ErrNotFound) {
+		if _, err := env.db.Store.GetDeviceToken(ctx, crypto.TokenHMAC(env.cfg.DeviceTokenPepper, token)); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("%s token lookup survived: %v", id, err)
 		}
 		dev, err := env.db.Store.GetDevice(ctx, uid, id)
@@ -63,7 +63,7 @@ func TestDeleteMeRevokesAllDevicesAndEnqueuesPurge(t *testing.T) {
 func TestDeleteMeLeavesAccountIntactWhenEnqueueFails(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusActive)
+	env.seedInstallation(uid, domain.StatusActive)
 	env.queue.Err = errors.New("sqs down")
 
 	if rec := env.do("DELETE", "/v1/me", nil, tok); rec.Code != 500 {

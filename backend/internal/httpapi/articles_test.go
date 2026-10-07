@@ -3,10 +3,9 @@ package httpapi_test
 import (
 	"context"
 	"fmt"
+	"reading-tracker/backend/internal/domain"
 	"testing"
 	"time"
-
-	"reading-tracker/backend/internal/store"
 )
 
 type statusResp struct {
@@ -23,14 +22,14 @@ type statusResp struct {
 func TestArticlesStatus(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusActive)
+	env.seedInstallation(uid, domain.StatusActive)
 	ctx := context.Background()
 	u := "https://medium.com/p/8f3c2a1b9d4e"
-	_, err := env.db.Store.PushSegment(ctx, store.SegmentWrite{InstallationID: testBotID, DeviceID: "dev-1", SegmentID: "00000000-0000-4000-8000-000000000001",
-		SessionID: "s", URLHash: store.URLHash(u), Date: "2026-10-06", StartedAt: env.now, EndedAt: env.now.Add(time.Minute),
-		ActiveSeconds: 60, MaxProgress: 0.97, Article: store.ArticleMeta{CanonicalURL: u, Source: "medium"}})
+	_, err := env.db.Store.PushSegment(ctx, domain.SegmentWrite{InstallationID: testBotID, DeviceID: "dev-1", SegmentID: "00000000-0000-4000-8000-000000000001",
+		SessionID: "s", URLHash: domain.URLHash(u), Date: "2026-10-06", StartedAt: env.now, EndedAt: env.now.Add(time.Minute),
+		ActiveSeconds: 60, MaxProgress: 0.97, Article: domain.ArticleMeta{CanonicalURL: u, Source: "medium"}})
 	must(t, err)
-	must(t, env.db.Store.SetArticlePage(ctx, testBotID, store.URLHash(u), "page-1", "https://www.notion.so/page-1"))
+	must(t, env.db.Store.SetArticlePage(ctx, testBotID, domain.URLHash(u), "page-1", "https://www.notion.so/page-1"))
 
 	rec := env.do("POST", "/v1/articles/status", map[string]any{"canonical_urls": []string{u, "https://unknown.example/x"}}, tok)
 	if rec.Code != 200 {
@@ -39,7 +38,7 @@ func TestArticlesStatus(t *testing.T) {
 	body := decode[statusResp](t, rec)
 	got, ok := body.Items[u]
 	if len(body.Items) != 1 || !ok || got.TotalSeconds != 60 || got.MaxProgress != 0.97 || got.Sessions != 1 ||
-		got.NotionURL == nil || *got.NotionURL != "https://www.notion.so/page-1" || got.LastReadAt != store.Timestamp(env.now.Add(time.Minute)) {
+		got.NotionURL == nil || *got.NotionURL != "https://www.notion.so/page-1" || got.LastReadAt != domain.Timestamp(env.now.Add(time.Minute)) {
 		t.Fatalf("items %+v", body.Items)
 	}
 }
@@ -47,7 +46,7 @@ func TestArticlesStatus(t *testing.T) {
 func TestArticlesStatusLimit(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusActive)
+	env.seedInstallation(uid, domain.StatusActive)
 	urls := make([]string, 101)
 	for i := range urls {
 		urls[i] = fmt.Sprintf("https://example.com/%d", i)

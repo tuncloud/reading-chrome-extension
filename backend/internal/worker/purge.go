@@ -5,8 +5,9 @@ import (
 	"errors"
 	"slices"
 
+	"reading-tracker/backend/internal/adapter/dynamo"
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
 )
 
 // handlePurge deletes every DynamoDB item of a deleted user (spec §2.17). It never
@@ -19,7 +20,7 @@ func (w *Worker) handlePurge(ctx context.Context, m queue.Message) error {
 	}
 	prof, err := w.Store.GetProfile(ctx, uid)
 	switch {
-	case errors.Is(err, store.ErrNotFound):
+	case errors.Is(err, domain.ErrNotFound):
 		prof = nil
 	case err != nil:
 		return err
@@ -40,10 +41,10 @@ func (w *Worker) handlePurge(ctx context.Context, m queue.Message) error {
 		if err == nil && inst.UserID != uid {
 			continue
 		}
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
+		if err != nil && !errors.Is(err, domain.ErrNotFound) {
 			return err
 		}
-		if err := w.purgePartition(ctx, store.InstPK(id)); err != nil {
+		if err := w.purgePartition(ctx, dynamo.InstPK(id)); err != nil {
 			return err
 		}
 	}
@@ -62,7 +63,7 @@ func (w *Worker) handlePurge(ctx context.Context, m queue.Message) error {
 			return err
 		}
 	}
-	return w.purgePartition(ctx, store.UserPK(uid))
+	return w.purgePartition(ctx, dynamo.UserPK(uid))
 }
 
 func (w *Worker) purgePartition(ctx context.Context, pk string) error {

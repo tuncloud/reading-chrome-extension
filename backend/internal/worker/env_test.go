@@ -12,13 +12,13 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
+	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/notion/notiontest"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
-	"reading-tracker/backend/internal/store/storetest"
 )
 
 var (
@@ -41,7 +41,7 @@ func (f *fakeVisibility) ChangeVisibility(_ context.Context, _ string, d time.Du
 type wenv struct {
 	t      *testing.T
 	w      *Worker
-	db     *storetest.Env
+	db     *dynamotest.Env
 	ns     *notiontest.Server
 	q      *queue.Recorder
 	vis    *fakeVisibility
@@ -70,7 +70,7 @@ func newEnvWithKeys(t *testing.T, keys string) *wenv {
 	must(t, err)
 	pub, err := config.LoadPublic("")
 	must(t, err)
-	e := &wenv{t: t, db: storetest.New(t), ns: notiontest.New(t), q: &queue.Recorder{}, vis: &fakeVisibility{},
+	e := &wenv{t: t, db: dynamotest.New(t), ns: notiontest.New(t), q: &queue.Recorder{}, vis: &fakeVisibility{},
 		keys: kr, now: testNow, logs: &bytes.Buffer{}}
 	e.tpl = e.ns.AddTemplate("tpl-1")
 	e.w = New(Deps{
@@ -88,12 +88,12 @@ func newEnvWithKeys(t *testing.T, keys string) *wenv {
 	return e
 }
 
-func (e *wenv) seedInstallation(access, refresh string) *store.Installation {
+func (e *wenv) seedInstallation(access, refresh string) *domain.Installation {
 	return e.seedInstallationWith(e.keys, access, refresh)
 }
 
 // seedInstallationWith stores an active installation whose tokens are sealed by kr.
-func (e *wenv) seedInstallationWith(kr *crypto.Keyring, access, refresh string) *store.Installation {
+func (e *wenv) seedInstallationWith(kr *crypto.Keyring, access, refresh string) *domain.Installation {
 	e.t.Helper()
 	a, err := kr.Seal([]byte(access), []byte(testBot))
 	must(e.t, err)
@@ -102,25 +102,25 @@ func (e *wenv) seedInstallationWith(kr *crypto.Keyring, access, refresh string) 
 		r, err = kr.Seal([]byte(refresh), []byte(testBot))
 		must(e.t, err)
 	}
-	inst := &store.Installation{UserID: "u1", WorkspaceName: "WS", Status: store.StatusActive, AccessTokenEnc: a,
-		RefreshTokenEnc: r, TokenVersion: 1, CreatedAt: store.Timestamp(e.now), UpdatedAt: store.Timestamp(e.now)}
+	inst := &domain.Installation{UserID: "u1", WorkspaceName: "WS", Status: domain.StatusActive, AccessTokenEnc: a,
+		RefreshTokenEnc: r, TokenVersion: 1, CreatedAt: domain.Timestamp(e.now), UpdatedAt: domain.Timestamp(e.now)}
 	inst.ApplyDatabases(e.tpl.DBConfig())
 	must(e.t, e.db.Store.PutInstallation(ctx, testBot, inst))
 	return inst
 }
 
 func (e *wenv) read(url string, seq, secs int, progress float64) {
-	e.readMeta(store.ArticleMeta{CanonicalURL: url, Source: "medium", Title: "Designing Idempotent APIs", Author: "Jane Doe",
+	e.readMeta(domain.ArticleMeta{CanonicalURL: url, Source: "medium", Title: "Designing Idempotent APIs", Author: "Jane Doe",
 		SiteName: "Better Programming", WordCount: 1000}, seq, secs, progress)
 }
 
 // readMeta records one new segment of secs active seconds starting at e.now, then advances e.now.
-func (e *wenv) readMeta(meta store.ArticleMeta, seq, secs int, progress float64) {
+func (e *wenv) readMeta(meta domain.ArticleMeta, seq, secs int, progress float64) {
 	e.t.Helper()
 	e.segs++
-	_, err := e.db.Store.PushSegment(ctx, store.SegmentWrite{InstallationID: testBot, DeviceID: "d1",
+	_, err := e.db.Store.PushSegment(ctx, domain.SegmentWrite{InstallationID: testBot, DeviceID: "d1",
 		SegmentID: fmt.Sprintf("00000000-0000-4000-8000-%012d", e.segs), SessionID: "s1", Seq: seq,
-		URLHash: store.URLHash(meta.CanonicalURL), Date: "2026-10-06", StartedAt: e.now,
+		URLHash: domain.URLHash(meta.CanonicalURL), Date: "2026-10-06", StartedAt: e.now,
 		EndedAt: e.now.Add(time.Duration(secs) * time.Second), ActiveSeconds: secs, MaxProgress: progress, Article: meta})
 	must(e.t, err)
 	e.now = e.now.Add(time.Duration(secs) * time.Second)

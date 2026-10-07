@@ -8,9 +8,9 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/oklog/ulid/v2"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/platform/textutil"
-	"reading-tracker/backend/internal/store"
 )
 
 type tokenRequest struct {
@@ -32,7 +32,7 @@ func (h *handlers) authToken(c echo.Context) error {
 	}
 	now := h.Now()
 	ac, err := h.Store.ConsumeAuthCode(ctx, req.Code, now)
-	if errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, domain.ErrNotFound) {
 		return errInvalidGrant()
 	}
 	if err != nil {
@@ -46,8 +46,8 @@ func (h *handlers) authToken(c echo.Context) error {
 		return err
 	}
 	deviceID := ulid.Make().String()
-	dev := store.Device{Name: deviceName(req.DeviceName), TokenHMAC: crypto.TokenHMAC(h.Config.DeviceTokenPepper, token),
-		CreatedAt: store.Timestamp(now), LastSeenAt: store.Timestamp(now)}
+	dev := domain.Device{Name: deviceName(req.DeviceName), TokenHMAC: crypto.TokenHMAC(h.Config.DeviceTokenPepper, token),
+		CreatedAt: domain.Timestamp(now), LastSeenAt: domain.Timestamp(now)}
 	if err := h.Store.CreateDevice(ctx, ac.UserID, deviceID, dev); err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func (h *handlers) authToken(c echo.Context) error {
 		return err
 	}
 	inst, err := h.Store.GetInstallation(ctx, ac.InstallationID)
-	if errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, domain.ErrNotFound) {
 		inst, err = nil, nil
 	}
 	if err != nil {

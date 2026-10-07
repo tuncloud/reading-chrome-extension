@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
 	"reading-tracker/backend/internal/syncsvc"
 )
 
@@ -26,22 +26,22 @@ const (
 type fakePusher struct {
 	seen     map[string]bool
 	throttle map[string]bool
-	got      []store.SegmentWrite
+	got      []domain.SegmentWrite
 }
 
-func (f *fakePusher) PushSegment(_ context.Context, w store.SegmentWrite) (store.PushOutcome, error) {
+func (f *fakePusher) PushSegment(_ context.Context, w domain.SegmentWrite) (domain.PushOutcome, error) {
 	f.got = append(f.got, w)
 	if f.throttle[w.SegmentID] {
-		return store.PushRetry, nil
+		return domain.PushRetry, nil
 	}
 	if f.seen == nil {
 		f.seen = map[string]bool{}
 	}
 	if f.seen[w.SegmentID] {
-		return store.PushDuplicate, nil
+		return domain.PushDuplicate, nil
 	}
 	f.seen[w.SegmentID] = true
-	return store.PushAccepted, nil
+	return domain.PushAccepted, nil
 }
 
 func newService() (*syncsvc.Service, *fakePusher, *queue.Recorder) {
@@ -94,7 +94,7 @@ func TestPushEnqueuesOncePerKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := rec.Messages()
-	want := []queue.Message{queue.Article(bot, store.URLHash(artURL)), queue.Article(bot, store.URLHash(other)), queue.Day(bot, "2026-10-06")}
+	want := []queue.Message{queue.Article(bot, domain.URLHash(artURL)), queue.Article(bot, domain.URLHash(other)), queue.Day(bot, "2026-10-06")}
 	if len(got) != len(want) {
 		t.Fatalf("got %+v", got)
 	}
@@ -215,7 +215,7 @@ func TestPushNormalizesOffsetTimestamps(t *testing.T) {
 	if _, err := svc.Push(ctx, bot, "dev-1", req); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.Timestamp(p.got[0].StartedAt); got != store.Timestamp(now.Add(-time.Hour)) {
+	if got := domain.Timestamp(p.got[0].StartedAt); got != domain.Timestamp(now.Add(-time.Hour)) {
 		t.Fatalf("started %s", got)
 	}
 }

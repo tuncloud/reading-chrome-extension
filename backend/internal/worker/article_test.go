@@ -5,14 +5,14 @@ import (
 	"strings"
 	"testing"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/notion/notiontest"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/setup"
-	"reading-tracker/backend/internal/store"
 )
 
-func articleMsg() queue.Message { return queue.Article(testBot, store.URLHash(artURL)) }
+func articleMsg() queue.Message { return queue.Article(testBot, domain.URLHash(artURL)) }
 
 func (e *wenv) libraryPages() []*notiontest.Page { return e.ns.Pages(e.tpl.LibraryDS) }
 
@@ -25,9 +25,9 @@ func (e *wenv) onlyLibraryPage() *notiontest.Page {
 	return pages[0]
 }
 
-func (e *wenv) article(url string) *store.Article {
+func (e *wenv) article(url string) *domain.Article {
 	e.t.Helper()
-	a, err := e.db.Store.GetArticle(ctx, testBot, store.URLHash(url))
+	a, err := e.db.Store.GetArticle(ctx, testBot, domain.URLHash(url))
 	must(e.t, err)
 	return a
 }
@@ -108,7 +108,7 @@ func TestArticleAdoptedPageGoneIsRecreated(t *testing.T) {
 	}
 	inst, err := e.db.Store.GetInstallation(ctx, testBot)
 	must(t, err)
-	if inst.Status != store.StatusActive {
+	if inst.Status != domain.StatusActive {
 		t.Fatalf("installation %+v", inst)
 	}
 	pages := e.libraryPages()
@@ -207,7 +207,7 @@ func TestArticleDeletedLibraryNeedsSetup(t *testing.T) {
 		t.Fatalf("failures %+v", f)
 	}
 	inst, _ := e.db.Store.GetInstallation(ctx, testBot)
-	if inst.Status != store.StatusNeedsSetup || inst.SetupError != "database_missing:Reading Library" {
+	if inst.Status != domain.StatusNeedsSetup || inst.SetupError != "database_missing:Reading Library" {
 		t.Fatalf("installation %+v", inst)
 	}
 }
@@ -215,7 +215,7 @@ func TestArticleDeletedLibraryNeedsSetup(t *testing.T) {
 func TestArticleSkippedWhenInstallationNotActive(t *testing.T) {
 	e := newEnv(t)
 	e.seedInstallation("tok", "rt")
-	must(t, e.db.Store.SetInstallationStatus(ctx, testBot, store.StatusRevoked, "", e.now))
+	must(t, e.db.Store.SetInstallationStatus(ctx, testBot, domain.StatusRevoked, "", e.now))
 	e.read(artURL, 0, 120, 0.5)
 	if f := e.handle(articleMsg()); len(f) != 0 || len(e.ns.Requests()) != 0 {
 		t.Fatalf("failures %+v requests %d", f, len(e.ns.Requests()))
@@ -227,8 +227,8 @@ func TestArticleLongURLAndCommaSiteStillCreate(t *testing.T) {
 	e := newEnv(t)
 	e.seedInstallation("tok", "rt")
 	long := "https://example.com/" + strings.Repeat("a", 2001)
-	e.readMeta(store.ArticleMeta{CanonicalURL: long, Source: "generic", SiteName: "Better Programming, Inc", WordCount: 0}, 0, 120, 0.5)
-	if f := e.handle(queue.Article(testBot, store.URLHash(long))); len(f) != 0 {
+	e.readMeta(domain.ArticleMeta{CanonicalURL: long, Source: "generic", SiteName: "Better Programming, Inc", WordCount: 0}, 0, 120, 0.5)
+	if f := e.handle(queue.Article(testBot, domain.URLHash(long))); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
 	}
 	pg := e.onlyLibraryPage()
@@ -246,14 +246,14 @@ func TestArticleLongURLAndCommaSiteStillCreate(t *testing.T) {
 func TestCompletedRule(t *testing.T) {
 	tr := config.Tracking{CompleteProgress: 0.9, CompleteTimeRatio: 0.3, WordsPerMinute: 230}
 	cases := []struct {
-		a    store.Article
+		a    domain.Article
 		want bool
 	}{
-		{store.Article{MaxProgress: 0.95, WordCount: 1000, TotalSeconds: 100}, true}, // 100 ≥ 0.3 × 260.9
-		{store.Article{MaxProgress: 0.95, WordCount: 1000, TotalSeconds: 50}, false}, // skimmed
-		{store.Article{MaxProgress: 0.95, WordCount: 0, TotalSeconds: 5}, true},      // unknown length
-		{store.Article{MaxProgress: 0.5, WordCount: 0, TotalSeconds: 999}, false},
-		{store.Article{MaxProgress: 0.1, Completed: true}, true}, // sticky
+		{domain.Article{MaxProgress: 0.95, WordCount: 1000, TotalSeconds: 100}, true}, // 100 ≥ 0.3 × 260.9
+		{domain.Article{MaxProgress: 0.95, WordCount: 1000, TotalSeconds: 50}, false}, // skimmed
+		{domain.Article{MaxProgress: 0.95, WordCount: 0, TotalSeconds: 5}, true},      // unknown length
+		{domain.Article{MaxProgress: 0.5, WordCount: 0, TotalSeconds: 999}, false},
+		{domain.Article{MaxProgress: 0.1, Completed: true}, true}, // sticky
 	}
 	for i, c := range cases {
 		if got := isCompleted(&c.a, tr); got != c.want {
@@ -272,7 +272,7 @@ func TestArticlePageInOldLibraryIsRecreated(t *testing.T) {
 	stale := e.ns.AddPage(old.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
 	e.ns.DeleteDataSource(old.LibraryDS)
 	e.read(artURL, 0, 120, 0.5)
-	must(t, e.db.Store.SetArticlePage(ctx, testBot, store.URLHash(artURL), stale.ID, stale.URL))
+	must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), stale.ID, stale.URL))
 
 	if f := e.handle(articleMsg()); len(f) != 0 {
 		t.Fatalf("failures %+v", f)

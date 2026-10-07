@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/textutil"
-	"reading-tracker/backend/internal/store"
 )
 
 // Segment rejection reasons.
@@ -69,13 +69,13 @@ func checkEnvelope(req *PushRequest) (*time.Location, error) {
 
 // normalizeArticle trims and bounds an article. Identity fields (url, source,
 // word_count) must be valid; descriptive text is truncated (interpretation 2).
-func normalizeArticle(a Article) (store.ArticleMeta, bool) {
+func normalizeArticle(a Article) (domain.ArticleMeta, bool) {
 	u := strings.TrimSpace(a.CanonicalURL)
 	src := strings.TrimSpace(a.Source)
 	if !validURL(u) || !sourceRE.MatchString(src) || a.WordCount < 0 || a.WordCount > maxWordCount {
-		return store.ArticleMeta{}, false
+		return domain.ArticleMeta{}, false
 	}
-	return store.ArticleMeta{
+	return domain.ArticleMeta{
 		CanonicalURL: u,
 		Source:       src,
 		Title:        textutil.Truncate(strings.TrimSpace(a.Title), maxTitleRunes),

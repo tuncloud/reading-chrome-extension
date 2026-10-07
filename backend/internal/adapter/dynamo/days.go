@@ -1,18 +1,20 @@
-package store
+package dynamo
 
 import (
 	"context"
 	"errors"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
+	"reading-tracker/backend/internal/domain"
 )
 
-func (s *Store) GetDay(ctx context.Context, inst, date string) (*Day, error) {
-	var d Day
-	if err := s.get(ctx, InstPK(inst), DaySK(date), &d); err != nil {
+func (s *Store) GetDay(ctx context.Context, inst, date string) (*domain.Day, error) {
+	var r dayRecord
+	if err := s.get(ctx, InstPK(inst), DaySK(date), &r); err != nil {
 		return nil, err
 	}
-	return &d, nil
+	return r.toDomain(), nil
 }
 
 func (s *Store) SetDayPage(ctx context.Context, inst, date, pageID string) error {
@@ -28,7 +30,7 @@ func (s *Store) MarkDaySynced(ctx context.Context, inst, date string, version in
 	err := s.update(ctx, InstPK(inst), DaySK(date), "SET #sv = :v",
 		"attribute_exists(pk) AND (attribute_not_exists(#sv) OR #sv < :v)",
 		map[string]string{"#sv": "notion_synced_version"}, map[string]types.AttributeValue{":v": numI(version)})
-	if errors.Is(err, ErrConditionFailed) {
+	if errors.Is(err, domain.ErrConditionFailed) {
 		return nil
 	}
 	return err

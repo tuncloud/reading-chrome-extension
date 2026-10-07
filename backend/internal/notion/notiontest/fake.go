@@ -17,8 +17,8 @@ import (
 	"sync"
 	"testing"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/setup"
-	"reading-tracker/backend/internal/store"
 )
 
 type Request struct {
@@ -67,7 +67,7 @@ func PropID(name string) string { return "id-" + strings.ReplaceAll(strings.ToLo
 type Template struct{ ID, LibraryDB, LibraryDS, DailyDB, DailyDS string }
 
 // DBConfig is what template resolution should produce for this template.
-func (t Template) DBConfig() store.DBConfig {
+func (t Template) DBConfig() domain.DBConfig {
 	props := map[string]string{}
 	for _, p := range setup.LibraryProps {
 		props[p.Key] = PropID(p.Name)
@@ -75,7 +75,7 @@ func (t Template) DBConfig() store.DBConfig {
 	for _, p := range setup.DailyProps {
 		props[p.Key] = PropID(p.Name)
 	}
-	return store.DBConfig{LibraryDBID: t.LibraryDB, LibraryDSID: t.LibraryDS, LibraryURL: "https://www.notion.so/" + t.LibraryDB,
+	return domain.DBConfig{LibraryDBID: t.LibraryDB, LibraryDSID: t.LibraryDS, LibraryURL: "https://www.notion.so/" + t.LibraryDB,
 		DailyDBID: t.DailyDB, DailyDSID: t.DailyDS, Props: props}
 }
 

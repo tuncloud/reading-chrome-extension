@@ -20,7 +20,7 @@ func (h *handlers) syncPush(c echo.Context) error {
 	if err := decodeJSON(c, &req); err != nil {
 		return err
 	}
-	resp, err := h.sync.Push(c.Request().Context(), p.InstallationID(), p.Device.ID(), req)
+	resp, err := h.sync.Push(c.Request().Context(), p.InstallationID(), p.Device.ID, req)
 	var env *syncsvc.EnvelopeError
 	switch {
 	case errors.As(err, &env):

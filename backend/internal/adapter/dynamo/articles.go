@@ -1,4 +1,4 @@
-package store
+package dynamo
 
 import (
 	"context"
@@ -9,22 +9,24 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
+	"reading-tracker/backend/internal/domain"
 )
 
 const batchGetLimit = 100
 
-func (s *Store) GetArticle(ctx context.Context, inst, hash string) (*Article, error) {
-	var a Article
-	if err := s.get(ctx, InstPK(inst), ArticleSK(hash), &a); err != nil {
+func (s *Store) GetArticle(ctx context.Context, inst, hash string) (*domain.Article, error) {
+	var r articleRecord
+	if err := s.get(ctx, InstPK(inst), ArticleSK(hash), &r); err != nil {
 		return nil, err
 	}
-	return &a, nil
+	return r.toDomain(), nil
 }
 
 // BatchGetArticles loads ART items keyed by hash, ≤100 keys per call, retrying
 // UnprocessedKeys with back-off. Missing articles are absent from the map.
-func (s *Store) BatchGetArticles(ctx context.Context, inst string, hashes []string) (map[string]*Article, error) {
-	out := map[string]*Article{}
+func (s *Store) BatchGetArticles(ctx context.Context, inst string, hashes []string) (map[string]*domain.Article, error) {
+	out := map[string]*domain.Article{}
 	for start := 0; start < len(hashes); start += batchGetLimit {
 		chunk := hashes[start:min(start+batchGetLimit, len(hashes))]
 		keys := make([]map[string]types.AttributeValue, 0, len(chunk))
@@ -48,11 +50,12 @@ func (s *Store) BatchGetArticles(ctx context.Context, inst string, hashes []stri
 				return nil, err
 			}
 			for _, item := range res.Responses[s.table] {
-				var a Article
-				if err := attributevalue.UnmarshalMap(item, &a); err != nil {
+				var r articleRecord
+				if err := attributevalue.UnmarshalMap(item, &r); err != nil {
 					return nil, err
 				}
-				out[a.Hash()] = &a
+				a := r.toDomain()
+				out[a.Hash] = a
 			}
 			req = res.UnprocessedKeys
 		}
@@ -77,8 +80,8 @@ func (s *Store) MarkArticleSynced(ctx context.Context, inst, hash string, versio
 	err := s.update(ctx, InstPK(inst), ArticleSK(hash), "SET #sv = :v, #sa = :now, #c = :c",
 		"attribute_exists(pk) AND (attribute_not_exists(#sv) OR #sv < :v)",
 		map[string]string{"#sv": "notion_synced_version", "#sa": "notion_synced_at", "#c": "completed"},
-		map[string]types.AttributeValue{":v": numI(version), ":now": str(Timestamp(now)), ":c": boolV(completed)})
-	if errors.Is(err, ErrConditionFailed) {
+		map[string]types.AttributeValue{":v": numI(version), ":now": str(domain.Timestamp(now)), ":c": boolV(completed)})
+	if errors.Is(err, domain.ErrConditionFailed) {
 		return nil
 	}
 	return err

@@ -11,7 +11,7 @@ import (
 // logout serves POST /v1/auth/logout (spec §2.17).
 func (h *handlers) logout(c echo.Context) error {
 	p := principal(c)
-	if err := h.Store.RevokeDevice(c.Request().Context(), p.UserID, p.Device.ID(), p.TokenHMAC, h.Now()); err != nil {
+	if err := h.Store.RevokeDevice(c.Request().Context(), p.UserID, p.Device.ID, p.TokenHMAC, h.Now()); err != nil {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)
@@ -46,7 +46,7 @@ func (h *handlers) deleteMe(c echo.Context) error {
 		if d.RevokedAt != "" {
 			continue
 		}
-		if err := h.Store.RevokeDevice(ctx, p.UserID, d.ID(), d.TokenHMAC, now); err != nil {
+		if err := h.Store.RevokeDevice(ctx, p.UserID, d.ID, d.TokenHMAC, now); err != nil {
 			return err
 		}
 	}

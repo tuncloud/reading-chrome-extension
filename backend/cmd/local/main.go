@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"time"
 
+	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/app"
 	"reading-tracker/backend/internal/httpapi"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
 )
 
 func main() {
@@ -30,11 +30,11 @@ func main() {
 		os.Exit(1)
 	}
 	ddb := app.DynamoDB(awsCfg)
-	if err := store.CreateTable(ctx, ddb, cfg.TableName); err != nil {
+	if err := dynamo.CreateTable(ctx, ddb, cfg.TableName); err != nil {
 		log.Error("create table (is `make ddb-up` running?)", "err", err)
 		os.Exit(1)
 	}
-	st := store.New(ddb, cfg.TableName)
+	st := dynamo.New(ddb, cfg.TableName)
 	delay := localDelay(cfg)
 	if delay < cfg.DebounceBucket {
 		log.Warn("LOCAL_QUEUE_DELAY_SECONDS is below DEBOUNCE_BUCKET_SECONDS; the last updates of a bucket may not reach Notion until the next read (C5: D >= B)",

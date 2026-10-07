@@ -9,9 +9,10 @@ import (
 	"net/http"
 	"time"
 
+	"reading-tracker/backend/internal/adapter/dynamo"
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
 )
 
 // Error is a setup failure whose Reason is stored in INST.setup_error.
@@ -30,7 +31,7 @@ func Reason(err error) string {
 
 type Service struct {
 	Notion *notion.Client
-	Store  *store.Store
+	Store  *dynamo.Store
 	Queue  queue.Sender
 	Bucket time.Duration
 	Now    func() time.Time
@@ -38,13 +39,13 @@ type Service struct {
 
 // ResolveTemplate finds "Reading Library" and "Daily Log" inside a duplicated
 // template page and resolves their data sources and property ids (spec §2.11).
-func (s *Service) ResolveTemplate(ctx context.Context, token, templateID string) (store.DBConfig, error) {
+func (s *Service) ResolveTemplate(ctx context.Context, token, templateID string) (domain.DBConfig, error) {
 	blocks, err := s.Notion.ListBlockChildren(ctx, token, templateID)
 	if isNotFound(err) {
-		return store.DBConfig{}, &Error{"template_not_found"}
+		return domain.DBConfig{}, &Error{"template_not_found"}
 	}
 	if err != nil {
-		return store.DBConfig{}, err
+		return domain.DBConfig{}, err
 	}
 	return s.resolve(ctx, token, first(childDatabaseIDs(blocks, LibraryTitle)), first(childDatabaseIDs(blocks, DailyTitle)))
 }
@@ -55,29 +56,29 @@ func (s *Service) ResolveTemplate(ctx context.Context, token, templateID string)
 // Library; only the missing ones are created. A Daily Log related to another Library
 // (e.g. one the user deleted, scenario 10) is left alone and a new one is created.
 // Library goes first because the Daily Log relation needs its data source id.
-func (s *Service) CreateDatabases(ctx context.Context, token, parentPageID string) (store.DBConfig, error) {
+func (s *Service) CreateDatabases(ctx context.Context, token, parentPageID string) (domain.DBConfig, error) {
 	blocks, err := s.Notion.ListBlockChildren(ctx, token, parentPageID)
 	if err != nil && !isNotFound(err) {
-		return store.DBConfig{}, err
+		return domain.DBConfig{}, err
 	}
 
 	libID, libDSID := first(childDatabaseIDs(blocks, LibraryTitle)), ""
 	if libID == "" {
 		lib, err := s.Notion.CreateDatabase(ctx, token, parentPageID, LibraryTitle, libraryCreateSchema())
 		if err != nil {
-			return store.DBConfig{}, err
+			return domain.DBConfig{}, err
 		}
 		if len(lib.DataSources) == 0 {
-			return store.DBConfig{}, fmt.Errorf("setup: created %s has no data source", LibraryTitle)
+			return domain.DBConfig{}, fmt.Errorf("setup: created %s has no data source", LibraryTitle)
 		}
 		libID, libDSID = lib.ID, lib.DataSources[0].ID
 	} else {
 		lib, err := s.Notion.GetDatabase(ctx, token, libID)
 		if isNotFound(err) || (err == nil && len(lib.DataSources) == 0) {
-			return store.DBConfig{}, &Error{"database_missing:" + LibraryTitle}
+			return domain.DBConfig{}, &Error{"database_missing:" + LibraryTitle}
 		}
 		if err != nil {
-			return store.DBConfig{}, err
+			return domain.DBConfig{}, err
 		}
 		libDSID = lib.DataSources[0].ID
 	}
@@ -86,7 +87,7 @@ func (s *Service) CreateDatabases(ctx context.Context, token, parentPageID strin
 	for _, id := range childDatabaseIDs(blocks, DailyTitle) {
 		ok, err := s.dailyLogRelatesTo(ctx, token, id, libDSID)
 		if err != nil {
-			return store.DBConfig{}, err
+			return domain.DBConfig{}, err
 		}
 		if ok {
 			dailyID = id
@@ -96,7 +97,7 @@ func (s *Service) CreateDatabases(ctx context.Context, token, parentPageID strin
 	if dailyID == "" {
 		daily, err := s.Notion.CreateDatabase(ctx, token, parentPageID, DailyTitle, dailyCreateSchema(libDSID))
 		if err != nil {
-			return store.DBConfig{}, err
+			return domain.DBConfig{}, err
 		}
 		dailyID = daily.ID
 	}
@@ -147,29 +148,29 @@ func relatesTo(daily *notion.DataSource, libDSID string) bool {
 	return rel != nil && notion.SameID(rel.DataSourceID, libDSID)
 }
 
-func (s *Service) resolve(ctx context.Context, token, libDBID, dailyDBID string) (store.DBConfig, error) {
+func (s *Service) resolve(ctx context.Context, token, libDBID, dailyDBID string) (domain.DBConfig, error) {
 	if libDBID == "" {
-		return store.DBConfig{}, &Error{"database_missing:" + LibraryTitle}
+		return domain.DBConfig{}, &Error{"database_missing:" + LibraryTitle}
 	}
 	if dailyDBID == "" {
-		return store.DBConfig{}, &Error{"database_missing:" + DailyTitle}
+		return domain.DBConfig{}, &Error{"database_missing:" + DailyTitle}
 	}
 	libDS, libURL, libProps, err := s.resolveDatabase(ctx, token, libDBID, LibraryTitle, LibraryProps)
 	if err != nil {
-		return store.DBConfig{}, err
+		return domain.DBConfig{}, err
 	}
 	dailyDS, _, dailyProps, err := s.resolveDatabase(ctx, token, dailyDBID, DailyTitle, DailyProps)
 	if err != nil {
-		return store.DBConfig{}, err
+		return domain.DBConfig{}, err
 	}
 	// The Articles relation must point at this Library, not at one the user deleted.
 	if !relatesTo(dailyDS, libDS.ID) {
-		return store.DBConfig{}, &Error{"property_type:" + articlesProp}
+		return domain.DBConfig{}, &Error{"property_type:" + articlesProp}
 	}
 	for k, v := range dailyProps {
 		libProps[k] = v
 	}
-	return store.DBConfig{LibraryDBID: libDBID, LibraryDSID: libDS.ID, LibraryURL: libURL,
+	return domain.DBConfig{LibraryDBID: libDBID, LibraryDSID: libDS.ID, LibraryURL: libURL,
 		DailyDBID: dailyDBID, DailyDSID: dailyDS.ID, Props: libProps}, nil
 }
 

@@ -1,4 +1,4 @@
-package store
+package dynamo
 
 import (
 	"context"
@@ -9,14 +9,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
+	"reading-tracker/backend/internal/domain"
 )
 
-func (s *Store) GetProfile(ctx context.Context, uid string) (*Profile, error) {
-	var p Profile
-	if err := s.get(ctx, UserPK(uid), SKProfile, &p); err != nil {
+func (s *Store) GetProfile(ctx context.Context, uid string) (*domain.User, error) {
+	var r userRecord
+	if err := s.get(ctx, UserPK(uid), SKProfile, &r); err != nil {
 		return nil, err
 	}
-	return &p, nil
+	return r.toDomain(), nil
 }
 
 // UserIDForNotionUser resolves NUSER#<notion_user_id> → user_id (spec §2.2 step 4).
@@ -31,13 +33,12 @@ func (s *Store) UserIDForNotionUser(ctx context.Context, notionUserID string) (s
 }
 
 // CreateUser writes PROFILE and the NUSER pointer in one transaction.
-func (s *Store) CreateUser(ctx context.Context, uid string, p Profile) error {
-	p.PK, p.SK = UserPK(uid), SKProfile
-	prof, err := attributevalue.MarshalMap(p)
+func (s *Store) CreateUser(ctx context.Context, uid string, u domain.User) error {
+	prof, err := attributevalue.MarshalMap(newUserRecord(uid, u))
 	if err != nil {
 		return err
 	}
-	link := map[string]types.AttributeValue{"pk": str(NUserPK(p.NotionUserID)), "sk": str(SKNUser), "user_id": str(uid)}
+	link := map[string]types.AttributeValue{"pk": str(NUserPK(u.NotionUserID)), "sk": str(SKNUser), "user_id": str(uid)}
 	_, err = s.db.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{
 		{Put: &types.Put{TableName: &s.table, Item: prof}},
 		{Put: &types.Put{TableName: &s.table, Item: link}},
@@ -52,13 +53,12 @@ func (s *Store) SetActiveInstallation(ctx context.Context, uid, botID string) er
 
 func (s *Store) MarkProfileDeleted(ctx context.Context, uid string, now time.Time) error {
 	return s.update(ctx, UserPK(uid), SKProfile, "SET #d = :d", "attribute_exists(pk)",
-		map[string]string{"#d": "deleted_at"}, map[string]types.AttributeValue{":d": str(Timestamp(now))})
+		map[string]string{"#d": "deleted_at"}, map[string]types.AttributeValue{":d": str(domain.Timestamp(now))})
 }
 
 // CreateDevice writes DEVICE and its DEVTOKEN lookup together (spec §2.3 step 4).
-func (s *Store) CreateDevice(ctx context.Context, uid, deviceID string, d Device) error {
-	d.PK, d.SK = UserPK(uid), DeviceSK(deviceID)
-	dev, err := attributevalue.MarshalMap(d)
+func (s *Store) CreateDevice(ctx context.Context, uid, deviceID string, d domain.Device) error {
+	dev, err := attributevalue.MarshalMap(newDeviceRecord(uid, deviceID, d))
 	if err != nil {
 		return err
 	}
@@ -72,19 +72,20 @@ func (s *Store) CreateDevice(ctx context.Context, uid, deviceID string, d Device
 	return err
 }
 
-func (s *Store) GetDeviceToken(ctx context.Context, tokenHMAC string) (*DeviceToken, error) {
-	var t DeviceToken
-	if err := s.get(ctx, DevTokenPK(tokenHMAC), SKDevToken, &t); err != nil {
+func (s *Store) GetDeviceToken(ctx context.Context, tokenHMAC string) (*domain.DeviceToken, error) {
+	var r deviceTokenRecord
+	if err := s.get(ctx, DevTokenPK(tokenHMAC), SKDevToken, &r); err != nil {
 		return nil, err
 	}
-	return &t, nil
+	return &domain.DeviceToken{UserID: r.UserID, DeviceID: r.DeviceID}, nil
 }
 
-func (s *Store) GetDevice(ctx context.Context, uid, deviceID string) (*Device, error) {
-	var d Device
-	if err := s.get(ctx, UserPK(uid), DeviceSK(deviceID), &d); err != nil {
+func (s *Store) GetDevice(ctx context.Context, uid, deviceID string) (*domain.Device, error) {
+	var r deviceRecord
+	if err := s.get(ctx, UserPK(uid), DeviceSK(deviceID), &r); err != nil {
 		return nil, err
 	}
+	d := r.toDomain()
 	return &d, nil
 }
 
@@ -93,8 +94,8 @@ func (s *Store) TouchDevice(ctx context.Context, uid, deviceID string, now time.
 	err := s.update(ctx, UserPK(uid), DeviceSK(deviceID), "SET #ls = :now",
 		"attribute_exists(pk) AND (attribute_not_exists(#ls) OR #ls < :cutoff)",
 		map[string]string{"#ls": "last_seen_at"},
-		map[string]types.AttributeValue{":now": str(Timestamp(now)), ":cutoff": str(Timestamp(now.Add(-time.Hour)))})
-	if errors.Is(err, ErrConditionFailed) {
+		map[string]types.AttributeValue{":now": str(domain.Timestamp(now)), ":cutoff": str(domain.Timestamp(now.Add(-time.Hour)))})
+	if errors.Is(err, domain.ErrConditionFailed) {
 		return nil
 	}
 	return err
@@ -108,21 +109,27 @@ func (s *Store) RevokeDevice(ctx context.Context, uid, deviceID, tokenHMAC strin
 			Key:                       key(UserPK(uid), DeviceSK(deviceID)),
 			UpdateExpression:          aws.String("SET #r = :r"),
 			ExpressionAttributeNames:  map[string]string{"#r": "revoked_at"},
-			ExpressionAttributeValues: map[string]types.AttributeValue{":r": str(Timestamp(now))},
+			ExpressionAttributeValues: map[string]types.AttributeValue{":r": str(domain.Timestamp(now))},
 		}},
 		{Delete: &types.Delete{TableName: &s.table, Key: key(DevTokenPK(tokenHMAC), SKDevToken)}},
 	}})
 	return err
 }
 
-func (s *Store) ListDevices(ctx context.Context, uid string) ([]Device, error) {
+func (s *Store) ListDevices(ctx context.Context, uid string) ([]domain.Device, error) {
 	items, err := s.queryPrefix(ctx, UserPK(uid), "DEVICE#")
 	if err != nil {
 		return nil, err
 	}
-	var out []Device
-	err = attributevalue.UnmarshalListOfMaps(items, &out)
-	return out, err
+	var recs []deviceRecord
+	if err := attributevalue.UnmarshalListOfMaps(items, &recs); err != nil {
+		return nil, err
+	}
+	out := make([]domain.Device, len(recs))
+	for i, r := range recs {
+		out[i] = r.toDomain()
+	}
+	return out, nil
 }
 
 func (s *Store) DeleteDeviceToken(ctx context.Context, tokenHMAC string) error {

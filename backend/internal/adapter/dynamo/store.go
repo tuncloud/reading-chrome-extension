@@ -1,5 +1,5 @@
-// Package store is the DynamoDB single-table repository (spec §3.1–§3.2).
-package store
+// Package dynamo is the DynamoDB single-table repository (spec §3.1–§3.2).
+package dynamo
 
 import (
 	"context"
@@ -12,6 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/smithy-go"
+
+	"reading-tracker/backend/internal/domain"
 )
 
 // API is the subset of *dynamodb.Client the store uses; tests wrap it to inject errors.
@@ -25,11 +27,6 @@ type API interface {
 	BatchWriteItem(context.Context, *dynamodb.BatchWriteItemInput, ...func(*dynamodb.Options)) (*dynamodb.BatchWriteItemOutput, error)
 	TransactWriteItems(context.Context, *dynamodb.TransactWriteItemsInput, ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error)
 }
-
-var (
-	ErrNotFound        = errors.New("store: not found")
-	ErrConditionFailed = errors.New("store: condition failed")
-)
 
 // Store reads and writes the reading table.
 type Store struct {
@@ -45,19 +42,15 @@ type Option func(*Store)
 func WithSleep(f func(time.Duration)) Option { return func(s *Store) { s.sleep = f } }
 
 func New(db API, table string, opts ...Option) *Store {
-	s := &Store{db: db, table: table, sleep: time.Sleep}
+	s := &Store{db: taggingAPI{db}, table: table, sleep: time.Sleep}
 	for _, o := range opts {
 		o(s)
 	}
 	return s
 }
 
-// Timestamp formats t as RFC 3339 UTC with second precision. Every stored time uses
-// it so string comparisons in condition expressions order chronologically.
-func Timestamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }
-
-// IsThrottle reports DynamoDB capacity errors that the client should retry later.
-func IsThrottle(err error) bool {
+// isThrottle reports DynamoDB capacity errors that the client should retry later.
+func isThrottle(err error) bool {
 	var ae smithy.APIError
 	if !errors.As(err, &ae) {
 		return false
@@ -98,7 +91,7 @@ func (s *Store) get(ctx context.Context, pk, sk string, out any) error {
 		return err
 	}
 	if len(res.Item) == 0 {
-		return ErrNotFound
+		return domain.ErrNotFound
 	}
 	return attributevalue.UnmarshalMap(res.Item, out)
 }
@@ -112,7 +105,7 @@ func (s *Store) putItem(ctx context.Context, item any) error {
 	return err
 }
 
-// update runs one UpdateItem; a failed condition becomes ErrConditionFailed.
+// update runs one UpdateItem; a failed condition becomes domain.ErrConditionFailed.
 func (s *Store) update(ctx context.Context, pk, sk, expr, cond string, names map[string]string, values map[string]types.AttributeValue) error {
 	in := &dynamodb.UpdateItemInput{TableName: &s.table, Key: key(pk, sk), UpdateExpression: aws.String(expr)}
 	if len(names) > 0 {
@@ -126,7 +119,7 @@ func (s *Store) update(ctx context.Context, pk, sk, expr, cond string, names map
 	}
 	_, err := s.db.UpdateItem(ctx, in)
 	if isConditionFailed(err) {
-		return ErrConditionFailed
+		return domain.ErrConditionFailed
 	}
 	return err
 }

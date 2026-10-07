@@ -1,15 +1,15 @@
-package store
+package dynamo
 
-import "strings"
+import (
+	"strings"
 
-// Installation statuses (spec §3.1).
-const (
-	StatusActive     = "active"
-	StatusNeedsSetup = "needs_setup"
-	StatusRevoked    = "revoked"
+	"reading-tracker/backend/internal/domain"
 )
 
-type Profile struct {
+// Records are the stored item shapes (spec §3.1). They carry the dynamodbav tags so
+// the domain does not have to; attribute names must never change (stored data).
+
+type userRecord struct {
 	PK                   string `dynamodbav:"pk"`
 	SK                   string `dynamodbav:"sk"`
 	NotionUserID         string `dynamodbav:"notion_user_id"`
@@ -20,9 +20,17 @@ type Profile struct {
 	DeletedAt            string `dynamodbav:"deleted_at,omitempty"`
 }
 
-func (p Profile) UserID() string { return strings.TrimPrefix(p.PK, "USER#") }
+func newUserRecord(uid string, u domain.User) userRecord {
+	return userRecord{PK: UserPK(uid), SK: SKProfile, NotionUserID: u.NotionUserID, Name: u.Name, Email: u.Email,
+		ActiveInstallationID: u.ActiveInstallationID, CreatedAt: u.CreatedAt, DeletedAt: u.DeletedAt}
+}
 
-type Device struct {
+func (r userRecord) toDomain() *domain.User {
+	return &domain.User{ID: strings.TrimPrefix(r.PK, "USER#"), NotionUserID: r.NotionUserID, Name: r.Name, Email: r.Email,
+		ActiveInstallationID: r.ActiveInstallationID, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt}
+}
+
+type deviceRecord struct {
 	PK         string `dynamodbav:"pk"`
 	SK         string `dynamodbav:"sk"`
 	Name       string `dynamodbav:"name"`
@@ -32,16 +40,24 @@ type Device struct {
 	RevokedAt  string `dynamodbav:"revoked_at,omitempty"`
 }
 
-func (d Device) ID() string { return strings.TrimPrefix(d.SK, "DEVICE#") }
+func newDeviceRecord(uid, deviceID string, d domain.Device) deviceRecord {
+	return deviceRecord{PK: UserPK(uid), SK: DeviceSK(deviceID), Name: d.Name, TokenHMAC: d.TokenHMAC,
+		CreatedAt: d.CreatedAt, LastSeenAt: d.LastSeenAt, RevokedAt: d.RevokedAt}
+}
 
-type DeviceToken struct {
+func (r deviceRecord) toDomain() domain.Device {
+	return domain.Device{ID: strings.TrimPrefix(r.SK, "DEVICE#"), UserID: strings.TrimPrefix(r.PK, "USER#"), Name: r.Name,
+		TokenHMAC: r.TokenHMAC, CreatedAt: r.CreatedAt, LastSeenAt: r.LastSeenAt, RevokedAt: r.RevokedAt}
+}
+
+type deviceTokenRecord struct {
 	PK       string `dynamodbav:"pk"`
 	SK       string `dynamodbav:"sk"`
 	UserID   string `dynamodbav:"user_id"`
 	DeviceID string `dynamodbav:"device_id"`
 }
 
-type OAuthState struct {
+type oauthStateRecord struct {
 	PK            string `dynamodbav:"pk"`
 	SK            string `dynamodbav:"sk"`
 	ExtRedirect   string `dynamodbav:"ext_redirect"`
@@ -49,7 +65,7 @@ type OAuthState struct {
 	TTL           int64  `dynamodbav:"ttl"`
 }
 
-type AuthCode struct {
+type authCodeRecord struct {
 	PK             string `dynamodbav:"pk"`
 	SK             string `dynamodbav:"sk"`
 	UserID         string `dynamodbav:"user_id"`
@@ -59,17 +75,7 @@ type AuthCode struct {
 	TTL            int64  `dynamodbav:"ttl"`
 }
 
-// DBConfig is the resolved Notion target of an installation (spec §2.11).
-type DBConfig struct {
-	LibraryDBID string
-	LibraryDSID string
-	LibraryURL  string
-	DailyDBID   string
-	DailyDSID   string
-	Props       map[string]string // logical key → Notion property id (C9)
-}
-
-type Installation struct {
+type installationRecord struct {
 	PK                   string            `dynamodbav:"pk"`
 	SK                   string            `dynamodbav:"sk"`
 	UserID               string            `dynamodbav:"user_id"`
@@ -93,19 +99,25 @@ type Installation struct {
 	UpdatedAt            string            `dynamodbav:"updated_at"`
 }
 
-func (i Installation) ID() string { return strings.TrimPrefix(i.PK, "INST#") }
-
-// HasDatabases reports whether both data sources and their property ids are known.
-func (i Installation) HasDatabases() bool {
-	return i.LibraryDSID != "" && i.DailyDSID != "" && len(i.Props) > 0
+func newInstallationRecord(botID string, i *domain.Installation) installationRecord {
+	return installationRecord{PK: InstPK(botID), SK: SKMeta, UserID: i.UserID, WorkspaceID: i.WorkspaceID,
+		WorkspaceName: i.WorkspaceName, WorkspaceIcon: i.WorkspaceIcon, Status: i.Status, SetupError: i.SetupError,
+		AccessTokenEnc: i.AccessTokenEnc, RefreshTokenEnc: i.RefreshTokenEnc, TokenExpiresAt: i.TokenExpiresAt,
+		TokenVersion: i.TokenVersion, DuplicatedTemplateID: i.DuplicatedTemplateID, LibraryDBID: i.LibraryDBID,
+		LibraryDSID: i.LibraryDSID, LibraryURL: i.LibraryURL, DailyDBID: i.DailyDBID, DailyDSID: i.DailyDSID,
+		Props: i.Props, CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt}
 }
 
-func (i *Installation) ApplyDatabases(db DBConfig) {
-	i.LibraryDBID, i.LibraryDSID, i.LibraryURL = db.LibraryDBID, db.LibraryDSID, db.LibraryURL
-	i.DailyDBID, i.DailyDSID, i.Props = db.DailyDBID, db.DailyDSID, db.Props
+func (r installationRecord) toDomain() *domain.Installation {
+	return &domain.Installation{ID: strings.TrimPrefix(r.PK, "INST#"), UserID: r.UserID, WorkspaceID: r.WorkspaceID,
+		WorkspaceName: r.WorkspaceName, WorkspaceIcon: r.WorkspaceIcon, Status: r.Status, SetupError: r.SetupError,
+		AccessTokenEnc: r.AccessTokenEnc, RefreshTokenEnc: r.RefreshTokenEnc, TokenExpiresAt: r.TokenExpiresAt,
+		TokenVersion: r.TokenVersion, DuplicatedTemplateID: r.DuplicatedTemplateID, LibraryDBID: r.LibraryDBID,
+		LibraryDSID: r.LibraryDSID, LibraryURL: r.LibraryURL, DailyDBID: r.DailyDBID, DailyDSID: r.DailyDSID,
+		Props: r.Props, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
 }
 
-type Article struct {
+type articleRecord struct {
 	PK                  string  `dynamodbav:"pk"`
 	SK                  string  `dynamodbav:"sk"`
 	CanonicalURL        string  `dynamodbav:"canonical_url"`
@@ -124,13 +136,21 @@ type Article struct {
 	Version             int64   `dynamodbav:"version"`
 	NotionPageID        string  `dynamodbav:"notion_page_id,omitempty"`
 	NotionURL           string  `dynamodbav:"notion_url,omitempty"`
+	NotionDataSourceID  string  `dynamodbav:"notion_ds_id,omitempty"`
 	NotionSyncedVersion int64   `dynamodbav:"notion_synced_version,omitempty"`
 	NotionSyncedAt      string  `dynamodbav:"notion_synced_at,omitempty"`
 }
 
-func (a Article) Hash() string { return strings.TrimPrefix(a.SK, "ART#") }
+func (r articleRecord) toDomain() *domain.Article {
+	return &domain.Article{Hash: strings.TrimPrefix(r.SK, "ART#"), CanonicalURL: r.CanonicalURL, Source: r.Source,
+		Title: r.Title, Author: r.Author, SiteName: r.SiteName, WordCount: r.WordCount, PublishedAt: r.PublishedAt,
+		FirstReadAt: r.FirstReadAt, LastReadAt: r.LastReadAt, TotalSeconds: r.TotalSeconds, Sessions: r.Sessions,
+		MaxProgress: r.MaxProgress, Completed: r.Completed, Version: r.Version, NotionPageID: r.NotionPageID,
+		NotionURL: r.NotionURL, NotionDataSourceID: r.NotionDataSourceID, NotionSyncedVersion: r.NotionSyncedVersion,
+		NotionSyncedAt: r.NotionSyncedAt}
+}
 
-type Day struct {
+type dayRecord struct {
 	PK                  string   `dynamodbav:"pk"`
 	SK                  string   `dynamodbav:"sk"`
 	Date                string   `dynamodbav:"date"`
@@ -138,5 +158,11 @@ type Day struct {
 	ArticleHashes       []string `dynamodbav:"article_hashes,stringset"`
 	Version             int64    `dynamodbav:"version"`
 	NotionPageID        string   `dynamodbav:"notion_page_id,omitempty"`
+	NotionDataSourceID  string   `dynamodbav:"notion_ds_id,omitempty"`
 	NotionSyncedVersion int64    `dynamodbav:"notion_synced_version,omitempty"`
+}
+
+func (r dayRecord) toDomain() *domain.Day {
+	return &domain.Day{Date: r.Date, Seconds: r.Seconds, ArticleHashes: r.ArticleHashes, Version: r.Version,
+		NotionPageID: r.NotionPageID, NotionDataSourceID: r.NotionDataSourceID, NotionSyncedVersion: r.NotionSyncedVersion}
 }

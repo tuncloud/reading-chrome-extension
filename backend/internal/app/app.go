@@ -13,11 +13,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
+	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/httpapi"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
 	"reading-tracker/backend/internal/worker"
 )
 
@@ -43,12 +43,12 @@ func NotionClient(cfg *config.Config, pacer notion.Pacer) *notion.Client {
 }
 
 // APIDeps assembles the api Lambda's dependencies. The API never paces or refreshes (C3, C8).
-func APIDeps(cfg *config.Config, st *store.Store, q queue.Sender, log *slog.Logger) httpapi.Deps {
+func APIDeps(cfg *config.Config, st *dynamo.Store, q queue.Sender, log *slog.Logger) httpapi.Deps {
 	return httpapi.Deps{Config: cfg, Store: st, Notion: NotionClient(cfg, nil), Queue: q, Now: time.Now, Log: log}
 }
 
 // Worker assembles the notion-writer: paced Notion client (C22) and the shared keyring.
-func Worker(cfg *config.Config, st *store.Store, q queue.Sender, vis worker.VisibilityChanger, log *slog.Logger) *worker.Worker {
+func Worker(cfg *config.Config, st *dynamo.Store, q queue.Sender, vis worker.VisibilityChanger, log *slog.Logger) *worker.Worker {
 	return worker.New(worker.Deps{
 		Store: st, Notion: NotionClient(cfg, notion.NewMinInterval(350*time.Millisecond)), Keys: cfg.Keys,
 		Queue: q, Visibility: vis, Tracking: cfg.Public.Tracking, Now: time.Now, Log: log,

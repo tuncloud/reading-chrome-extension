@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/notion/notiontest"
 	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/setup"
-	"reading-tracker/backend/internal/store"
-	"reading-tracker/backend/internal/store/storetest"
 )
 
 var (
@@ -30,13 +30,13 @@ func must(t *testing.T, err error) {
 type fixture struct {
 	svc *setup.Service
 	ns  *notiontest.Server
-	db  *storetest.Env
+	db  *dynamotest.Env
 	rec *queue.Recorder
 }
 
 func newFixture(t *testing.T) *fixture {
 	ns := notiontest.New(t)
-	db := storetest.New(t)
+	db := dynamotest.New(t)
 	rec := &queue.Recorder{}
 	svc := &setup.Service{Notion: &notion.Client{BaseURL: ns.URL, Version: "2025-09-03"}, Store: db.Store, Queue: rec,
 		Bucket: 120 * time.Second, Now: func() time.Time { return testNow }}
@@ -254,18 +254,18 @@ func TestCreateDatabasesListingFailureCreatesNothing(t *testing.T) {
 func TestResyncEnqueuesPending(t *testing.T) {
 	f := newFixture(t)
 	for i, u := range []string{"https://a.example/1", "https://b.example/2"} {
-		_, err := f.db.Store.PushSegment(ctx, store.SegmentWrite{
+		_, err := f.db.Store.PushSegment(ctx, domain.SegmentWrite{
 			InstallationID: "bot-1", DeviceID: "d", SegmentID: []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}[i],
-			SessionID: "s", URLHash: store.URLHash(u), Date: "2026-10-06", StartedAt: testNow, EndedAt: testNow.Add(time.Minute),
-			ActiveSeconds: 60, MaxProgress: 0.5, Article: store.ArticleMeta{CanonicalURL: u, Source: "generic"},
+			SessionID: "s", URLHash: domain.URLHash(u), Date: "2026-10-06", StartedAt: testNow, EndedAt: testNow.Add(time.Minute),
+			ActiveSeconds: 60, MaxProgress: 0.5, Article: domain.ArticleMeta{CanonicalURL: u, Source: "generic"},
 		})
 		must(t, err)
 	}
-	must(t, f.db.Store.MarkArticleSynced(ctx, "bot-1", store.URLHash("https://a.example/1"), 1, false, testNow))
+	must(t, f.db.Store.MarkArticleSynced(ctx, "bot-1", domain.URLHash("https://a.example/1"), 1, false, testNow))
 
 	must(t, f.svc.Resync(ctx, "bot-1", false))
 	got := f.rec.Messages()
-	want := []queue.Message{queue.Article("bot-1", store.URLHash("https://b.example/2")), queue.Day("bot-1", "2026-10-06")}
+	want := []queue.Message{queue.Article("bot-1", domain.URLHash("https://b.example/2")), queue.Day("bot-1", "2026-10-06")}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
@@ -273,7 +273,7 @@ func TestResyncEnqueuesPending(t *testing.T) {
 	// I1: a full resync (databases changed) also re-sends the synced article.
 	f.rec.Drain()
 	must(t, f.svc.Resync(ctx, "bot-1", true))
-	if got := f.rec.Messages(); len(got) != 3 || !slices.Contains(got, queue.Article("bot-1", store.URLHash("https://a.example/1"))) {
+	if got := f.rec.Messages(); len(got) != 3 || !slices.Contains(got, queue.Article("bot-1", domain.URLHash("https://a.example/1"))) {
 		t.Fatalf("full resync got %+v", got)
 	}
 }

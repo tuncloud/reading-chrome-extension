@@ -1,51 +1,17 @@
-package store
+package dynamo
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"reading-tracker/backend/internal/domain"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-)
-
-// ArticleMeta is the descriptive part of an article, written once (if_not_exists).
-type ArticleMeta struct {
-	CanonicalURL string
-	Source       string
-	Title        string
-	Author       string
-	SiteName     string
-	WordCount    int
-	PublishedAt  string
-}
-
-// SegmentWrite is one validated segment ready for the push transaction.
-type SegmentWrite struct {
-	InstallationID string
-	DeviceID       string
-	SegmentID      string
-	SessionID      string
-	Seq            int
-	URLHash        string
-	Date           string // YYYY-MM-DD of StartedAt in the request tz
-	StartedAt      time.Time
-	EndedAt        time.Time
-	ActiveSeconds  int
-	MaxProgress    float64
-	Article        ArticleMeta
-}
-
-type PushOutcome int
-
-const (
-	PushAccepted PushOutcome = iota + 1
-	PushDuplicate
-	PushRetry
 )
 
 const (
@@ -56,26 +22,26 @@ const (
 // PushSegment applies one segment exactly once (C2): the SEG put plus the ART and
 // DAY increments commit together or not at all. The monotonic max_progress and
 // last_read_at updates run after the commit (see raiseArticleMax); if they cannot be
-// applied the outcome is PushRetry, so the client keeps the segment and resends it.
+// applied the outcome is domain.PushRetry, so the client keeps the segment and resends it.
 // The resend hits the duplicate path, which re-applies them (they are idempotent)
 // without counting the segment twice.
-func (s *Store) PushSegment(ctx context.Context, w SegmentWrite) (PushOutcome, error) {
+func (s *Store) PushSegment(ctx context.Context, w domain.SegmentWrite) (domain.PushOutcome, error) {
 	for attempt := 1; ; attempt++ {
 		// A fresh input per attempt: the SDK stamps an idempotency token on the struct it
 		// is given, and a retry must not replay the token of a cancelled attempt.
 		_, err := s.db.TransactWriteItems(ctx, s.pushTx(w))
 		if err == nil {
-			return s.finishPush(ctx, w, PushAccepted), nil
+			return s.finishPush(ctx, w, domain.PushAccepted), nil
 		}
 		switch classifyTx(err) {
 		case txDuplicate:
-			return s.finishPush(ctx, w, PushDuplicate), nil
+			return s.finishPush(ctx, w, domain.PushDuplicate), nil
 		case txThrottled:
-			return PushRetry, nil
+			return domain.PushRetry, nil
 		case txConflict:
 			// Another push is updating the same ART/DAY item right now (scenario 4).
 			if attempt >= conflictAttempts {
-				return PushRetry, nil
+				return domain.PushRetry, nil
 			}
 			s.sleep(time.Duration(attempt*50) * time.Millisecond)
 		default:
@@ -85,19 +51,19 @@ func (s *Store) PushSegment(ctx context.Context, w SegmentWrite) (PushOutcome, e
 }
 
 // finishPush runs the post-commit step for a segment that is committed (accepted or
-// already stored) and downgrades the outcome to PushRetry when it cannot complete.
-func (s *Store) finishPush(ctx context.Context, w SegmentWrite, outcome PushOutcome) PushOutcome {
+// already stored) and downgrades the outcome to domain.PushRetry when it cannot complete.
+func (s *Store) finishPush(ctx context.Context, w domain.SegmentWrite, outcome domain.PushOutcome) domain.PushOutcome {
 	if err := s.raiseArticleMax(ctx, w); err != nil {
 		slog.WarnContext(ctx, "store: post-commit update failed; asking client to retry",
 			"segment_id", w.SegmentID, "err", err)
-		return PushRetry
+		return domain.PushRetry
 	}
 	return outcome
 }
 
-func (s *Store) pushTx(w SegmentWrite) *dynamodb.TransactWriteItemsInput {
+func (s *Store) pushTx(w domain.SegmentWrite) *dynamodb.TransactWriteItemsInput {
 	pk := InstPK(w.InstallationID)
-	started := Timestamp(w.StartedAt)
+	started := domain.Timestamp(w.StartedAt)
 	first := int64(0)
 	if w.Seq == 0 {
 		first = 1
@@ -105,7 +71,7 @@ func (s *Store) pushTx(w SegmentWrite) *dynamodb.TransactWriteItemsInput {
 	seg := map[string]types.AttributeValue{
 		"pk": str(pk), "sk": str(SegmentSK(w.SegmentID)),
 		"session_id": str(w.SessionID), "seq": numI(int64(w.Seq)), "url_hash": str(w.URLHash),
-		"device_id": str(w.DeviceID), "started_at": str(started), "ended_at": str(Timestamp(w.EndedAt)),
+		"device_id": str(w.DeviceID), "started_at": str(started), "ended_at": str(domain.Timestamp(w.EndedAt)),
 		"active_seconds": numI(int64(w.ActiveSeconds)), "max_progress": numF(w.MaxProgress),
 		"ttl": numI(w.StartedAt.Add(segmentTTL).Unix()),
 	}
@@ -148,14 +114,14 @@ func (s *Store) pushTx(w SegmentWrite) *dynamodb.TransactWriteItemsInput {
 // ADD on the same item. Both are idempotent, so PushSegment re-runs them on a
 // duplicate. It returns the first error; only a failed condition (the stored value
 // is already as large) is ignored.
-func (s *Store) raiseArticleMax(ctx context.Context, w SegmentWrite) error {
+func (s *Store) raiseArticleMax(ctx context.Context, w domain.SegmentWrite) error {
 	k := key(InstPK(w.InstallationID), ArticleSK(w.URLHash))
 	if w.MaxProgress > 0 {
 		if err := s.setIfGreater(ctx, k, "max_progress", numF(w.MaxProgress)); err != nil {
 			return err
 		}
 	}
-	return s.setIfGreater(ctx, k, "last_read_at", str(Timestamp(w.EndedAt)))
+	return s.setIfGreater(ctx, k, "last_read_at", str(domain.Timestamp(w.EndedAt)))
 }
 
 // setIfGreater raises attr to v unless it is already >= v. A plain UpdateItem on an
@@ -176,7 +142,7 @@ func (s *Store) setIfGreater(ctx context.Context, k map[string]types.AttributeVa
 		switch {
 		case err == nil, isConditionFailed(err):
 			return nil
-		case attempt < conflictAttempts && (isTxConflict(err) || IsThrottle(err)):
+		case attempt < conflictAttempts && (isTxConflict(err) || isThrottle(err)):
 			s.sleep(time.Duration(attempt*50) * time.Millisecond)
 		default:
 			return fmt.Errorf("store: raise %s: %w", attr, err)
@@ -215,7 +181,7 @@ func classifyTx(err error) txClass {
 		}
 		return txOther
 	}
-	if IsThrottle(err) {
+	if isThrottle(err) {
 		return txThrottled
 	}
 	return txOther

@@ -1,4 +1,4 @@
-package store_test
+package dynamo_test
 
 import (
 	"context"
@@ -7,14 +7,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
-	"reading-tracker/backend/internal/store"
-	"reading-tracker/backend/internal/store/storetest"
+	"reading-tracker/backend/internal/adapter/dynamo"
+	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
+	"reading-tracker/backend/internal/domain"
 )
 
 // recorder captures the inputs of every read so tests can assert on request flags.
 // DynamoDB Local serves every read consistently, so only the request shows the difference.
 type recorder struct {
-	store.API
+	dynamo.API
 	gets    []*dynamodb.GetItemInput
 	queries []*dynamodb.QueryInput
 }
@@ -31,11 +32,11 @@ func (r *recorder) Query(ctx context.Context, in *dynamodb.QueryInput, opts ...f
 
 // Token rotation (C7) and logout (T17) need read-after-write, so reads must be strongly consistent.
 func TestReadsAreStronglyConsistent(t *testing.T) {
-	env := storetest.New(t)
+	env := dynamotest.New(t)
 	rec := &recorder{API: env.DB}
-	s := store.New(rec, env.Table)
-	must(t, s.CreateUser(ctx, "u1", store.Profile{NotionUserID: "n1", Name: "Tuan Do", CreatedAt: store.Timestamp(testNow)}))
-	must(t, s.CreateDevice(ctx, "u1", "d1", store.Device{Name: "Mac", TokenHMAC: "h1", CreatedAt: store.Timestamp(testNow), LastSeenAt: store.Timestamp(testNow)}))
+	s := dynamo.New(rec, env.Table)
+	must(t, s.CreateUser(ctx, "u1", domain.User{NotionUserID: "n1", Name: "Tuan Do", CreatedAt: domain.Timestamp(testNow)}))
+	must(t, s.CreateDevice(ctx, "u1", "d1", domain.Device{Name: "Mac", TokenHMAC: "h1", CreatedAt: domain.Timestamp(testNow), LastSeenAt: domain.Timestamp(testNow)}))
 
 	_, err := s.GetProfile(ctx, "u1")
 	must(t, err)

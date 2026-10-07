@@ -14,11 +14,12 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
+	"reading-tracker/backend/internal/adapter/dynamo"
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
 )
 
 // VisibilityChanger hides a message for a back-off period.
@@ -27,7 +28,7 @@ type VisibilityChanger interface {
 }
 
 type Deps struct {
-	Store      *store.Store
+	Store      *dynamo.Store
 	Notion     *notion.Client
 	Keys       *crypto.Keyring
 	Queue      queue.Sender
@@ -145,15 +146,15 @@ func (w *Worker) classify(ctx context.Context, err error) error {
 
 // activeInstallation returns nil (→ ack) when the installation is gone or not active.
 // Its data stays in DynamoDB and is resynced on reactivation (spec §2.13 step 1).
-func (w *Worker) activeInstallation(ctx context.Context, id string) (*store.Installation, error) {
+func (w *Worker) activeInstallation(ctx context.Context, id string) (*domain.Installation, error) {
 	inst, err := w.Store.GetInstallation(ctx, id)
-	if errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, domain.ErrNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if inst.Status != store.StatusActive {
+	if inst.Status != domain.StatusActive {
 		return nil, nil
 	}
 	return inst, nil

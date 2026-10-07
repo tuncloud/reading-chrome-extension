@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
 )
 
 var errPageGone = errors.New("worker: notion page archived")
@@ -45,13 +45,13 @@ func (w *Worker) requeue(ctx context.Context, m queue.Message) error {
 
 // dataSourceError: a 404 on a data source means the database was deleted, so the
 // installation needs setup again and the message is acked (spec §2.15).
-func (w *Worker) dataSourceError(ctx context.Context, inst *store.Installation, title string, err error) error {
+func (w *Worker) dataSourceError(ctx context.Context, inst *domain.Installation, title string, err error) error {
 	if !isStatus(err, http.StatusNotFound) {
 		return err
 	}
-	if serr := w.Store.SetInstallationStatus(ctx, inst.ID(), store.StatusNeedsSetup, "database_missing:"+title, w.Now()); serr != nil {
+	if serr := w.Store.SetInstallationStatus(ctx, inst.ID, domain.StatusNeedsSetup, "database_missing:"+title, w.Now()); serr != nil {
 		return serr
 	}
-	w.Log.WarnContext(ctx, "worker: database missing; installation needs setup", "installation_id", inst.ID(), "database", title)
+	w.Log.WarnContext(ctx, "worker: database missing; installation needs setup", "installation_id", inst.ID, "database", title)
 	return errAck
 }

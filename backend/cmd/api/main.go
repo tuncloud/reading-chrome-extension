@@ -8,11 +8,11 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	echoadapter "github.com/awslabs/aws-lambda-go-api-proxy/echo"
 
+	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/app"
 	"reading-tracker/backend/internal/httpapi"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
 )
 
 func main() {
@@ -27,7 +27,7 @@ func main() {
 		log.Error("aws config", "err", err)
 		os.Exit(1)
 	}
-	st := store.New(app.DynamoDB(awsCfg), cfg.TableName)
+	st := dynamo.New(app.DynamoDB(awsCfg), cfg.TableName)
 	q := &queue.SQS{API: app.SQS(awsCfg), QueueURL: cfg.QueueURL}
 	e := httpapi.New(app.APIDeps(cfg, st, q, log))
 	lambda.Start(echoadapter.NewV2(e).ProxyWithContext)

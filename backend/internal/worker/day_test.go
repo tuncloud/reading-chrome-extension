@@ -3,9 +3,9 @@ package worker
 import (
 	"testing"
 
+	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/notion/notiontest"
 	"reading-tracker/backend/internal/queue"
-	"reading-tracker/backend/internal/store"
 )
 
 const today = "2026-10-06"
@@ -29,7 +29,7 @@ func TestDayMinutesAndRelation(t *testing.T) {
 	e.read(artURL, 0, 120, 0.5)
 	e.read(short, 0, 20, 0.1)  // below min_create_seconds → no page
 	e.read(artURL, 1, 10, 0.6) // day total 150 s → round(2.5) = 3
-	e.handle(queue.Article(testBot, store.URLHash(artURL)), queue.Article(testBot, store.URLHash(short)), dayMsg())
+	e.handle(queue.Article(testBot, domain.URLHash(artURL)), queue.Article(testBot, domain.URLHash(short)), dayMsg())
 
 	pg := e.onlyDayPage()
 	if num(pg, "Minutes") != 3 {
@@ -76,7 +76,7 @@ func TestDayAdoptedPageGoneIsRecreated(t *testing.T) {
 	}
 	inst, err := e.db.Store.GetInstallation(ctx, testBot)
 	must(t, err)
-	if inst.Status != store.StatusActive {
+	if inst.Status != domain.StatusActive {
 		t.Fatalf("installation %+v", inst)
 	}
 	pages := e.ns.Pages(e.tpl.DailyDS)
@@ -117,7 +117,7 @@ func TestDayDeletedDailyLogNeedsSetup(t *testing.T) {
 		t.Fatalf("failures %+v", f)
 	}
 	inst, _ := e.db.Store.GetInstallation(ctx, testBot)
-	if inst.Status != store.StatusNeedsSetup || inst.SetupError != "database_missing:Daily Log" {
+	if inst.Status != domain.StatusNeedsSetup || inst.SetupError != "database_missing:Daily Log" {
 		t.Fatalf("installation %+v", inst)
 	}
 }

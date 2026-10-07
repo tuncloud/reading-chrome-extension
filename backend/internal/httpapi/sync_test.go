@@ -2,11 +2,10 @@ package httpapi_test
 
 import (
 	"context"
+	"reading-tracker/backend/internal/domain"
 	"strings"
 	"testing"
 	"time"
-
-	"reading-tracker/backend/internal/store"
 )
 
 func pushBody(env *testEnv) map[string]any {
@@ -37,7 +36,7 @@ type pushResp struct {
 func TestSyncPushTwiceIsDuplicate(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusActive)
+	env.seedInstallation(uid, domain.StatusActive)
 
 	first := env.do("POST", "/v1/sync/push", pushBody(env), tok)
 	if first.Code != 200 {
@@ -50,7 +49,7 @@ func TestSyncPushTwiceIsDuplicate(t *testing.T) {
 	if len(second.Duplicate) != 1 || len(second.Accepted) != 0 {
 		t.Fatalf("second %+v", second)
 	}
-	a, err := env.db.Store.GetArticle(context.Background(), testBotID, store.URLHash("https://medium.com/p/8f3c2a1b9d4e"))
+	a, err := env.db.Store.GetArticle(context.Background(), testBotID, domain.URLHash("https://medium.com/p/8f3c2a1b9d4e"))
 	must(t, err)
 	if a.TotalSeconds != 58 {
 		t.Fatalf("total %d", a.TotalSeconds)
@@ -69,7 +68,7 @@ func TestSyncPushNoInstallation(t *testing.T) {
 func TestSyncPushBodyTooLarge(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusActive)
+	env.seedInstallation(uid, domain.StatusActive)
 	huge := `{"tz":"UTC","articles":[],"segments":[],"pad":"` + strings.Repeat("x", 300*1024) + `"}`
 	if len(huge) <= 256*1024 {
 		t.Fatalf("test body is %d bytes; it must exceed the 256 KB limit", len(huge))
@@ -82,7 +81,7 @@ func TestSyncPushBodyTooLarge(t *testing.T) {
 func TestSyncPushBadTZ(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusActive)
+	env.seedInstallation(uid, domain.StatusActive)
 	body := pushBody(env)
 	body["tz"] = "Mars/Olympus"
 	if rec := env.do("POST", "/v1/sync/push", body, tok); rec.Code != 400 || errorCode(t, rec) != "invalid_request" {
@@ -94,7 +93,7 @@ func TestSyncPushBadTZ(t *testing.T) {
 func TestSyncPushAcceptedWhileNeedsSetup(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
-	env.seedInstallation(uid, store.StatusNeedsSetup)
+	env.seedInstallation(uid, domain.StatusNeedsSetup)
 	if r := decode[pushResp](t, env.do("POST", "/v1/sync/push", pushBody(env), tok)); len(r.Accepted) != 1 {
 		t.Fatalf("%+v", r)
 	}

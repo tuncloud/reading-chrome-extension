@@ -1,4 +1,4 @@
-package store_test
+package dynamo_test
 
 import (
 	"context"
@@ -9,23 +9,24 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
-	"reading-tracker/backend/internal/store"
-	"reading-tracker/backend/internal/store/storetest"
+	"reading-tracker/backend/internal/adapter/dynamo"
+	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
+	"reading-tracker/backend/internal/domain"
 )
 
 const articleURL = "https://medium.com/p/8f3c2a1b9d4e"
 
-func segment(id, url string, seq, secs int, progress float64, started time.Time) store.SegmentWrite {
-	return store.SegmentWrite{
+func segment(id, url string, seq, secs int, progress float64, started time.Time) domain.SegmentWrite {
+	return domain.SegmentWrite{
 		InstallationID: "bot-1", DeviceID: "dev-1", SegmentID: id, SessionID: "sess-1", Seq: seq,
-		URLHash: store.URLHash(url), Date: started.UTC().Format("2006-01-02"),
+		URLHash: domain.URLHash(url), Date: started.UTC().Format("2006-01-02"),
 		StartedAt: started, EndedAt: started.Add(time.Duration(secs) * time.Second),
 		ActiveSeconds: secs, MaxProgress: progress,
-		Article: store.ArticleMeta{CanonicalURL: url, Source: "medium", Title: "Designing Idempotent APIs", WordCount: 1820},
+		Article: domain.ArticleMeta{CanonicalURL: url, Source: "medium", Title: "Designing Idempotent APIs", WordCount: 1820},
 	}
 }
 
-func push(t *testing.T, s *store.Store, w store.SegmentWrite) store.PushOutcome {
+func push(t *testing.T, s *dynamo.Store, w domain.SegmentWrite) domain.PushOutcome {
 	t.Helper()
 	out, err := s.PushSegment(ctx, w)
 	must(t, err)
@@ -34,40 +35,40 @@ func push(t *testing.T, s *store.Store, w store.SegmentWrite) store.PushOutcome 
 
 // T10 AC + scenario 2: the same segment twice increments aggregates once (C2).
 func TestPushSegmentTwiceCountsOnce(t *testing.T) {
-	s := storetest.New(t).Store
+	s := dynamotest.New(t).Store
 	w := segment("6f1d2c9e-6a43-4b1e-9a0e-2f7c1d5b8e11", articleURL, 0, 58, 0.42, testNow)
 
-	if out := push(t, s, w); out != store.PushAccepted {
+	if out := push(t, s, w); out != domain.PushAccepted {
 		t.Fatalf("first push = %v", out)
 	}
-	if out := push(t, s, w); out != store.PushDuplicate {
+	if out := push(t, s, w); out != domain.PushDuplicate {
 		t.Fatalf("second push = %v, want duplicate", out)
 	}
-	a, err := s.GetArticle(ctx, "bot-1", store.URLHash(articleURL))
+	a, err := s.GetArticle(ctx, "bot-1", domain.URLHash(articleURL))
 	must(t, err)
 	if a.TotalSeconds != 58 || a.Sessions != 1 || a.Version != 1 || a.MaxProgress != 0.42 || a.CanonicalURL != articleURL || a.Title != "Designing Idempotent APIs" {
 		t.Fatalf("aggregate wrong: %+v", a)
 	}
-	if a.FirstReadAt != store.Timestamp(testNow) || a.LastReadAt != store.Timestamp(testNow.Add(58*time.Second)) {
+	if a.FirstReadAt != domain.Timestamp(testNow) || a.LastReadAt != domain.Timestamp(testNow.Add(58*time.Second)) {
 		t.Fatalf("read times wrong: first=%s last=%s", a.FirstReadAt, a.LastReadAt)
 	}
 	d, err := s.GetDay(ctx, "bot-1", "2026-10-06")
 	must(t, err)
-	if d.Seconds != 58 || d.Version != 1 || len(d.ArticleHashes) != 1 || d.ArticleHashes[0] != store.URLHash(articleURL) {
+	if d.Seconds != 58 || d.Version != 1 || len(d.ArticleHashes) != 1 || d.ArticleHashes[0] != domain.URLHash(articleURL) {
 		t.Fatalf("day wrong: %+v", d)
 	}
 }
 
 // T10 AC: max_progress (and last_read_at) never decrease.
 func TestMaxProgressNeverDecreases(t *testing.T) {
-	s := storetest.New(t).Store
+	s := dynamotest.New(t).Store
 	push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.6, testNow.Add(time.Hour)))
 	push(t, s, segment("00000000-0000-4000-8000-000000000002", articleURL, 1, 60, 0.3, testNow))
-	a, _ := s.GetArticle(ctx, "bot-1", store.URLHash(articleURL))
+	a, _ := s.GetArticle(ctx, "bot-1", domain.URLHash(articleURL))
 	if a.MaxProgress != 0.6 {
 		t.Fatalf("max_progress = %v, want 0.6", a.MaxProgress)
 	}
-	if a.LastReadAt != store.Timestamp(testNow.Add(time.Hour+60*time.Second)) {
+	if a.LastReadAt != domain.Timestamp(testNow.Add(time.Hour+60*time.Second)) {
 		t.Fatalf("last_read_at went backwards: %s", a.LastReadAt)
 	}
 	if a.TotalSeconds != 120 || a.Version != 2 {
@@ -77,16 +78,16 @@ func TestMaxProgressNeverDecreases(t *testing.T) {
 
 // Scenario 3: seq 1 before seq 0 still counts one session.
 func TestOutOfOrderSessionCountedOnce(t *testing.T) {
-	s := storetest.New(t).Store
+	s := dynamotest.New(t).Store
 	push(t, s, segment("00000000-0000-4000-8000-000000000002", articleURL, 1, 60, 0.5, testNow.Add(time.Minute)))
 	push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.2, testNow))
-	a, _ := s.GetArticle(ctx, "bot-1", store.URLHash(articleURL))
+	a, _ := s.GetArticle(ctx, "bot-1", domain.URLHash(articleURL))
 	if a.Sessions != 1 || a.TotalSeconds != 120 {
 		t.Fatalf("sessions=%d total=%d", a.Sessions, a.TotalSeconds)
 	}
 }
 
-type throttlingDB struct{ store.API }
+type throttlingDB struct{ dynamo.API }
 
 func (throttlingDB) TransactWriteItems(context.Context, *dynamodb.TransactWriteItemsInput, ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error) {
 	return nil, &types.ProvisionedThroughputExceededException{Message: aws.String("slow down")}
@@ -94,9 +95,9 @@ func (throttlingDB) TransactWriteItems(context.Context, *dynamodb.TransactWriteI
 
 // Scenario 14: throttling → retry, nothing written.
 func TestPushThrottleIsRetry(t *testing.T) {
-	env := storetest.New(t)
-	s := store.New(throttlingDB{env.DB}, env.Table)
-	if out := push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)); out != store.PushRetry {
+	env := dynamotest.New(t)
+	s := dynamo.New(throttlingDB{env.DB}, env.Table)
+	if out := push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)); out != domain.PushRetry {
 		t.Fatalf("got %v, want retry", out)
 	}
 	if items := env.Scan(t); len(items) != 0 {
@@ -105,7 +106,7 @@ func TestPushThrottleIsRetry(t *testing.T) {
 }
 
 type conflictOnceDB struct {
-	store.API
+	dynamo.API
 	conflicts int
 }
 
@@ -121,9 +122,9 @@ func (c *conflictOnceDB) TransactWriteItems(ctx context.Context, in *dynamodb.Tr
 
 // Review focus 1 / scenario 4: concurrent pushes to the same ART item conflict; retry in-server.
 func TestPushRetriesTransactionConflict(t *testing.T) {
-	env := storetest.New(t)
-	s := store.New(&conflictOnceDB{API: env.DB}, env.Table, store.WithSleep(func(time.Duration) {}))
-	if out := push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)); out != store.PushAccepted {
+	env := dynamotest.New(t)
+	s := dynamo.New(&conflictOnceDB{API: env.DB}, env.Table, dynamo.WithSleep(func(time.Duration) {}))
+	if out := push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)); out != domain.PushAccepted {
 		t.Fatalf("got %v, want accepted after conflict retry", out)
 	}
 }
@@ -132,7 +133,7 @@ func TestPushRetriesTransactionConflict(t *testing.T) {
 // TransactionConflictException, the error a plain UpdateItem gets while a
 // TransactWriteItems on the same item is in flight (scenario 4).
 type updateConflictDB struct {
-	store.API
+	dynamo.API
 	failures int
 	calls    int
 }
@@ -147,15 +148,15 @@ func (c *updateConflictDB) UpdateItem(ctx context.Context, in *dynamodb.UpdateIt
 
 // Spec §3.2: the post-commit max_progress/last_read_at update retries a transaction conflict.
 func TestPostCommitUpdateRetriesConflict(t *testing.T) {
-	env := storetest.New(t)
+	env := dynamotest.New(t)
 	db := &updateConflictDB{API: env.DB, failures: 1}
-	s := store.New(db, env.Table, store.WithSleep(func(time.Duration) {}))
-	if out := push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)); out != store.PushAccepted {
+	s := dynamo.New(db, env.Table, dynamo.WithSleep(func(time.Duration) {}))
+	if out := push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)); out != domain.PushAccepted {
 		t.Fatalf("got %v, want accepted after post-commit conflict retry", out)
 	}
-	a, err := s.GetArticle(ctx, "bot-1", store.URLHash(articleURL))
+	a, err := s.GetArticle(ctx, "bot-1", domain.URLHash(articleURL))
 	must(t, err)
-	if a.MaxProgress != 0.5 || a.LastReadAt != store.Timestamp(testNow.Add(60*time.Second)) {
+	if a.MaxProgress != 0.5 || a.LastReadAt != domain.Timestamp(testNow.Add(60*time.Second)) {
 		t.Fatalf("post-commit update lost: %+v", a)
 	}
 }
@@ -163,24 +164,24 @@ func TestPostCommitUpdateRetriesConflict(t *testing.T) {
 // A post-commit update that keeps failing must not be acknowledged: the client resends and the
 // duplicate path heals max_progress/last_read_at without counting the segment twice.
 func TestPostCommitFailureIsRetryAndDuplicateHeals(t *testing.T) {
-	env := storetest.New(t)
+	env := dynamotest.New(t)
 	w := segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)
-	failing := store.New(&updateConflictDB{API: env.DB, failures: 1000}, env.Table, store.WithSleep(func(time.Duration) {}))
-	if out := push(t, failing, w); out != store.PushRetry {
+	failing := dynamo.New(&updateConflictDB{API: env.DB, failures: 1000}, env.Table, dynamo.WithSleep(func(time.Duration) {}))
+	if out := push(t, failing, w); out != domain.PushRetry {
 		t.Fatalf("got %v, want retry when the post-commit update cannot be applied", out)
 	}
-	a, err := env.Store.GetArticle(ctx, "bot-1", store.URLHash(articleURL))
+	a, err := env.Store.GetArticle(ctx, "bot-1", domain.URLHash(articleURL))
 	must(t, err)
 	if a.TotalSeconds != 60 || a.MaxProgress != 0 || a.LastReadAt != "" {
 		t.Fatalf("expected committed totals but no post-commit values yet: %+v", a)
 	}
 
-	if out := push(t, env.Store, w); out != store.PushDuplicate {
+	if out := push(t, env.Store, w); out != domain.PushDuplicate {
 		t.Fatalf("resend = %v, want duplicate", out)
 	}
-	a, err = env.Store.GetArticle(ctx, "bot-1", store.URLHash(articleURL))
+	a, err = env.Store.GetArticle(ctx, "bot-1", domain.URLHash(articleURL))
 	must(t, err)
-	if a.MaxProgress != 0.5 || a.LastReadAt != store.Timestamp(testNow.Add(60*time.Second)) {
+	if a.MaxProgress != 0.5 || a.LastReadAt != domain.Timestamp(testNow.Add(60*time.Second)) {
 		t.Fatalf("duplicate path did not heal: %+v", a)
 	}
 	if a.TotalSeconds != 60 || a.Sessions != 1 || a.Version != 1 {
@@ -190,11 +191,11 @@ func TestPostCommitFailureIsRetryAndDuplicateHeals(t *testing.T) {
 
 // The duplicate path reports retry too when it cannot heal.
 func TestDuplicateReportsRetryWhenHealFails(t *testing.T) {
-	env := storetest.New(t)
+	env := dynamotest.New(t)
 	w := segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)
 	push(t, env.Store, w)
-	failing := store.New(&updateConflictDB{API: env.DB, failures: 1000}, env.Table, store.WithSleep(func(time.Duration) {}))
-	if out := push(t, failing, w); out != store.PushRetry {
+	failing := dynamo.New(&updateConflictDB{API: env.DB, failures: 1000}, env.Table, dynamo.WithSleep(func(time.Duration) {}))
+	if out := push(t, failing, w); out != domain.PushRetry {
 		t.Fatalf("got %v, want retry", out)
 	}
 }
@@ -202,7 +203,7 @@ func TestDuplicateReportsRetryWhenHealFails(t *testing.T) {
 // inputRecordingDB mimics the SDK's idempotency middleware, which writes ClientRequestToken into
 // the caller's input struct, then cancels the first attempt with a conflict.
 type inputRecordingDB struct {
-	store.API
+	dynamo.API
 	inputs []*dynamodb.TransactWriteItemsInput
 	tokens []*string // token on each input as it arrived, before this wrapper filled one
 }
@@ -222,10 +223,10 @@ func (r *inputRecordingDB) TransactWriteItems(ctx context.Context, in *dynamodb.
 // Each attempt needs a fresh input: the SDK stamps an idempotency token on the struct, so
 // reusing it would replay a cancelled attempt's token.
 func TestPushConflictRetryBuildsFreshInput(t *testing.T) {
-	env := storetest.New(t)
+	env := dynamotest.New(t)
 	rec := &inputRecordingDB{API: env.DB}
-	s := store.New(rec, env.Table, store.WithSleep(func(time.Duration) {}))
-	if out := push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)); out != store.PushAccepted {
+	s := dynamo.New(rec, env.Table, dynamo.WithSleep(func(time.Duration) {}))
+	if out := push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow)); out != domain.PushAccepted {
 		t.Fatalf("got %v, want accepted", out)
 	}
 	if len(rec.inputs) != 2 {
@@ -240,7 +241,7 @@ func TestPushConflictRetryBuildsFreshInput(t *testing.T) {
 }
 
 type countingDB struct {
-	store.API
+	dynamo.API
 	batchGets int
 }
 
@@ -251,25 +252,25 @@ func (c *countingDB) BatchGetItem(ctx context.Context, in *dynamodb.BatchGetItem
 
 // T17 AC: status for 100 URLs uses one BatchGet round trip (plus unprocessed retries).
 func TestBatchGetArticlesOneRoundTripFor100(t *testing.T) {
-	env := storetest.New(t)
+	env := dynamotest.New(t)
 	db := &countingDB{API: env.DB}
-	s := store.New(db, env.Table)
+	s := dynamo.New(db, env.Table)
 	push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow))
 
-	hashes := []string{store.URLHash(articleURL)}
+	hashes := []string{domain.URLHash(articleURL)}
 	for i := len(hashes); i < 100; i++ {
-		hashes = append(hashes, store.URLHash(articleURL+"?n="+string(rune('a'+i%26))+string(rune('a'+i/26))))
+		hashes = append(hashes, domain.URLHash(articleURL+"?n="+string(rune('a'+i%26))+string(rune('a'+i/26))))
 	}
 	got, err := s.BatchGetArticles(ctx, "bot-1", hashes)
 	must(t, err)
-	if db.batchGets != 1 || len(got) != 1 || got[store.URLHash(articleURL)].TotalSeconds != 60 {
+	if db.batchGets != 1 || len(got) != 1 || got[domain.URLHash(articleURL)].TotalSeconds != 60 {
 		t.Fatalf("batchGets=%d got=%d", db.batchGets, len(got))
 	}
 }
 
 func TestMarkArticleSyncedIsMonotonic(t *testing.T) {
-	s := storetest.New(t).Store
-	h := store.URLHash(articleURL)
+	s := dynamotest.New(t).Store
+	h := domain.URLHash(articleURL)
 	push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow))
 	must(t, s.MarkArticleSynced(ctx, "bot-1", h, 2, true, testNow))
 	must(t, s.MarkArticleSynced(ctx, "bot-1", h, 1, false, testNow))
@@ -280,8 +281,8 @@ func TestMarkArticleSyncedIsMonotonic(t *testing.T) {
 }
 
 func TestArticleAndDayPageLinks(t *testing.T) {
-	s := storetest.New(t).Store
-	h := store.URLHash(articleURL)
+	s := dynamotest.New(t).Store
+	h := domain.URLHash(articleURL)
 	push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow))
 	must(t, s.SetArticlePage(ctx, "bot-1", h, "page-1", "https://notion.so/page-1"))
 	must(t, s.SetDayPage(ctx, "bot-1", "2026-10-06", "day-page-1"))

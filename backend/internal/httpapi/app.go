@@ -8,18 +8,18 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
+	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/notion"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/queue"
 	"reading-tracker/backend/internal/setup"
-	"reading-tracker/backend/internal/store"
 	"reading-tracker/backend/internal/syncsvc"
 )
 
 // Deps are the handlers' collaborators.
 type Deps struct {
 	Config *config.Config
-	Store  *store.Store
+	Store  *dynamo.Store
 	Notion *notion.Client
 	Queue  queue.Sender
 	Now    func() time.Time

@@ -2,10 +2,9 @@ package httpapi
 
 import (
 	"net/http"
+	"reading-tracker/backend/internal/domain"
 
 	"github.com/labstack/echo/v4"
-
-	"reading-tracker/backend/internal/store"
 )
 
 const maxStatusURLs = 100
@@ -39,7 +38,7 @@ func (h *handlers) articlesStatus(c echo.Context) error {
 	urlByHash := map[string]string{}
 	hashes := make([]string, 0, len(req.CanonicalURLs))
 	for _, u := range req.CanonicalURLs {
-		hash := store.URLHash(u)
+		hash := domain.URLHash(u)
 		if _, dup := urlByHash[hash]; !dup {
 			urlByHash[hash] = u
 			hashes = append(hashes, hash)
