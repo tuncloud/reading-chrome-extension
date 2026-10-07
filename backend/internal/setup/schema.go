@@ -6,6 +6,9 @@ const (
 	DailyTitle   = "Daily Log"
 )
 
+// articlesProp is the Daily Log relation that must target the Library's data source.
+const articlesProp = "Articles"
+
 // PropSpec is one server-owned property: logical key, column name and Notion type.
 type PropSpec struct {
 	Key  string
@@ -36,7 +39,7 @@ var DailyProps = []PropSpec{
 	{"day_title", "Name", "title"},
 	{"day_date", "Date", "date"},
 	{"day_minutes", "Minutes", "number"},
-	{"day_articles", "Articles", "relation"},
+	{"day_articles", articlesProp, "relation"},
 }
 
 func libraryCreateSchema() map[string]any {
@@ -76,7 +79,7 @@ func dailyCreateSchema(libraryDSID string) map[string]any {
 		"Name":    map[string]any{"title": empty},
 		"Date":    map[string]any{"date": empty},
 		"Minutes": map[string]any{"number": map[string]any{"format": "number"}},
-		"Articles": map[string]any{"relation": map[string]any{
+		articlesProp: map[string]any{"relation": map[string]any{
 			"data_source_id": libraryDSID, "type": "single_property", "single_property": empty,
 		}},
 	}

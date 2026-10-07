@@ -112,16 +112,20 @@ func ChildDatabase(id, title string) map[string]any {
 	return map[string]any{"object": "block", "id": id, "type": "child_database", "child_database": map[string]any{"title": title}}
 }
 
-// AddTemplate registers a duplicated template page holding both databases.
+// AddTemplate registers a duplicated template page holding both databases; the Daily
+// Log's Articles relation targets the template's Library data source.
 func (s *Server) AddTemplate(id string) Template {
 	tpl := Template{ID: id, LibraryDB: id + "-lib-db", LibraryDS: id + "-lib-ds", DailyDB: id + "-daily-db", DailyDS: id + "-daily-ds"}
 	s.AddDatabase(tpl.LibraryDB, tpl.LibraryDS, LibrarySchema)
 	s.AddDatabase(tpl.DailyDB, tpl.DailyDS, DailySchema)
+	s.SetRelationTarget(tpl.DailyDS, "Articles", tpl.LibraryDS)
 	s.SetBlocks(id, map[string]any{"object": "block", "id": "intro", "type": "paragraph"},
 		ChildDatabase(tpl.LibraryDB, setup.LibraryTitle), ChildDatabase(tpl.DailyDB, setup.DailyTitle))
 	return tpl
 }
 
+// AddDatabase registers a database with one data source. Relation properties get no
+// target; set one with SetRelationTarget.
 func (s *Server) AddDatabase(dbID, dsID string, schema map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -138,6 +142,18 @@ func (s *Server) addDatabaseLocked(dbID, dsID string, schema map[string]string) 
 		"data_sources": []any{map[string]any{"id": dsID, "name": "Default"}}}
 	s.databases[dbID] = db
 	return db
+}
+
+// SetRelationTarget points relation property name of dsID at data source targetDS.
+func (s *Server) SetRelationTarget(dsID, name, targetDS string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.setRelationLocked(dsID, name, targetDS)
+}
+
+func (s *Server) setRelationLocked(dsID, name, targetDS string) {
+	prop := s.dataSources[dsID]["properties"].(map[string]any)[name].(map[string]any)
+	prop["relation"] = map[string]any{"data_source_id": targetDS, "type": "single_property", "single_property": map[string]any{}}
 }
 
 func (s *Server) SetBlocks(parentID string, blocks ...map[string]any) {
@@ -363,6 +379,12 @@ func (s *Server) createDatabase(w http.ResponseWriter, body map[string]any) {
 		}
 	}
 	db := s.addDatabaseLocked(dbID, dsID, schema)
+	for name, cfg := range props {
+		if rel, ok := cfg.(map[string]any)["relation"].(map[string]any); ok {
+			target, _ := rel["data_source_id"].(string)
+			s.setRelationLocked(dsID, name, target)
+		}
+	}
 	// Like real Notion, the new database is listed among its parent page's children.
 	parentID, _ := parent["page_id"].(string)
 	s.blocks[parentID] = append(s.blocks[parentID], ChildDatabase(dbID, plainTitle(body["title"])))

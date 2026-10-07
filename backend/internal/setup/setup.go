@@ -46,23 +46,22 @@ func (s *Service) ResolveTemplate(ctx context.Context, token, templateID string)
 	if err != nil {
 		return store.DBConfig{}, err
 	}
-	ids := childDatabaseIDs(blocks)
-	return s.resolve(ctx, token, ids[LibraryTitle], ids[DailyTitle])
+	return s.resolve(ctx, token, first(childDatabaseIDs(blocks, LibraryTitle)), first(childDatabaseIDs(blocks, DailyTitle)))
 }
 
 // CreateDatabases creates both databases under parentPageID (spec §2.7). It is
-// idempotent: databases already under the parent with the expected titles (left by
-// an earlier partial attempt) are reused, and only the missing ones are created.
+// idempotent: a Library already under the parent (left by an earlier partial attempt)
+// is reused, and so is the first Daily Log whose Articles relation targets that
+// Library; only the missing ones are created. A Daily Log related to another Library
+// (e.g. one the user deleted, scenario 10) is left alone and a new one is created.
 // Library goes first because the Daily Log relation needs its data source id.
 func (s *Service) CreateDatabases(ctx context.Context, token, parentPageID string) (store.DBConfig, error) {
 	blocks, err := s.Notion.ListBlockChildren(ctx, token, parentPageID)
 	if err != nil && !isNotFound(err) {
 		return store.DBConfig{}, err
 	}
-	ids := childDatabaseIDs(blocks)
-	libID, dailyID := ids[LibraryTitle], ids[DailyTitle]
 
-	var libDSID string
+	libID, libDSID := first(childDatabaseIDs(blocks, LibraryTitle)), ""
 	if libID == "" {
 		lib, err := s.Notion.CreateDatabase(ctx, token, parentPageID, LibraryTitle, libraryCreateSchema())
 		if err != nil {
@@ -72,7 +71,7 @@ func (s *Service) CreateDatabases(ctx context.Context, token, parentPageID strin
 			return store.DBConfig{}, fmt.Errorf("setup: created %s has no data source", LibraryTitle)
 		}
 		libID, libDSID = lib.ID, lib.DataSources[0].ID
-	} else if dailyID == "" {
+	} else {
 		lib, err := s.Notion.GetDatabase(ctx, token, libID)
 		if isNotFound(err) || (err == nil && len(lib.DataSources) == 0) {
 			return store.DBConfig{}, &Error{"database_missing:" + LibraryTitle}
@@ -81,6 +80,18 @@ func (s *Service) CreateDatabases(ctx context.Context, token, parentPageID strin
 			return store.DBConfig{}, err
 		}
 		libDSID = lib.DataSources[0].ID
+	}
+
+	dailyID := ""
+	for _, id := range childDatabaseIDs(blocks, DailyTitle) {
+		ok, err := s.dailyLogRelatesTo(ctx, token, id, libDSID)
+		if err != nil {
+			return store.DBConfig{}, err
+		}
+		if ok {
+			dailyID = id
+			break
+		}
 	}
 	if dailyID == "" {
 		daily, err := s.Notion.CreateDatabase(ctx, token, parentPageID, DailyTitle, dailyCreateSchema(libDSID))
@@ -92,18 +103,48 @@ func (s *Service) CreateDatabases(ctx context.Context, token, parentPageID strin
 	return s.resolve(ctx, token, libID, dailyID)
 }
 
-// childDatabaseIDs maps child_database titles to block ids, keeping the first
-// occurrence of each title.
-func childDatabaseIDs(blocks []notion.Block) map[string]string {
-	ids := map[string]string{}
+// childDatabaseIDs lists the ids of child_database blocks titled title, in order.
+func childDatabaseIDs(blocks []notion.Block, title string) []string {
+	var ids []string
 	for _, b := range blocks {
-		if b.Type == "child_database" && b.ChildDatabase != nil {
-			if _, seen := ids[b.ChildDatabase.Title]; !seen {
-				ids[b.ChildDatabase.Title] = b.ID
-			}
+		if b.Type == "child_database" && b.ChildDatabase != nil && b.ChildDatabase.Title == title {
+			ids = append(ids, b.ID)
 		}
 	}
 	return ids
+}
+
+func first(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	return ids[0]
+}
+
+// dailyLogRelatesTo reports whether Daily Log dbID's Articles relation targets
+// libDSID. A database or data source that no longer exists does not qualify.
+func (s *Service) dailyLogRelatesTo(ctx context.Context, token, dbID, libDSID string) (bool, error) {
+	db, err := s.Notion.GetDatabase(ctx, token, dbID)
+	if isNotFound(err) || (err == nil && len(db.DataSources) == 0) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	ds, err := s.Notion.GetDataSource(ctx, token, db.DataSources[0].ID)
+	if isNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return relatesTo(ds, libDSID), nil
+}
+
+// relatesTo reports whether daily's Articles relation targets data source libDSID.
+func relatesTo(daily *notion.DataSource, libDSID string) bool {
+	rel := daily.Properties[articlesProp].Relation
+	return rel != nil && notion.SameID(rel.DataSourceID, libDSID)
 }
 
 func (s *Service) resolve(ctx context.Context, token, libDBID, dailyDBID string) (store.DBConfig, error) {
@@ -121,40 +162,44 @@ func (s *Service) resolve(ctx context.Context, token, libDBID, dailyDBID string)
 	if err != nil {
 		return store.DBConfig{}, err
 	}
+	// The Articles relation must point at this Library, not at one the user deleted.
+	if !relatesTo(dailyDS, libDS.ID) {
+		return store.DBConfig{}, &Error{"property_type:" + articlesProp}
+	}
 	for k, v := range dailyProps {
 		libProps[k] = v
 	}
-	return store.DBConfig{LibraryDBID: libDBID, LibraryDSID: libDS, LibraryURL: libURL,
-		DailyDBID: dailyDBID, DailyDSID: dailyDS, Props: libProps}, nil
+	return store.DBConfig{LibraryDBID: libDBID, LibraryDSID: libDS.ID, LibraryURL: libURL,
+		DailyDBID: dailyDBID, DailyDSID: dailyDS.ID, Props: libProps}, nil
 }
 
-func (s *Service) resolveDatabase(ctx context.Context, token, dbID, title string, specs []PropSpec) (dsID, url string, props map[string]string, err error) {
+func (s *Service) resolveDatabase(ctx context.Context, token, dbID, title string, specs []PropSpec) (ds *notion.DataSource, url string, props map[string]string, err error) {
 	db, err := s.Notion.GetDatabase(ctx, token, dbID)
 	if isNotFound(err) || (err == nil && len(db.DataSources) == 0) {
-		return "", "", nil, &Error{"database_missing:" + title}
+		return nil, "", nil, &Error{"database_missing:" + title}
 	}
 	if err != nil {
-		return "", "", nil, err
+		return nil, "", nil, err
 	}
-	ds, err := s.Notion.GetDataSource(ctx, token, db.DataSources[0].ID)
+	ds, err = s.Notion.GetDataSource(ctx, token, db.DataSources[0].ID)
 	if isNotFound(err) {
-		return "", "", nil, &Error{"database_missing:" + title}
+		return nil, "", nil, &Error{"database_missing:" + title}
 	}
 	if err != nil {
-		return "", "", nil, err
+		return nil, "", nil, err
 	}
 	props = map[string]string{}
 	for _, spec := range specs {
 		p, ok := ds.Properties[spec.Name]
 		if !ok {
-			return "", "", nil, &Error{"property_missing:" + spec.Name}
+			return nil, "", nil, &Error{"property_missing:" + spec.Name}
 		}
 		if p.Type != spec.Type {
-			return "", "", nil, &Error{"property_type:" + spec.Name}
+			return nil, "", nil, &Error{"property_type:" + spec.Name}
 		}
 		props[spec.Key] = p.ID
 	}
-	return ds.ID, db.URL, props, nil
+	return ds, db.URL, props, nil
 }
 
 // Resync enqueues every ART/DAY whose version is ahead of Notion (T22). Call it

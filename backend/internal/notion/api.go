@@ -119,9 +119,15 @@ func (c *Client) CreateDatabase(ctx context.Context, token, parentPageID, title 
 }
 
 type Property struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Type string `json:"type"`
+	ID       string          `json:"id"`
+	Name     string          `json:"name"`
+	Type     string          `json:"type"`
+	Relation *RelationConfig `json:"relation,omitempty"`
+}
+
+// RelationConfig is a relation property's target data source.
+type RelationConfig struct {
+	DataSourceID string `json:"data_source_id"`
 }
 
 // DataSource.Properties is keyed by property name.

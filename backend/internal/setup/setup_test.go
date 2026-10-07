@@ -91,6 +91,16 @@ func TestResolveTemplateMissingDailyLog(t *testing.T) {
 	}
 }
 
+// I2: a Daily Log whose Articles relation targets another data source is rejected.
+func TestResolveTemplateRelationToOtherLibrary(t *testing.T) {
+	f := newFixture(t)
+	tpl := f.ns.AddTemplate("tpl-1")
+	f.ns.SetRelationTarget(tpl.DailyDS, "Articles", "some-other-ds")
+	if _, err := f.svc.ResolveTemplate(ctx, "tok", "tpl-1"); setup.Reason(err) != "property_type:Articles" {
+		t.Fatalf("reason %q (err %v)", setup.Reason(err), err)
+	}
+}
+
 // Interpretation 1: user-owned columns are not required.
 func TestResolveIgnoresUserOwnedColumns(t *testing.T) {
 	f := newFixture(t)
@@ -171,6 +181,47 @@ func TestCreateDatabasesReusesExistingLibrary(t *testing.T) {
 		t.Fatalf("relation points at %v, want the pre-seeded library data source", rel["data_source_id"])
 	}
 	if db.LibraryDBID != "lib-db" || db.LibraryDSID != "lib-ds" || db.DailyDSID == "" || len(db.Props) != 16 {
+		t.Fatalf("got %+v", db)
+	}
+}
+
+// I2 / scenario 10: the user deleted the Library; the Daily Log left under the parent
+// still relates to it, so setup creates a new Library and a new Daily Log related to it.
+func TestCreateDatabasesSkipsDailyLogRelatedToDeletedLibrary(t *testing.T) {
+	f := newFixture(t)
+	f.ns.AddDatabase("old-daily-db", "old-daily-ds", notiontest.DailySchema)
+	f.ns.SetRelationTarget("old-daily-ds", "Articles", "deleted-lib-ds")
+	f.ns.SetBlocks("parent-1", notiontest.ChildDatabase("old-daily-db", setup.DailyTitle))
+
+	db, err := f.svc.CreateDatabases(ctx, "tok", "parent-1")
+	must(t, err)
+	calls := f.ns.Calls("POST", "/v1/databases")
+	if len(calls) != 2 {
+		t.Fatalf("%d database creates, want a new Library and a new Daily Log", len(calls))
+	}
+	rel := calls[1].Body["initial_data_source"].(map[string]any)["properties"].(map[string]any)["Articles"].(map[string]any)["relation"].(map[string]any)
+	if db.DailyDBID == "old-daily-db" || db.LibraryDSID == "" || rel["data_source_id"] != db.LibraryDSID {
+		t.Fatalf("got %+v, new Daily Log relation targets %v", db, rel["data_source_id"])
+	}
+}
+
+// I2: among several Daily Logs under the parent, the first one related to the Library is reused.
+func TestCreateDatabasesReusesDailyLogRelatedToLibrary(t *testing.T) {
+	f := newFixture(t)
+	f.ns.AddDatabase("lib-db", "lib-ds", notiontest.LibrarySchema)
+	f.ns.AddDatabase("stale-daily-db", "stale-daily-ds", notiontest.DailySchema)
+	f.ns.SetRelationTarget("stale-daily-ds", "Articles", "deleted-lib-ds")
+	f.ns.AddDatabase("daily-db", "daily-ds", notiontest.DailySchema)
+	f.ns.SetRelationTarget("daily-ds", "Articles", "lib-ds")
+	f.ns.SetBlocks("parent-1", notiontest.ChildDatabase("lib-db", setup.LibraryTitle),
+		notiontest.ChildDatabase("stale-daily-db", setup.DailyTitle), notiontest.ChildDatabase("daily-db", setup.DailyTitle))
+
+	db, err := f.svc.CreateDatabases(ctx, "tok", "parent-1")
+	must(t, err)
+	if n := len(f.ns.Calls("POST", "/v1/databases")); n != 0 {
+		t.Fatalf("%d database creates, want 0", n)
+	}
+	if db.LibraryDSID != "lib-ds" || db.DailyDBID != "daily-db" || db.DailyDSID != "daily-ds" {
 		t.Fatalf("got %+v", db)
 	}
 }

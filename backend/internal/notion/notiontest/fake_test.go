@@ -105,3 +105,27 @@ func TestUpdatePageSkipsValidationWhenDataSourceDeleted(t *testing.T) {
 		t.Fatalf("update on a page of a deleted data source: %v", err)
 	}
 }
+
+// A created relation property reports its target data source, as Notion does.
+func TestCreatedRelationReportsTarget(t *testing.T) {
+	ns := notiontest.New(t)
+	c := newClient(ns)
+	db, err := c.CreateDatabase(ctx, "tok", "parent", "Daily Log", map[string]any{
+		"Name":     map[string]any{"title": map[string]any{}},
+		"Articles": map[string]any{"relation": map[string]any{"data_source_id": "lib-ds", "type": "single_property", "single_property": map[string]any{}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds, err := c.GetDataSource(ctx, "tok", db.DataSources[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel := ds.Properties["Articles"].Relation; rel == nil || rel.DataSourceID != "lib-ds" {
+		t.Fatalf("relation %+v", rel)
+	}
+	tpl := ns.AddTemplate("tpl")
+	if ds, _ = c.GetDataSource(ctx, "tok", tpl.DailyDS); ds.Properties["Articles"].Relation.DataSourceID != tpl.LibraryDS {
+		t.Fatalf("template relation %+v", ds.Properties["Articles"].Relation)
+	}
+}
