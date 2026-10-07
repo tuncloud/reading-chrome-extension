@@ -29,8 +29,31 @@ function layerOf(rel: string): { layer: Layer | null; sub: string } {
   return { layer, sub: layer === 'adapters' ? second : '' }
 }
 
+// stripComments drops // and /* */ comments but keeps string and template literals intact,
+// so "https://*/*" does not start a comment.
 function stripComments(code: string): string {
-  return code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const c = code[i]!
+    const next = code[i + 1]
+    if (c === "'" || c === '"' || c === '`') {
+      let j = i + 1
+      while (j < code.length && code[j] !== c) j += code[j] === '\\' ? 2 : 1
+      out += code.slice(i, j + 1)
+      i = j + 1
+    } else if (c === '/' && next === '/') {
+      while (i < code.length && code[i] !== '\n') i++
+    } else if (c === '/' && next === '*') {
+      const end = code.indexOf('*/', i + 2)
+      i = end === -1 ? code.length : end + 2
+      out += ' '
+    } else {
+      out += c
+      i++
+    }
+  }
+  return out
 }
 
 export function importsOf(code: string): string[] {
@@ -50,6 +73,11 @@ function resolveImport(fromRel: string, spec: string): Target {
 export function violation(fromRel: string, target: Target): string | null {
   const from = layerOf(fromRel)
   if (from.layer === null) return `${fromRel} is outside the layer directories ${LAYERS.join(', ')}`
+  if ('pkg' in target && (target.pkg === 'react' || target.pkg === 'react-dom')) {
+    if (fromRel === 'entry/content.ts' || fromRel === 'entry/background.ts') {
+      return `${fromRel} must not bundle ${target.pkg}`
+    }
+  }
   if (from.layer === 'entry') return null
   if ('pkg' in target) {
     if (target.pkg === 'dexie' && from.layer === 'adapters' && from.sub === 'storage') return null
@@ -76,10 +104,10 @@ export function violation(fromRel: string, target: Target): string | null {
 export function globalViolation(fromRel: string, code: string): string | null {
   const { layer, sub } = layerOf(fromRel)
   const body = stripComments(code)
-  if (/\bchrome\s*\.\s*[a-zA-Z]/.test(body) && layer !== 'entry' && !(layer === 'adapters' && sub === 'chrome')) {
+  if (/\bchrome\s*(\?\.|\.|\[)/.test(body) && layer !== 'entry' && !(layer === 'adapters' && sub === 'chrome')) {
     return `${fromRel} uses chrome.* outside adapters/chrome and entry`
   }
-  if ((layer === 'domain' || layer === 'application') && /\b(window|document)\s*\./.test(body)) {
+  if ((layer === 'domain' || layer === 'application') && /\b(window|document)\s*(\?\.|\.|\[)/.test(body)) {
     return `${fromRel} touches window/document in ${layer}`
   }
   return null
@@ -128,6 +156,8 @@ describe('violation rules', () => {
     ['application/popup-model.ts', { pkg: 'react' }, true],
     ['adapters/page/tracker-driver.ts', { pkg: 'react' }, true],
     ['entry/background.ts', { rel: 'adapters/storage/dexie-store.ts' }, false],
+    ['entry/content.ts', { pkg: 'react' }, true],
+    ['entry/background.ts', { pkg: 'react-dom' }, true],
     ['lib/x.ts', { rel: 'domain/url.ts' }, true],
   ] as const)('%s → %j forbidden=%s', (from, target, forbidden) => {
     expect(violation(from, target) !== null).toBe(forbidden)
@@ -141,6 +171,10 @@ describe('violation rules', () => {
     ['adapters/page/tracker-driver.ts', 'document.addEventListener', false],
     ['adapters/page/tracker-driver.ts', 'chrome.runtime.sendMessage', true],
     ['entry/content.ts', 'chrome.runtime.onMessage', false],
+    ['domain/x.ts', 'chrome?.storage.get()', true],
+    ['domain/x.ts', "chrome['storage']", true],
+    ['application/x.ts', 'document?.title', true],
+    ['domain/x.ts', 'const q = `https://*.${d}/*`\nchrome.storage.local.get()', true],
   ] as const)('%s uses %j forbidden=%s', (from, code, forbidden) => {
     expect(globalViolation(from, code) !== null).toBe(forbidden)
   })
@@ -148,5 +182,11 @@ describe('violation rules', () => {
   test('importsOf sees static, type-only, re-export and dynamic imports', () => {
     const code = `import a from './a'\nimport type { B } from '../b'\nexport { c } from "./c"\nconst d = import('./d')\nimport './side'`
     expect(importsOf(code)).toEqual(['./a', '../b', './c', './d', './side'])
+  })
+
+  test('importsOf is not fooled by comment markers inside string literals', () => {
+    const code = "const p = ['https://*/*']\nimport x from '../adapters/y'"
+    expect(importsOf(code)).toContain('../adapters/y')
+    expect(importsOf("// import a from './a'\n/* import b from './b' */\nimport c from './c'")).toEqual(['./c'])
   })
 })
