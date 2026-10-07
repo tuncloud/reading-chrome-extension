@@ -4,19 +4,31 @@ Measures active reading time per article. The data is stored in IndexedDB and pu
 
 ## Architecture
 
-Code is organized by the Chrome context it runs in:
+Code is organized into five feature folders under `src/`:
 
-| Folder | Runs in | Holds |
+| Folder | Runs in | Files |
 |---|---|---|
-| `src/shared` | everywhere | types, message protocol + messaging helpers, URL/Medium/domain rules, config parsing, errors, log |
-| `src/content` | the page | `index.ts` (entry), `driver.ts` (DOM events → tracker), `tracker.ts` (state machine), `sites/` (Medium/Freedium, generic) |
-| `src/background` | service worker (and imported by popup/options) | `index.ts` (listeners, router), `services.ts`, `db.ts` (Dexie), `api.ts` (backend), `sync.ts`, `record.ts`, `config.ts`, `session.ts`, `setup.ts`, `domains.ts` |
-| `src/popup` | popup page | React UI + `model.ts` |
-| `src/options` | options page | React UI + `controller.ts` |
+| `shared` | everywhere | `types.ts`, `messages.ts` and `messaging.ts` (message protocol and helpers), `url.ts`, `medium.ts`, `domains.ts`, `reading.ts`, `config.ts`, `errors.ts`, `log.ts` |
+| `content` | the page | `index.ts` (entry), `driver.ts` (DOM events to tracker), `tracker.ts` (state machine), `progress.ts`, `sites/{metadata,freedium-medium,generic,registry,types}.ts` |
+| `background` | service worker (popup and options also import it) | `index.ts` (listeners), `router.ts`, `services.ts`, `db.ts` (Dexie), `api.ts`, `api-wire.ts`, `sync.ts`, `record.ts`, `config.ts`, `session.ts`, `setup.ts`, `domains.ts`, `pkce.ts`, `device.ts` |
+| `popup` | popup page | `main.tsx`, `PopupApp.tsx`, `Popup.tsx`, `model.ts`, `tabs.ts`, `https-url.ts`, `messages.ts` |
+| `options` | options page | `main.tsx`, `OptionsApp.tsx`, `OptionsView.tsx`, `controller.ts` |
 
-Two rules are enforced by `test/arch.test.ts`:
+`test/arch.test.ts` enforces these rules:
 - `content/` imports only `content/` and `shared/`, so pages never bundle Dexie or the API client.
-- React stays out of the content script and the service worker.
+- `shared/` imports only `shared/`.
+- `background/` imports neither `popup/`, `options/` nor `content/`.
+- `popup/` and `options/` may not import `content/`; `popup/` may not import `options/`; `options/` may import only `popup/messages` from `popup/`.
+- The `dexie` package is imported only from `background/`.
+- React is imported only from `popup/` and `options/`. The import closures of `content/index.ts` and `background/index.ts` are React-free.
+- Only the five folders exist under `src/`.
+
+How a read becomes a Notion page:
+1. `content/index.ts` asks the background for a tracking plan.
+2. `content/driver.ts` feeds DOM events to `content/tracker.ts`.
+3. Flushed segments go to the background, where `background/record.ts` stores them.
+4. The `sync` alarm runs `background/sync.ts`, which sends them to `POST /v1/sync/push` through `background/api.ts`.
+5. The backend queues the Notion write.
 
 Modules call Dexie, `fetch` and `chrome.*` directly. Tests use fake-indexeddb, `test/helpers.ts` (fresh DB, clock, API stub) and `test/chrome.ts` (a `chrome` mock).
 
@@ -68,7 +80,7 @@ Then:
 
 | Command | Does |
 |---|---|
-| `pnpm test` | unit tests (Vitest, jsdom, fake-indexeddb, React Testing Library) including the layer rule |
+| `pnpm test` | unit tests (Vitest, jsdom, fake-indexeddb, React Testing Library) including the folder dependency rules |
 | `pnpm typecheck` | `tsc --noEmit` |
 | `pnpm dev` | rebuild `dist/` on every save (then reload the extension in `chrome://extensions`) |
 | `pnpm build` | two Vite builds: service worker and React pages (ES modules), then the content script (one IIFE, no React) |
