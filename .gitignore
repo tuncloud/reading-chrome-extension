@@ -6,3 +6,4 @@ dist/
 .terraform/
 *.tfstate
 *.tfstate.*
+.claude/worktrees/
