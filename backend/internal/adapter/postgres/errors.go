@@ -29,11 +29,6 @@ func tagged(err error) error {
 	return err
 }
 
-func isUniqueViolation(err error) bool {
-	var pe *pgconn.PgError
-	return errors.As(err, &pe) && pe.Code == "23505"
-}
-
 // notFound maps pgx.ErrNoRows to domain.ErrNotFound and tags everything else.
 func notFound(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

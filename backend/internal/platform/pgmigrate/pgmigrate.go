@@ -19,6 +19,37 @@ var files embed.FS
 // lockKey serialises concurrent Up calls across processes.
 const lockKey = 727274
 
+type migration struct {
+	Name, Base string // embedded path and file name
+	Version    int
+}
+
+// plan lists the migrations in fsys in version order. A non-numeric or duplicate
+// version prefix is an error, so a clashing file fails loudly instead of being skipped.
+func plan(fsys fs.FS) ([]migration, error) {
+	names, err := fs.Glob(fsys, "migrations/*.sql")
+	if err != nil {
+		return nil, err
+	}
+	seen := map[int]string{}
+	out := make([]migration, 0, len(names))
+	for _, name := range names {
+		base := strings.TrimPrefix(name, "migrations/")
+		prefix, _, _ := strings.Cut(base, "_")
+		version, err := strconv.Atoi(prefix)
+		if err != nil {
+			return nil, fmt.Errorf("pgmigrate: %s: non-numeric version prefix", base)
+		}
+		if prev, dup := seen[version]; dup {
+			return nil, fmt.Errorf("pgmigrate: %s and %s share version %d", prev, base, version)
+		}
+		seen[version] = base
+		out = append(out, migration{Name: name, Base: base, Version: version})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Version < out[j].Version })
+	return out, nil
+}
+
 // Up applies every embedded migration not yet recorded in schema_migrations.
 // Each file runs in its own transaction together with its version insert.
 func Up(ctx context.Context, pool *pgxpool.Pool) (err error) {
@@ -39,18 +70,12 @@ func Up(ctx context.Context, pool *pgxpool.Pool) (err error) {
 		version int PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
 		return fmt.Errorf("pgmigrate: schema_migrations: %w", err)
 	}
-	names, err := fs.Glob(files, "migrations/*.sql")
+	migrations, err := plan(files)
 	if err != nil {
 		return err
 	}
-	sort.Strings(names)
-	for _, name := range names {
-		base := strings.TrimPrefix(name, "migrations/")
-		prefix, _, _ := strings.Cut(base, "_")
-		version, err := strconv.Atoi(prefix)
-		if err != nil {
-			return fmt.Errorf("pgmigrate: %s: non-numeric version prefix", base)
-		}
+	for _, mg := range migrations {
+		name, base, version := mg.Name, mg.Base, mg.Version
 		var applied bool
 		if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)", version).Scan(&applied); err != nil {
 			return fmt.Errorf("pgmigrate: check %s: %w", base, err)
