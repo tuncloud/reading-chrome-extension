@@ -47,25 +47,6 @@ spec:
     - extract:
         key: /reading-tracker/reading-tracker
 ---
-# Second param for the database so its connection info is one unit (pattern: /n8n/n8n-db).
-# Key: DATABASE_URL (host postgres-17.tuando.app, pool_max_conns=5).
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata:
-  name: reading-tracker-db-secret
-  namespace: reading-tracker
-spec:
-  refreshInterval: 24h
-  secretStoreRef:
-    name: aws-parameter-store
-    kind: ClusterSecretStore
-  target:
-    name: reading-tracker-db-secret
-    creationPolicy: Owner
-  dataFrom:
-    - extract:
-        key: /reading-tracker/reading-tracker-db
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -93,7 +74,6 @@ spec:
           envFrom:
             - configMapRef: { name: reading-tracker-config }
             - secretRef: { name: reading-tracker-secret }
-            - secretRef: { name: reading-tracker-db-secret }   # later entries win on key conflict
           ports:
             - { name: health, containerPort: 8081 }
           livenessProbe:   # process only: a DB outage must not restart the pod
@@ -131,7 +111,6 @@ spec:
           envFrom:
             - configMapRef: { name: reading-tracker-config }
             - secretRef: { name: reading-tracker-secret }
-            - secretRef: { name: reading-tracker-db-secret }
           ports:
             - { name: http, containerPort: 8080 }
           readinessProbe:   # DB ping
