@@ -14,79 +14,6 @@ import (
 	"reading-tracker/backend/internal/domain"
 )
 
-const articleURL = "https://medium.com/p/8f3c2a1b9d4e"
-
-func segment(id, url string, seq, secs int, progress float64, started time.Time) domain.SegmentWrite {
-	return domain.SegmentWrite{
-		InstallationID: "bot-1", DeviceID: "dev-1", SegmentID: id, SessionID: "sess-1", Seq: seq,
-		URLHash: domain.URLHash(url), Date: started.UTC().Format("2006-01-02"),
-		StartedAt: started, EndedAt: started.Add(time.Duration(secs) * time.Second),
-		ActiveSeconds: secs, MaxProgress: progress,
-		Article: domain.ArticleMeta{CanonicalURL: url, Source: "medium", Title: "Designing Idempotent APIs", WordCount: 1820},
-	}
-}
-
-func push(t *testing.T, s *dynamo.Store, w domain.SegmentWrite) domain.PushOutcome {
-	t.Helper()
-	out, err := s.PushSegment(ctx, w)
-	must(t, err)
-	return out
-}
-
-// T10 AC + scenario 2: the same segment twice increments aggregates once (C2).
-func TestPushSegmentTwiceCountsOnce(t *testing.T) {
-	s := dynamotest.New(t).Store
-	w := segment("6f1d2c9e-6a43-4b1e-9a0e-2f7c1d5b8e11", articleURL, 0, 58, 0.42, testNow)
-
-	if out := push(t, s, w); out != domain.PushAccepted {
-		t.Fatalf("first push = %v", out)
-	}
-	if out := push(t, s, w); out != domain.PushDuplicate {
-		t.Fatalf("second push = %v, want duplicate", out)
-	}
-	a, err := s.GetArticle(ctx, "bot-1", domain.URLHash(articleURL))
-	must(t, err)
-	if a.TotalSeconds != 58 || a.Sessions != 1 || a.Version != 1 || a.MaxProgress != 0.42 || a.CanonicalURL != articleURL || a.Title != "Designing Idempotent APIs" {
-		t.Fatalf("aggregate wrong: %+v", a)
-	}
-	if a.FirstReadAt != domain.Timestamp(testNow) || a.LastReadAt != domain.Timestamp(testNow.Add(58*time.Second)) {
-		t.Fatalf("read times wrong: first=%s last=%s", a.FirstReadAt, a.LastReadAt)
-	}
-	d, err := s.GetDay(ctx, "bot-1", "2026-10-06")
-	must(t, err)
-	if d.Seconds != 58 || d.Version != 1 || len(d.ArticleHashes) != 1 || d.ArticleHashes[0] != domain.URLHash(articleURL) {
-		t.Fatalf("day wrong: %+v", d)
-	}
-}
-
-// T10 AC: max_progress (and last_read_at) never decrease.
-func TestMaxProgressNeverDecreases(t *testing.T) {
-	s := dynamotest.New(t).Store
-	push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.6, testNow.Add(time.Hour)))
-	push(t, s, segment("00000000-0000-4000-8000-000000000002", articleURL, 1, 60, 0.3, testNow))
-	a, _ := s.GetArticle(ctx, "bot-1", domain.URLHash(articleURL))
-	if a.MaxProgress != 0.6 {
-		t.Fatalf("max_progress = %v, want 0.6", a.MaxProgress)
-	}
-	if a.LastReadAt != domain.Timestamp(testNow.Add(time.Hour+60*time.Second)) {
-		t.Fatalf("last_read_at went backwards: %s", a.LastReadAt)
-	}
-	if a.TotalSeconds != 120 || a.Version != 2 {
-		t.Fatalf("totals wrong: %+v", a)
-	}
-}
-
-// Scenario 3: seq 1 before seq 0 still counts one session.
-func TestOutOfOrderSessionCountedOnce(t *testing.T) {
-	s := dynamotest.New(t).Store
-	push(t, s, segment("00000000-0000-4000-8000-000000000002", articleURL, 1, 60, 0.5, testNow.Add(time.Minute)))
-	push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.2, testNow))
-	a, _ := s.GetArticle(ctx, "bot-1", domain.URLHash(articleURL))
-	if a.Sessions != 1 || a.TotalSeconds != 120 {
-		t.Fatalf("sessions=%d total=%d", a.Sessions, a.TotalSeconds)
-	}
-}
-
 type throttlingDB struct{ dynamo.API }
 
 func (throttlingDB) TransactWriteItems(context.Context, *dynamodb.TransactWriteItemsInput, ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error) {
@@ -265,39 +192,5 @@ func TestBatchGetArticlesOneRoundTripFor100(t *testing.T) {
 	must(t, err)
 	if db.batchGets != 1 || len(got) != 1 || got[domain.URLHash(articleURL)].TotalSeconds != 60 {
 		t.Fatalf("batchGets=%d got=%d", db.batchGets, len(got))
-	}
-}
-
-func TestMarkArticleSyncedIsMonotonic(t *testing.T) {
-	s := dynamotest.New(t).Store
-	h := domain.URLHash(articleURL)
-	push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow))
-	must(t, s.MarkArticleSynced(ctx, "bot-1", h, 2, true, testNow))
-	must(t, s.MarkArticleSynced(ctx, "bot-1", h, 1, false, testNow))
-	a, _ := s.GetArticle(ctx, "bot-1", h)
-	if a.NotionSyncedVersion != 2 || !a.Completed {
-		t.Fatalf("older version overwrote newer: %+v", a)
-	}
-}
-
-func TestArticleAndDayPageLinks(t *testing.T) {
-	s := dynamotest.New(t).Store
-	h := domain.URLHash(articleURL)
-	push(t, s, segment("00000000-0000-4000-8000-000000000001", articleURL, 0, 60, 0.5, testNow))
-	must(t, s.SetArticlePage(ctx, "bot-1", h, "page-1", "https://notion.so/page-1", "ds-1"))
-	must(t, s.SetDayPage(ctx, "bot-1", "2026-10-06", "day-page-1", "ds-2"))
-	a, _ := s.GetArticle(ctx, "bot-1", h)
-	d, _ := s.GetDay(ctx, "bot-1", "2026-10-06")
-	if a.NotionPageID != "page-1" || a.NotionURL != "https://notion.so/page-1" || d.NotionPageID != "day-page-1" ||
-		a.NotionDataSourceID != "ds-1" || d.NotionDataSourceID != "ds-2" {
-		t.Fatalf("links not saved: %+v %+v", a, d)
-	}
-	must(t, s.ClearArticlePage(ctx, "bot-1", h))
-	must(t, s.ClearDayPage(ctx, "bot-1", "2026-10-06"))
-	a, _ = s.GetArticle(ctx, "bot-1", h)
-	d, _ = s.GetDay(ctx, "bot-1", "2026-10-06")
-	if a.NotionPageID != "" || a.NotionURL != "" || d.NotionPageID != "" ||
-		a.NotionDataSourceID != "" || d.NotionDataSourceID != "" {
-		t.Fatalf("links not cleared: %+v %+v", a, d)
 	}
 }
