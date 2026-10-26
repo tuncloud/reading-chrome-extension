@@ -14,9 +14,24 @@ import (
 )
 
 // Store reads and writes the reading database.
-type Store struct{ pool *pgxpool.Pool }
+type Store struct {
+	pool  *pgxpool.Pool
+	sleep func(time.Duration)
+}
 
-func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+// Option configures a Store.
+type Option func(*Store)
+
+// WithSleep replaces time.Sleep in retry back-offs (tests).
+func WithSleep(f func(time.Duration)) Option { return func(s *Store) { s.sleep = f } }
+
+func New(pool *pgxpool.Pool, opts ...Option) *Store {
+	s := &Store{pool: pool, sleep: time.Sleep}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
 
 // exec runs one statement and tags its error.
 func (s *Store) exec(ctx context.Context, sql string, args ...any) error {
@@ -78,4 +93,6 @@ var (
 	_ port.Devices       = (*Store)(nil)
 	_ port.OAuthGrants   = (*Store)(nil)
 	_ port.Installations = (*Store)(nil)
+	_ port.Reading       = (*Store)(nil)
+	_ port.DataPurger    = (*Store)(nil)
 )
