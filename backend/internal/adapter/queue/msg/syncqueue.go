@@ -1,4 +1,4 @@
-package queue
+package msg
 
 import (
 	"context"
@@ -65,6 +65,6 @@ func messageFor(j port.Job) Message {
 	return Message{Type: Type(j.Type), InstallationID: j.InstallationID, URLHash: j.URLHash, Date: j.Date, UserID: j.UserID}
 }
 
-func (m Message) job() port.Job {
+func (m Message) Job() port.Job {
 	return port.Job{Type: port.JobType(m.Type), InstallationID: m.InstallationID, URLHash: m.URLHash, Date: m.Date, UserID: m.UserID}
 }

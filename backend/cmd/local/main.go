@@ -13,6 +13,7 @@ import (
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/wire"
+	"reading-tracker/backend/internal/wire/awswire"
 )
 
 func main() {
@@ -23,12 +24,12 @@ func main() {
 		os.Exit(1)
 	}
 	ctx := context.Background()
-	awsCfg, err := wire.AWSConfig(ctx)
+	awsCfg, err := awswire.AWSConfig(ctx)
 	if err != nil {
 		log.Error("aws config", "err", err)
 		os.Exit(1)
 	}
-	ddb := wire.DynamoDB(awsCfg)
+	ddb := awswire.DynamoDB(awsCfg)
 	if err := dynamo.CreateTable(ctx, ddb, cfg.TableName); err != nil {
 		log.Error("create table (is `make ddb-up` running?)", "err", err)
 		os.Exit(1)
@@ -40,7 +41,7 @@ func main() {
 			"delay", delay.String(), "bucket", cfg.DebounceBucket.String())
 	}
 	q := &queue.Local{Delay: delay, Log: log}
-	q.Handle = wire.Worker(cfg, st, q, q, log).HandleSQS
+	q.Handle = awswire.Worker(cfg, st, q, q, log).HandleSQS
 	e := wire.API(cfg, st, q, log)
 	addr := os.Getenv("LISTEN_ADDR")
 	if addr == "" {

@@ -371,7 +371,7 @@ kv:       { key (PK), value }                    // device_token, device_id, ins
 ```
 Synced segments older than 30 days are deleted locally.
 
-### 3.5 Environment variables (Lambda)
+### 3.5 Environment variables
 
 | Var | Source | Used by |
 |---|---|---|
@@ -387,6 +387,16 @@ Synced segments older than 30 days are deleted locally.
 | `PUBLIC_BASE_URL` | tf var, may be empty (C14) | api |
 | `DEBOUNCE_BUCKET_SECONDS` | tf var | api |
 | `TRACKING_CONFIG_JSON` | tf var, optional | api, worker |
+| `STORE` | k8s ConfigMap/Secret, `dynamo` (default) or `postgres` | k8s/postgres: server/poller |
+| `DATABASE_URL` | k8s ConfigMap/Secret | k8s/postgres: server/poller |
+| `QUEUE_DELAY_SECONDS` | k8s ConfigMap/Secret, default = `DEBOUNCE_BUCKET_SECONDS`; `D ≥ B`, `≤ 900` | k8s/postgres: server/poller |
+| `LISTEN_ADDR` | k8s ConfigMap/Secret, default `:8080` | k8s/postgres: server |
+| `HEALTH_ADDR` | k8s ConfigMap/Secret, default `:8081` | k8s/postgres: poller |
+| `POLL_INTERVAL_SECONDS` | k8s ConfigMap/Secret, default `1` | k8s/postgres: poller |
+
+§3.1–§3.2 describe the DynamoDB mapping; the Postgres mapping is design
+`docs/superpowers/specs/2026-10-25-postgres-k8s-design.md` §6 plus migration
+`backend/internal/platform/pgmigrate/migrations/0001_store.sql`.
 
 ---
 

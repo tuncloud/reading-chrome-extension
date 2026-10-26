@@ -109,7 +109,7 @@ Stop `pnpm dev` with Ctrl-C.
 
 | Suite | Command | Needs |
 |---|---|---|
-| Backend | `cd backend && gofmt -l . ; go vet ./... && go test -race ./...` | `make ddb-up` |
+| Backend | `cd backend && gofmt -l . ; go vet ./... && go test -race ./...` | `make ddb-up` and `make pg-up` |
 | Extension | `cd extension && pnpm check` | — (typecheck, tests, both builds) |
 | Extension in a real browser | `cd extension && pnpm smoke` | the backend running (step 3) and `CHROME_BIN` (below) |
 | Infrastructure | `cd infra/terraform && make check && make test` | Terraform only, no AWS (offline, mocked providers) |
@@ -250,3 +250,36 @@ pnpm build
 | Infrastructure | Edit `infra/terraform`, run `make check && make test`, then plan and apply. Back up the state afterwards. |
 | Rotate `TOKEN_ENC_KEYS` | Prepend the new key (`v2:<b64>,v1:<b64>`) with `aws ssm put-parameter --overwrite`, then plan and apply (spec scenario 19). |
 | Tear down | Set `deletion_protection_enabled = false` in `dynamodb.tf`, apply, then `terraform destroy -var-file=dev.tfvars`. Notion pages are not touched. |
+
+---
+
+## Part 3 — Kubernetes (Postgres)
+
+This deploys the second mode: `cmd/server` + `cmd/poller` on Postgres, on the tuncloud cluster. The
+operator steps live in [`backend/README.md`](../backend/README.md) → "Deploy to tuncloud"; follow
+them in order.
+
+Once deployed, smoke-test it:
+
+```bash
+curl -s https://reading.tuando.app/healthz    # ok
+```
+
+Then build the extension against it:
+
+```bash
+cd extension
+echo "VITE_API_BASE=https://reading.tuando.app" > .env.production.local
+pnpm build
+```
+
+Load it and repeat [Part 2, step 9](#9-smoke-test-the-deployment-spec-t32) against this build,
+exactly as for the Lambda deployment.
+
+In place of the dead-letter queue check, count dead jobs:
+
+```bash
+ssh worker "sudo -u postgres psql reading_tracker -Atc \"select count(*) from sync_jobs where state='dead'\""   # 0
+```
+
+A non-zero count means jobs that failed 10 times; inspect their `last_error` column for the cause.

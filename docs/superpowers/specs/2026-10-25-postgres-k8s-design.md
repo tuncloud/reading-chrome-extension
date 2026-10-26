@@ -166,6 +166,9 @@ CREATE INDEX sync_jobs_ready ON sync_jobs (run_at) WHERE state = 'ready';
       AND run_at <= now()
       AND id = (SELECT min(id) FROM sync_jobs h
                 WHERE h.group_id = j.group_id AND h.state <> 'dead')
+      AND NOT EXISTS (SELECT 1 FROM sync_jobs l
+                      WHERE l.group_id = j.group_id AND l.state = 'leased'
+                        AND l.leased_until > now() AND l.id <> j.id)
     ORDER BY run_at, id
     FOR UPDATE SKIP LOCKED
     LIMIT 1)
@@ -179,10 +182,24 @@ CREATE INDEX sync_jobs_ready ON sync_jobs (run_at) WHERE state = 'ready';
   group waits behind it: that is the SQS FIFO behaviour C4/C21 depend on (e.g. the `day` job queued
   after an `article` job never runs before it). The conformance test for C4 runs two pollers against
   one group with a 429 on the head and asserts strict *ordered* processing.
-- **Ack:** `DELETE WHERE id = $1`.
-- **Fail:** `UPDATE SET state='ready', leased_until=NULL, run_at = now() + $backoff, last_error=$2`.
+  The `NOT EXISTS` clause (added 2026-10-26, final review) closes a commit-order gap: insert commit
+  order is not id order, so with a small `D` a lower id can become visible after a higher id of the
+  same group was already claimed; without the clause that lower id would be the new head and run
+  concurrently with the live lease.
+- **Ack:** `DELETE WHERE id = $1 AND state = 'leased' AND attempts = $claimed`.
+- **Fail:** `UPDATE SET state='ready', leased_until=NULL, run_at = now() + $backoff, last_error=$2
+  WHERE id = $1 AND state = 'leased' AND attempts = $claimed`.
   Backoff for plain errors: `min(30s × attempts, 5m)`. For `RetryAfterError`: exactly the requested
   delay (already includes the jitter the use case adds). At `attempts ≥ 10`: `state='dead'`.
+- **Fenced settles** (added 2026-10-26 during implementation review): `$claimed` is the `attempts`
+  value the claim returned to *this* worker. A worker that overran its lease and was superseded
+  therefore cannot ack, release or kill a row another worker now holds; its settle affects 0 rows,
+  is logged, and is otherwise ignored. Without the fence a stale release could reopen a group that
+  is still being processed (two concurrent runs, breaking C4). To make overruns rare, the handler
+  runs under a 60 s timeout (Lambda worker parity), shorter than the 6-minute lease and than the
+  poller pod's `terminationGracePeriodSeconds` minus the 10 s settle timeout. A handler panic is
+  recovered and treated as a plain error (backoff, then `dead`). `last_error` is truncated to
+  ≤ 1000 bytes on a rune boundary so the settle write can never fail on invalid UTF-8.
 - Expired leases need no sweeper: the claim query above already treats a `leased` row with
   `leased_until <= now()` as claimable, and the claim's own `UPDATE` renews the lease.
 
@@ -320,10 +337,13 @@ From the skill's `manifest.template.yaml` with these specifics:
 | ConfigMap `reading-tracker-config` | `APP_ENV=prod`, `STORE=postgres`, `LISTEN_ADDR=:8080`, `NOTION_VERSION=2025-09-03`, `PUBLIC_BASE_URL=https://reading.tuando.app`, `DEBOUNCE_BUCKET_SECONDS=120`, `QUEUE_DELAY_SECONDS=120` (the AWS production values; `account.Delete` relies on `D ≥ 120 s`), `ALLOWED_EXTENSION_IDS=<store extension id>`, `TRACKING_CONFIG_JSON` (optional) |
 | ExternalSecret `reading-tracker-secret` | param `/reading-tracker/reading-tracker` → keys `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, `TOKEN_ENC_KEYS`, `DEVICE_TOKEN_PEPPER` |
 | ExternalSecret `reading-tracker-db-secret` | param `/reading-tracker/reading-tracker-db` → key `DATABASE_URL` (host `postgres-17.tuando.app`, `sslmode` per the server's setting, `pool_max_conns=5`) |
-| Deployment `reading-tracker-server` | `command: ["/server"]`, single container (migrates on start), port 8080, readiness+liveness `/healthz`, 1 replica, requests 10m/32Mi, limits 200m/128Mi |
-| Deployment `reading-tracker-poller` | `command: ["/poller"]`, single container, liveness `/healthz` on 8081, 1 replica (may be raised; the queue is safe for N pollers), same resources |
+| Deployment `reading-tracker-server` | `command: ["/server"]`, single container (migrates on start), port 8080, readiness `/healthz` (DB ping), liveness `/livez` (process only), 1 replica, requests 10m/32Mi, limits 200m/128Mi |
+| Deployment `reading-tracker-poller` | `command: ["/poller"]`, single container, liveness `/livez` (process only) on 8081 (`/healthz`, the DB ping, is served there too), 1 replica (may be raised; the queue is safe for N pollers), same resources. `terminationGracePeriodSeconds: 90`, above the 60 s handler timeout plus the 10 s settle timeout, so a job in flight at `SIGTERM` settles before `SIGKILL`. |
 | Service `reading-tracker-server` | 80 → http |
 | Ingress `reading-tracker-server` | class `nginx`, host `reading.tuando.app`, no `tls:` block; CORS via nginx annotations mirroring the Function URL: `enable-cors: "true"`, `cors-allow-origin: chrome-extension://<id>` (one per allowed id), `cors-allow-methods: GET, POST, DELETE`, `cors-allow-headers: authorization, content-type`, `cors-max-age: "3600"` |
+
+Liveness never touches the database (added 2026-10-26, final review): a Postgres outage must only
+take the pods out of service via readiness, not restart-storm them via liveness.
 
 No init containers anywhere (see §4.2). CORS stays outside the app in both modes: the Function URL
 serves it on AWS, the Ingress serves it on Kubernetes; `httpapi` keeps doing none. (An MV3 service
