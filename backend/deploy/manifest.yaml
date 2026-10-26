@@ -1,0 +1,185 @@
+# backend/deploy/manifest.yaml — the reading-tracker backend on the tuncloud cluster.
+# Apply once by hand to bootstrap; after that CI sets the image through the deploy gateway.
+# Re-applying resets the image to the tag below — bump it to the running tag first:
+#   kubectl get deploy -n reading-tracker -o jsonpath='{..image}'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: reading-tracker
+---
+# Non-sensitive config only. Hosts/ports may live here or in the secret param (one atomic unit).
+# ALLOWED_EXTENSION_IDS: replace the placeholder with the store extension id before applying
+# (same id as the Ingress cors-allow-origin annotation).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reading-tracker-config
+  namespace: reading-tracker
+data:
+  APP_ENV: "prod"
+  STORE: "postgres"
+  LISTEN_ADDR: ":8080"
+  HEALTH_ADDR: ":8081"
+  NOTION_VERSION: "2025-09-03"
+  PUBLIC_BASE_URL: "https://reading.tuando.app"
+  DEBOUNCE_BUCKET_SECONDS: "120"
+  QUEUE_DELAY_SECONDS: "120"   # account.Delete relies on D >= 120 s
+  ALLOWED_EXTENSION_IDS: "REPLACE_WITH_EXTENSION_ID"
+  # TRACKING_CONFIG_JSON: '{...}'   # optional
+---
+# Param Store /reading-tracker/reading-tracker is a SecureString holding one JSON object; every key
+# becomes an env var. Keys: NOTION_CLIENT_ID, NOTION_CLIENT_SECRET, TOKEN_ENC_KEYS, DEVICE_TOKEN_PEPPER.
+# The operator creates the value by hand. Document the key names in the app README, never the values.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: reading-tracker-secret
+  namespace: reading-tracker
+spec:
+  refreshInterval: 24h
+  secretStoreRef:
+    name: aws-parameter-store
+    kind: ClusterSecretStore
+  target:
+    name: reading-tracker-secret
+    creationPolicy: Owner
+  dataFrom:
+    - extract:
+        key: /reading-tracker/reading-tracker
+---
+# Second param for the database so its connection info is one unit (pattern: /n8n/n8n-db).
+# Key: DATABASE_URL (host postgres-17.tuando.app, pool_max_conns=5).
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: reading-tracker-db-secret
+  namespace: reading-tracker
+spec:
+  refreshInterval: 24h
+  secretStoreRef:
+    name: aws-parameter-store
+    kind: ClusterSecretStore
+  target:
+    name: reading-tracker-db-secret
+    creationPolicy: Owner
+  dataFrom:
+    - extract:
+        key: /reading-tracker/reading-tracker-db
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reading-tracker-poller
+  namespace: reading-tracker
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: reading-tracker-poller }
+  template:
+    metadata:
+      labels: { app: reading-tracker-poller }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532   # distroless "nonroot"; numeric so runAsNonRoot is verifiable
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: poller
+          image: ghcr.io/tuncloud/reading-tracker:v0.1.0
+          command: ["/poller"]
+          envFrom:
+            - configMapRef: { name: reading-tracker-config }
+            - secretRef: { name: reading-tracker-secret }
+            - secretRef: { name: reading-tracker-db-secret }   # later entries win on key conflict
+          ports:
+            - { name: health, containerPort: 8081 }
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reading-tracker-server
+  namespace: reading-tracker
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: reading-tracker-server }
+  template:
+    metadata:
+      labels: { app: reading-tracker-server }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: server
+          image: ghcr.io/tuncloud/reading-tracker:v0.1.0
+          command: ["/server"]
+          envFrom:
+            - configMapRef: { name: reading-tracker-config }
+            - secretRef: { name: reading-tracker-secret }
+            - secretRef: { name: reading-tracker-db-secret }
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reading-tracker-server
+  namespace: reading-tracker
+spec:
+  selector: { app: reading-tracker-server }
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+# No `tls:` block: nginx serves the *.tuando.app wildcard cert by default. DNS reading.tuando.app →
+# the ingress IP (same as gateway.tuando.app).
+# CORS mirrors the Lambda Function URL; replace REPLACE_WITH_EXTENSION_ID with the store extension id.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: reading-tracker-server
+  namespace: reading-tracker
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "chrome-extension://REPLACE_WITH_EXTENSION_ID"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, DELETE"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "authorization, content-type"
+    nginx.ingress.kubernetes.io/cors-max-age: "3600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: reading.tuando.app
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: reading-tracker-server
+                port:
+                  name: http

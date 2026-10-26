@@ -2,7 +2,7 @@ SHELL := /bin/bash
 DDB_CONTAINER := reading-ddb
 PG_CONTAINER := reading-pg
 
-.PHONY: test ddb-up ddb-down pg-up pg-down run-local build build-api build-worker
+.PHONY: test ddb-up ddb-down pg-up pg-down run-local build build-api build-worker run-pg pg-migrate image
 
 test:
 	go test ./...
@@ -42,3 +42,15 @@ build-api:
 
 build-worker:
 	$(LAMBDA_ENV) go build $(LAMBDA_FLAGS) -o build/worker/bootstrap ./cmd/worker
+
+PG_URL := postgres://reading:reading@localhost:5432/reading?sslmode=disable
+
+run-pg: .env.local
+	set -a && source .env.local && set +a && export STORE=postgres DATABASE_URL=$(PG_URL) && \
+		(go run ./cmd/poller & trap 'kill $$!' EXIT; go run ./cmd/server)
+
+pg-migrate:
+	DATABASE_URL=$(PG_URL) go run ./cmd/migrate
+
+image:
+	podman build --platform linux/arm64 -t ghcr.io/tuncloud/reading-tracker:dev -f Containerfile .

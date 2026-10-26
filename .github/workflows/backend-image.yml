@@ -1,0 +1,101 @@
+# .github/workflows/backend-image.yml — the reading-tracker backend (backend/).
+# Builds ghcr.io/tuncloud/reading-tracker and rolls it out to namespace reading-tracker.
+name: reading-tracker build & deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: reading
+          POSTGRES_PASSWORD: reading
+          POSTGRES_DB: reading
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U reading"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      dynamodb:
+        image: amazon/dynamodb-local:latest
+        ports:
+          - 8000:8000
+    env:
+      PG_TEST_URL: postgres://reading:reading@localhost:5432/reading?sslmode=disable
+      DYNAMODB_ENDPOINT: http://localhost:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race ./...
+      # The k8s binaries must not link the AWS SDK (design: no AWS on the Postgres path).
+      - name: no AWS in cmd/server, cmd/poller, cmd/migrate
+        run: |
+          deps="$(go list -deps ./cmd/server ./cmd/poller ./cmd/migrate | grep -E 'aws-sdk-go|aws-lambda-go|smithy-go' || true)"
+          if [ -n "$deps" ]; then
+            echo "AWS packages linked into a k8s binary:" >&2
+            echo "$deps" >&2
+            exit 1
+          fi
+
+  build:
+    needs: test
+    uses: tuncloud/workflow/.github/workflows/ci-build-push-ghcr.yml@main
+    permissions:
+      contents: write   # git tag backend/vX.Y.Z
+      packages: write   # push ghcr.io/tuncloud/reading-tracker
+      id-token: write   # keyless cosign signing
+    with:
+      image-name: reading-tracker
+      context: backend
+      dockerfile: backend/Containerfile
+      platforms: linux/arm64
+      tag-prefix: backend/
+      commit-path: backend
+
+  # Through the deploy gateway (GitHub OIDC; no cluster credentials in this repo).
+  # Poller first, so new job-handling code is live before the server enqueues for it.
+  deploy-poller:
+    needs: build
+    uses: tuncloud/workflow/.github/workflows/rollout-deployment.yml@main
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      namespace: reading-tracker
+      deployment: reading-tracker-poller
+      container: poller
+      image: ${{ needs.build.outputs.image }}
+
+  deploy-server:
+    needs: [build, deploy-poller]
+    uses: tuncloud/workflow/.github/workflows/rollout-deployment.yml@main
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      namespace: reading-tracker
+      deployment: reading-tracker-server
+      container: server
+      image: ${{ needs.build.outputs.image }}
