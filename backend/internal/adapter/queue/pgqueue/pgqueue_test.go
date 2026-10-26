@@ -537,3 +537,87 @@ func TestUndecodableBodyIsDropped(t *testing.T) {
 		t.Fatal("an undecodable job must be deleted without calling the handler")
 	}
 }
+
+// Final review F2: a panicking handler is a plain handler error, not a poller crash.
+func TestHandlerPanicBacksOff(t *testing.T) {
+	env := pgtest.New(t)
+	send(t, env.Pool, 0, msg.Article(inst, "h1"))
+	p := &pgqueue.Poller{Pool: env.Pool, Handler: handlerFunc(func(context.Context, port.Job) error {
+		panic("kaboom")
+	}), Log: quiet}
+	if !once(t, p) {
+		t.Fatal("Once must claim the job")
+	}
+	var secs float64
+	var lastErr string
+	if err := env.Pool.QueryRow(context.Background(),
+		"SELECT extract(epoch FROM run_at - now())::float8, last_error FROM sync_jobs WHERE state = 'ready' AND leased_until IS NULL AND attempts = 1").
+		Scan(&secs, &lastErr); err != nil {
+		t.Fatal(err)
+	}
+	if secs < 28 || secs > 32 || !strings.Contains(lastErr, "handler panic") {
+		t.Fatalf("backoff = %.1fs last_error = %q, want ≈30s and handler panic", secs, lastErr)
+	}
+}
+
+// Final review F5: insert commit order is not id order, so a lower id can become
+// visible after a higher id of the same group was claimed. While that lease is
+// live, the group must not run a second job.
+func TestClaimSkipsGroupWithLiveLeaseOnAnotherRow(t *testing.T) {
+	env := pgtest.New(t)
+	ctx := context.Background()
+	low, high := msg.Article(inst, "low"), msg.Article(inst, "high")
+	if _, err := env.Pool.Exec(ctx,
+		`INSERT INTO sync_jobs (group_id, dedup_id, body, run_at) VALUES ($1, 'low', $2, now())`, inst, low); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.Pool.Exec(ctx,
+		`INSERT INTO sync_jobs (group_id, dedup_id, body, state, run_at, leased_until, attempts)
+		 VALUES ($1, 'high', $2, 'leased', now(), now() + interval '1 minute', 1)`, inst, high); err != nil {
+		t.Fatal(err)
+	}
+	lowID, highID := idOf(t, env.Pool, low), idOf(t, env.Pool, high)
+	if lowID >= highID {
+		t.Fatalf("ids: low %d high %d", lowID, highID)
+	}
+	rec := &recorder{}
+	p := &pgqueue.Poller{Pool: env.Pool, Handler: rec, Log: quiet}
+	if once(t, p) {
+		t.Fatalf("a group with a live lease must not be claimable; calls = %v", rec.calls())
+	}
+	if _, err := env.Pool.Exec(ctx, "UPDATE sync_jobs SET leased_until = now() - interval '1 second' WHERE id = $1", highID); err != nil {
+		t.Fatal(err)
+	}
+	if !once(t, p) {
+		t.Fatal("once the lease expires the head must be claimable")
+	}
+	if got := strings.Join(rec.calls(), ","); got != "article:low" {
+		t.Fatalf("calls = %s, want article:low (the head)", got)
+	}
+	if n := count(t, env.Pool, "id = $1", lowID); n != 0 {
+		t.Fatal("the head must be acked")
+	}
+}
+
+// Final review M1: housekeeping runs once at start, not only after the first tick.
+func TestRunHousekeepsOnStart(t *testing.T) {
+	env := pgtest.New(t)
+	called := make(chan struct{}, 1)
+	p := &pgqueue.Poller{Pool: env.Pool, Handler: &recorder{}, Log: quiet, HousekeepEvery: time.Hour,
+		Housekeeping: func(context.Context) error {
+			select {
+			case called <- struct{}{}:
+			default:
+			}
+			return nil
+		}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- p.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("Run must housekeep on start")
+	}
+}

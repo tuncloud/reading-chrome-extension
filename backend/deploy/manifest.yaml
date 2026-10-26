@@ -79,6 +79,8 @@ spec:
     metadata:
       labels: { app: reading-tracker-poller }
     spec:
+      # > 60 s handler timeout + 10 s settle + margin, so a job in flight at SIGTERM settles.
+      terminationGracePeriodSeconds: 90
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532   # distroless "nonroot"; numeric so runAsNonRoot is verifiable

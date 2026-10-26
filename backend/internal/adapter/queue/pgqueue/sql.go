@@ -4,13 +4,18 @@ const sqlInsert = `INSERT INTO sync_jobs (group_id, dedup_id, body, run_at)
 VALUES ($1, $2, $3, now() + $4::interval)
 ON CONFLICT (dedup_id) DO NOTHING`
 
-// sqlClaim is design §5.2 verbatim: only a group's head is ever a candidate.
+// sqlClaim is design §5.2 verbatim: only a group's head is ever a candidate, and never
+// while another row of the group holds a live lease (insert commit order is not id
+// order, so a lower id can become visible after a higher id was claimed).
 const sqlClaim = `WITH candidate AS (
   SELECT id FROM sync_jobs j
   WHERE (state = 'ready' OR (state = 'leased' AND leased_until <= now()))
     AND run_at <= now()
     AND id = (SELECT min(id) FROM sync_jobs h
               WHERE h.group_id = j.group_id AND h.state <> 'dead')
+    AND NOT EXISTS (SELECT 1 FROM sync_jobs l
+                    WHERE l.group_id = j.group_id AND l.state = 'leased'
+                      AND l.leased_until > now() AND l.id <> j.id)
   ORDER BY run_at, id
   FOR UPDATE SKIP LOCKED
   LIMIT 1)

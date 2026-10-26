@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -22,9 +23,12 @@ const (
 	backoffStep  = 30 * time.Second
 	backoffMax   = 5 * time.Minute
 	maxLastError = 1000
-	// handlerTimeout is shorter than the 6-minute lease, so a job settles before it
-	// can be reclaimed; settleTimeout keeps a hung DB from blocking Run's return.
-	handlerTimeout = 5 * time.Minute
+	// handlerTimeout matches the Lambda worker's 60 s timeout. It must stay below the
+	// 6-minute lease (a job settles before it can be reclaimed) and below the poller
+	// pod's terminationGracePeriodSeconds minus settleTimeout (90 s - 10 s), so a job
+	// in flight at SIGTERM still settles before SIGKILL. settleTimeout keeps a hung DB
+	// from blocking Run's return.
+	handlerTimeout = 60 * time.Second
 	settleTimeout  = 10 * time.Second
 )
 
@@ -73,9 +77,7 @@ func (p *Poller) Once(ctx context.Context) (handled bool, err error) {
 	log = log.With("type", string(m.Type))
 
 	// Shutdown never aborts a job mid-write, but the handler must finish inside its lease.
-	hctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), handlerTimeout)
-	herr := p.Handler.HandleJob(hctx, m.Job())
-	cancel()
+	herr := p.handle(ctx, log, m)
 	if herr == nil {
 		log.InfoContext(ctx, "pgqueue: job done", "outcome", "ack")
 		return p.settle(ctx, log, sqlAck, id, attempts)
@@ -92,6 +94,20 @@ func (p *Poller) Once(ctx context.Context) (handled bool, err error) {
 	}
 	log.WarnContext(ctx, "pgqueue: job failed", "outcome", outcome, "delay", delay, "err", herr)
 	return p.settle(ctx, log, sqlRelease, id, attempts, lastErr, delay)
+}
+
+// handle runs the handler under handlerTimeout. A panic is recovered and returned as
+// a plain handler error, so it backs off and dies like any other failure.
+func (p *Poller) handle(ctx context.Context, log *slog.Logger, m msg.Message) (err error) {
+	hctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), handlerTimeout)
+	defer cancel()
+	defer func() {
+		if r := recover(); r != nil {
+			log.ErrorContext(ctx, "pgqueue: handler panic", "panic", fmt.Sprint(r))
+			err = fmt.Errorf("handler panic: %v", r)
+		}
+	}()
+	return p.Handler.HandleJob(hctx, m.Job())
 }
 
 // settle runs a settle statement fenced to this claim's (id, attempts). Zero rows means
@@ -148,6 +164,7 @@ func (p *Poller) Run(ctx context.Context) error {
 		})
 	}
 	wg.Go(func() {
+		p.housekeep(ctx)
 		t := time.NewTicker(every)
 		defer t.Stop()
 		for {
