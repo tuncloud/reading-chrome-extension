@@ -94,17 +94,31 @@ The Kubernetes manifest is [`deploy/manifest.yaml`](deploy/manifest.yaml); the i
 rollout are [`.github/workflows/backend-image.yml`](../.github/workflows/backend-image.yml). In order:
 
 1. On `worker`: `CREATE ROLE reading_tracker LOGIN PASSWORD '…'; CREATE DATABASE reading_tracker OWNER reading_tracker;`
-2. Parameter Store (`ap-southeast-1`, SecureString, JSON object): the two params and their key
-   names from §9. Values never appear in the repo.
+2. Parameter Store, region `ap-southeast-1`: create two **SecureString** parameters, each holding
+   one JSON object whose keys become env vars. Create the values by hand; never commit them.
+
+   | Parameter | JSON keys |
+   |---|---|
+   | `/reading-tracker/reading-tracker` | `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, `TOKEN_ENC_KEYS`, `DEVICE_TOKEN_PEPPER` |
+   | `/reading-tracker/reading-tracker-db` | `DATABASE_URL` |
+
+   `DATABASE_URL` has this shape (placeholders only):
+   `postgres://reading_tracker:<password>@postgres-17.tuando.app:5432/reading_tracker?sslmode=<require|disable>&pool_max_conns=5`.
+   Use `sslmode=require` if the Postgres server has TLS enabled, otherwise `disable` over the
+   private network; confirm which with the operator.
 3. DNS: `reading.tuando.app` → the ingress IP (same as `gateway.tuando.app`).
 4. Notion integration: add `https://reading.tuando.app/v1/oauth/notion/callback` as a redirect URI.
 5. Replace `REPLACE_WITH_EXTENSION_ID` in both the ConfigMap and the Ingress CORS annotation of
-   `deploy/manifest.yaml` with the store extension id, then
+   `deploy/manifest.yaml` with the store extension id, then validate the manifest against the
+   cluster (this checks the ExternalSecret CRD shape, which offline checks cannot) and expect no
+   errors:
+   `ssh master 'sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf apply --dry-run=server -f -' < backend/deploy/manifest.yaml`.
+6. Apply it:
    `ssh master 'sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f -' < backend/deploy/manifest.yaml`.
-6. Push to `main` → first image; make the `reading-tracker` GHCR package public.
-7. In `tuncloud-deployment-config/deploy-gateway/manifest.yaml`, add
+7. Push to `main` → first image; make the `reading-tracker` GHCR package public.
+8. In `tuncloud-deployment-config/deploy-gateway/manifest.yaml`, add
    `tuncloud/reading-chrome-extension` → `deployment.rollout` on namespace `reading-tracker`,
    deployments `reading-tracker-server`, `reading-tracker-poller`; apply and restart the gateway.
-8. Re-run the workflow; verify `externalsecret` is `SecretSynced` and
+9. Re-run the workflow; verify `externalsecret` is `SecretSynced` and
    `curl https://reading.tuando.app/healthz`.
-9. Build the extension with `VITE_API_BASE=https://reading.tuando.app`.
+10. Build the extension with `VITE_API_BASE=https://reading.tuando.app`.

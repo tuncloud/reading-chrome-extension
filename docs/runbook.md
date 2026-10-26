@@ -275,3 +275,11 @@ pnpm build
 
 Load it and repeat [Part 2, step 9](#9-smoke-test-the-deployment-spec-t32) against this build,
 exactly as for the Lambda deployment.
+
+In place of the dead-letter queue check, count dead jobs:
+
+```bash
+ssh worker "sudo -u postgres psql reading_tracker -Atc \"select count(*) from sync_jobs where state='dead'\""   # 0
+```
+
+A non-zero count means jobs that failed 10 times; inspect their `last_error` column for the cause.
