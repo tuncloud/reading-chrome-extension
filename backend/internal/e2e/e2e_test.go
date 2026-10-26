@@ -23,15 +23,20 @@ import (
 	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
+	"reading-tracker/backend/internal/adapter/postgres"
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
+	"reading-tracker/backend/internal/platform/pgtest"
 	"reading-tracker/backend/internal/wire"
 	"reading-tracker/backend/internal/wire/awswire"
 )
 
 const extID = "abcdefghijklmnopabcdefghijklmnop"
+
+// stores lists the wire.Store backends the e2e suite runs each test against.
+var stores = []string{"dynamo", "postgres"}
 
 type noVisibility struct{}
 
@@ -81,25 +86,42 @@ func segment(id string, start time.Time, secs int, progress float64, seq int) ma
 
 // system is the API, worker, queue and fake Notion wired together on one clock.
 type system struct {
-	t   *testing.T
-	db  *dynamotest.Env
-	ns  *notiontest.Server
-	tpl notiontest.Template
-	q   *queue.Recorder
-	api *echo.Echo
-	wk  *queue.Consumer
-	now time.Time
+	t     *testing.T
+	store wire.Store
+	ns    *notiontest.Server
+	tpl   notiontest.Template
+	q     *queue.Recorder
+	api   *echo.Echo
+	wk    *queue.Consumer
+	now   time.Time
 }
 
-func newSystem(t *testing.T) *system {
-	sys := &system{t: t, db: dynamotest.New(t), ns: notiontest.New(t), q: &queue.Recorder{}, now: time.Date(2026, 10, 6, 3, 0, 0, 0, time.UTC)}
+// newSystem wires the API, worker and fake Notion onto a fresh instance of the
+// given store ("dynamo" or "postgres"), proving the two adapters equivalent at
+// the system level.
+func newSystem(t *testing.T, kind string) *system {
+	sys := &system{t: t, ns: notiontest.New(t), q: &queue.Recorder{}, now: time.Date(2026, 10, 6, 3, 0, 0, 0, time.UTC)}
 	sys.tpl = sys.ns.AddTemplate("tpl-1")
 	clock := func() time.Time { return sys.now }
 	vars := map[string]string{
-		"APP_ENV": "test", "TABLE_NAME": sys.db.Table, "QUEUE_URL": "local", "NOTION_CLIENT_ID": "cid", "NOTION_CLIENT_SECRET": "cs",
+		"APP_ENV": "test", "NOTION_CLIENT_ID": "cid", "NOTION_CLIENT_SECRET": "cs",
 		"NOTION_VERSION": "2025-09-03", "NOTION_API_BASE": sys.ns.URL, "ALLOWED_EXTENSION_IDS": extID, "DEBOUNCE_BUCKET_SECONDS": "120",
 		"TOKEN_ENC_KEYS":      "v1:" + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
 		"DEVICE_TOKEN_PEPPER": base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32)),
+	}
+	switch kind {
+	case "dynamo":
+		env := dynamotest.New(t)
+		sys.store = env.Store
+		vars["TABLE_NAME"] = env.Table
+		vars["QUEUE_URL"] = "local"
+	case "postgres":
+		env := pgtest.New(t)
+		sys.store = postgres.New(env.Pool)
+		vars["STORE"] = "postgres"
+		vars["DATABASE_URL"] = env.URL
+	default:
+		t.Fatalf("unknown store kind %q", kind)
 	}
 	cfg, err := config.Load(config.RoleAPI, func(k string) string { return vars[k] })
 	if err != nil {
@@ -107,8 +129,8 @@ func newSystem(t *testing.T) *system {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	nc := &notion.Client{BaseURL: sys.ns.URL, Version: cfg.NotionVersion, ClientID: cfg.NotionClientID, ClientSecret: cfg.NotionClientSecret}
-	sys.api = wire.NewAPI(wire.APIDeps{Config: cfg, Store: sys.db.Store, Notion: nc, Queue: sys.q, Now: clock, Log: log})
-	sys.wk = awswire.NewWorker(awswire.WorkerDeps{SyncDeps: wire.SyncDeps{Store: sys.db.Store, Notion: nc, Keys: cfg.Keys, Queue: sys.q,
+	sys.api = wire.NewAPI(wire.APIDeps{Config: cfg, Store: sys.store, Notion: nc, Queue: sys.q, Now: clock, Log: log})
+	sys.wk = awswire.NewWorker(awswire.WorkerDeps{SyncDeps: wire.SyncDeps{Store: sys.store, Notion: nc, Keys: cfg.Keys, Queue: sys.q,
 		Tracking: cfg.Public.Tracking, DebounceBucket: cfg.DebounceBucket, Now: clock, Log: log}, Visibility: noVisibility{}})
 	return sys
 }
@@ -136,7 +158,13 @@ func (sys *system) connect() string {
 }
 
 func TestReadArticleEndToEnd(t *testing.T) {
-	sys := newSystem(t)
+	for _, kind := range stores {
+		t.Run(kind, func(t *testing.T) { testReadArticleEndToEnd(t, kind) })
+	}
+}
+
+func testReadArticleEndToEnd(t *testing.T, kind string) {
+	sys := newSystem(t, kind)
 	ns, tpl, q, api, wk := sys.ns, sys.tpl, sys.q, sys.api, sys.wk
 
 	// 1. Connect Notion, accepting the template (scenario 1).
@@ -213,7 +241,13 @@ func (sys *system) read(token, url, segID string) {
 // after setup on the same page, every article (including one already synced into the
 // deleted Library) and the day land in new, correctly related databases.
 func TestDeletedLibraryRecoversAfterSetup(t *testing.T) {
-	sys := newSystem(t)
+	for _, kind := range stores {
+		t.Run(kind, func(t *testing.T) { testDeletedLibraryRecoversAfterSetup(t, kind) })
+	}
+}
+
+func testDeletedLibraryRecoversAfterSetup(t *testing.T, kind string) {
+	sys := newSystem(t, kind)
 	ns, tpl := sys.ns, sys.tpl
 	token := sys.connect()
 	urlA, urlB := "https://a.example/one", "https://b.example/two"
@@ -228,7 +262,7 @@ func TestDeletedLibraryRecoversAfterSetup(t *testing.T) {
 	ns.SetBlocks(tpl.ID, notiontest.ChildDatabase(tpl.DailyDB, notion.DailyTitle))
 	sys.read(token, urlB, "00000000-0000-4000-8000-00000000000b")
 	deliver(t, sys.wk, sys.q)
-	inst, err := sys.db.Store.GetInstallation(context.Background(), "bot-e2e")
+	inst, err := sys.store.GetInstallation(context.Background(), "bot-e2e")
 	if err != nil || inst.Status != domain.StatusNeedsSetup || inst.SetupError != "database_missing:Reading Library" {
 		t.Fatalf("installation %+v %v", inst, err)
 	}
@@ -238,7 +272,7 @@ func TestDeletedLibraryRecoversAfterSetup(t *testing.T) {
 	}
 	deliver(t, sys.wk, sys.q)
 
-	inst, err = sys.db.Store.GetInstallation(context.Background(), "bot-e2e")
+	inst, err = sys.store.GetInstallation(context.Background(), "bot-e2e")
 	if err != nil || inst.LibraryDSID == tpl.LibraryDS || inst.DailyDSID == tpl.DailyDS {
 		t.Fatalf("installation still on the old databases: %+v %v", inst, err)
 	}
