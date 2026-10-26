@@ -25,6 +25,102 @@ func apiEnv() map[string]string {
 
 func getenv(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 
+// pgEnv builds a postgres-mode environment for role: no TABLE_NAME/QUEUE_URL,
+// STORE=postgres, DATABASE_URL set.
+func pgEnv(role Role) map[string]string {
+	env := apiEnv()
+	delete(env, "TABLE_NAME")
+	delete(env, "QUEUE_URL")
+	env["STORE"] = "postgres"
+	env["DATABASE_URL"] = "postgres://u:p@h:5432/d"
+	if role == RoleWorker {
+		for _, k := range []string{"DEVICE_TOKEN_PEPPER", "ALLOWED_EXTENSION_IDS"} {
+			delete(env, k)
+		}
+	}
+	return env
+}
+
+func TestStoreDefaultsToDynamo(t *testing.T) {
+	c, err := Load(RoleAPI, getenv(apiEnv()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Store != "dynamo" {
+		t.Fatalf("want Store=dynamo, got %q", c.Store)
+	}
+}
+
+func TestPostgresModeDoesNotNeedTableOrQueue(t *testing.T) {
+	c, err := Load(RoleAPI, getenv(pgEnv(RoleAPI)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Store != StorePostgres {
+		t.Fatalf("want Store=postgres, got %q", c.Store)
+	}
+	if c.DatabaseURL == "" {
+		t.Fatal("want DatabaseURL set")
+	}
+	if c.QueueDelay != 120*time.Second {
+		t.Fatalf("want QueueDelay to default to bucket (120s), got %v", c.QueueDelay)
+	}
+}
+
+func TestPostgresModeNeedsDatabaseURL(t *testing.T) {
+	env := pgEnv(RoleAPI)
+	delete(env, "DATABASE_URL")
+	_, err := Load(RoleAPI, getenv(env))
+	if err == nil || !strings.Contains(err.Error(), "missing env DATABASE_URL") {
+		t.Fatalf("want error containing %q, got %v", "missing env DATABASE_URL", err)
+	}
+}
+
+func TestDynamoModeStillNeedsTableAndQueue(t *testing.T) {
+	env := apiEnv()
+	delete(env, "TABLE_NAME")
+	_, err := Load(RoleAPI, getenv(env))
+	if err == nil || !strings.Contains(err.Error(), "TABLE_NAME") {
+		t.Fatalf("want error naming TABLE_NAME, got %v", err)
+	}
+}
+
+func TestUnknownStoreRejected(t *testing.T) {
+	env := apiEnv()
+	env["STORE"] = "mysql"
+	_, err := Load(RoleAPI, getenv(env))
+	if err == nil || !strings.Contains(err.Error(), "STORE must be dynamo or postgres") {
+		t.Fatalf("want error containing %q, got %v", "STORE must be dynamo or postgres", err)
+	}
+}
+
+func TestQueueDelayMustCoverBucket(t *testing.T) {
+	env := pgEnv(RoleAPI)
+	env["QUEUE_DELAY_SECONDS"] = "60"
+	_, err := Load(RoleAPI, getenv(env))
+	if err == nil || !strings.Contains(err.Error(), "QUEUE_DELAY_SECONDS must be >= DEBOUNCE_BUCKET_SECONDS (C5)") {
+		t.Fatalf("want error containing %q, got %v", "QUEUE_DELAY_SECONDS must be >= DEBOUNCE_BUCKET_SECONDS (C5)", err)
+	}
+
+	env2 := pgEnv(RoleAPI)
+	env2["QUEUE_DELAY_SECONDS"] = "901"
+	_, err = Load(RoleAPI, getenv(env2))
+	if err == nil || !strings.Contains(err.Error(), "<= 900") {
+		t.Fatalf("want error containing %q, got %v", "<= 900", err)
+	}
+}
+
+func TestPostgresWorkerReadsBucket(t *testing.T) {
+	env := pgEnv(RoleWorker)
+	c, err := Load(RoleWorker, getenv(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DebounceBucket != 120*time.Second {
+		t.Fatalf("want DebounceBucket=120s, got %v", c.DebounceBucket)
+	}
+}
+
 func TestLoadAPIHappyPath(t *testing.T) {
 	c, err := Load(RoleAPI, getenv(apiEnv()))
 	if err != nil {
