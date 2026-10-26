@@ -28,6 +28,7 @@ import (
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/wire"
+	"reading-tracker/backend/internal/wire/awswire"
 )
 
 const extID = "abcdefghijklmnopabcdefghijklmnop"
@@ -107,8 +108,8 @@ func newSystem(t *testing.T) *system {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	nc := &notion.Client{BaseURL: sys.ns.URL, Version: cfg.NotionVersion, ClientID: cfg.NotionClientID, ClientSecret: cfg.NotionClientSecret}
 	sys.api = wire.NewAPI(wire.APIDeps{Config: cfg, Store: sys.db.Store, Notion: nc, Queue: sys.q, Now: clock, Log: log})
-	sys.wk = wire.NewWorker(wire.WorkerDeps{Store: sys.db.Store, Notion: nc, Keys: cfg.Keys, Queue: sys.q, Visibility: noVisibility{},
-		Tracking: cfg.Public.Tracking, DebounceBucket: cfg.DebounceBucket, Now: clock, Log: log})
+	sys.wk = awswire.NewWorker(awswire.WorkerDeps{SyncDeps: wire.SyncDeps{Store: sys.db.Store, Notion: nc, Keys: cfg.Keys, Queue: sys.q,
+		Tracking: cfg.Public.Tracking, DebounceBucket: cfg.DebounceBucket, Now: clock, Log: log}, Visibility: noVisibility{}})
 	return sys
 }
 

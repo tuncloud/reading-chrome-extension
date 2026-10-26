@@ -1,5 +1,6 @@
-// Package queue builds notion-sync.fifo messages (spec §2.12) and sends them.
-package queue
+// Package msg is the transport-free half of the queue adapter: notion-sync.fifo
+// messages (spec §2.12), their dedup ids, the SyncQueue port and a test Recorder.
+package msg
 
 import (
 	"context"

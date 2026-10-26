@@ -38,7 +38,7 @@ func (c *Consumer) HandleSQS(ctx context.Context, ev events.SQSEvent) (events.SQ
 			c.Log.ErrorContext(ctx, "queue: undecodable message dropped", "message_id", rec.MessageId)
 			continue
 		}
-		err := c.Handler.HandleJob(ctx, m.job())
+		err := c.Handler.HandleJob(ctx, m.Job())
 		if err == nil {
 			continue
 		}

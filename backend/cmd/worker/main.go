@@ -11,6 +11,7 @@ import (
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/wire"
+	"reading-tracker/backend/internal/wire/awswire"
 )
 
 func main() {
@@ -20,12 +21,12 @@ func main() {
 		log.Error("config", "err", err)
 		os.Exit(1)
 	}
-	awsCfg, err := wire.AWSConfig(context.Background())
+	awsCfg, err := awswire.AWSConfig(context.Background())
 	if err != nil {
 		log.Error("aws config", "err", err)
 		os.Exit(1)
 	}
-	q := &queue.SQS{API: wire.SQS(awsCfg), QueueURL: cfg.QueueURL}
-	w := wire.Worker(cfg, dynamo.New(wire.DynamoDB(awsCfg), cfg.TableName), q, q, log)
+	q := &queue.SQS{API: awswire.SQS(awsCfg), QueueURL: cfg.QueueURL}
+	w := awswire.Worker(cfg, dynamo.New(awswire.DynamoDB(awsCfg), cfg.TableName), q, q, log)
 	lambda.Start(w.HandleSQS)
 }

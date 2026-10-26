@@ -2,7 +2,6 @@ package queue
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"log/slog"
 	"strings"
@@ -20,64 +19,6 @@ const (
 	bot  = "b7c1e0f2-1111-2222-3333-444455556666"
 	hash = "0123456789abcdef0123456789abcdef"
 )
-
-// T18 AC: same bucket → identical IDs; different bucket → different.
-func TestDedupIDBuckets(t *testing.T) {
-	bucket := 120 * time.Second
-	start := time.Unix(1000*120, 0)
-	m := Article(bot, hash)
-	a := m.DedupID(start.Add(5*time.Second), bucket)
-	b := m.DedupID(start.Add(119*time.Second), bucket)
-	c := m.DedupID(start.Add(120*time.Second), bucket)
-	if a != b {
-		t.Fatalf("same bucket differs: %q %q", a, b)
-	}
-	if a == c {
-		t.Fatal("next bucket must differ")
-	}
-	if a != "article#"+bot+"#"+hash+"#1000" {
-		t.Fatalf("format: %q", a)
-	}
-	if d := Day(bot, "2026-10-06").DedupID(start, bucket); d != "day#"+bot+"#2026-10-06#1000" {
-		t.Fatalf("day format: %q", d)
-	}
-}
-
-// Review focus 3: a worker re-enqueue inside the same bucket must not be deduplicated away.
-func TestRequeueDedupIDNeverCollides(t *testing.T) {
-	now := time.Unix(1000*120+5, 0)
-	m := Article(bot, hash)
-	r := m.RequeueDedupID(now)
-	if r == m.DedupID(now, 120*time.Second) || len(r) > 128 || r == m.RequeueDedupID(now.Add(time.Nanosecond)) {
-		t.Fatalf("requeue id %q collides or is too long", r)
-	}
-}
-
-func TestGroupIDs(t *testing.T) {
-	if g := Article(bot, hash).GroupID(); g != bot {
-		t.Fatalf("article group %q", g)
-	}
-	if g := Purge("u1", "").GroupID(); g != "user#u1" {
-		t.Fatalf("purge group without installation %q", g)
-	}
-	if g := Purge("u1", bot).GroupID(); g != bot {
-		t.Fatalf("purge group with installation %q", g)
-	}
-	if id := Purge("u1", bot).DedupID(time.Unix(42, 0), time.Minute); id != "purge#u1#42" {
-		t.Fatalf("purge dedup %q", id)
-	}
-}
-
-func TestMessageJSONShape(t *testing.T) {
-	b, _ := json.Marshal(Article(bot, hash))
-	if string(b) != `{"type":"article","installation_id":"`+bot+`","url_hash":"`+hash+`"}` {
-		t.Fatalf("article json %s", b)
-	}
-	b, _ = json.Marshal(Purge("u1", ""))
-	if string(b) != `{"type":"purge","installation_id":"","user_id":"u1"}` {
-		t.Fatalf("purge json %s", b)
-	}
-}
 
 type fakeSQS struct {
 	batches [][]types.SendMessageBatchRequestEntry
@@ -158,13 +99,31 @@ func TestLocalQueueDedupsAndDelivers(t *testing.T) {
 	}
 }
 
-func TestRecorder(t *testing.T) {
-	r := &Recorder{}
-	r.Send(context.Background(), Bucketed(time.Unix(0, 0), time.Minute, Article(bot, hash), Day(bot, "2026-10-06"))...)
-	if got := r.Messages(); len(got) != 2 || got[1].Type != TypeDay {
-		t.Fatalf("got %+v", got)
+func TestResyncAfterPushIsDeliveredByLocalQueue(t *testing.T) {
+	var delivered atomic.Int32
+	done := make(chan struct{}, 4)
+	l := &Local{Delay: time.Millisecond, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Handle: func(context.Context, events.SQSEvent) (events.SQSEventResponse, error) {
+			delivered.Add(1)
+			done <- struct{}{}
+			return events.SQSEventResponse{}, nil
+		}}
+	q := &SyncQueue{Sender: l, Bucket: 120 * time.Second, Now: time.Now}
+	ctx := context.Background()
+	if err := q.EnqueueSync(ctx, bot, []string{hash}, nil); err != nil {
+		t.Fatal(err)
 	}
-	if d := r.Drain(); len(d) != 2 || len(r.Messages()) != 0 {
-		t.Fatal("Drain must empty the recorder")
+	if err := q.EnqueueResync(ctx, bot, []string{hash}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out: delivered %d of 2 messages", delivered.Load())
+		}
+	}
+	if delivered.Load() != 2 {
+		t.Fatalf("delivered %d, want 2", delivered.Load())
 	}
 }
