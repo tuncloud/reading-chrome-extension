@@ -18,11 +18,14 @@ UPDATE sync_jobs SET state='leased', leased_until = now() + interval '6 minutes'
 FROM candidate WHERE sync_jobs.id = candidate.id
 RETURNING sync_jobs.*`
 
-const sqlAck = `DELETE FROM sync_jobs WHERE id = $1`
+// Settles are fenced to the claiming lease ($1 id, $2 the attempts the claim returned),
+// so a worker whose lease expired cannot ack or re-ready a row another worker reclaimed.
+const sqlAck = `DELETE FROM sync_jobs WHERE id = $1 AND state = 'leased' AND attempts = $2`
 
-const sqlRelease = `UPDATE sync_jobs SET state = 'ready', leased_until = NULL, run_at = now() + $3::interval, last_error = $2
-WHERE id = $1`
+const sqlRelease = `UPDATE sync_jobs SET state = 'ready', leased_until = NULL, run_at = now() + $4::interval, last_error = $3
+WHERE id = $1 AND state = 'leased' AND attempts = $2`
 
-const sqlDead = `UPDATE sync_jobs SET state = 'dead', leased_until = NULL, last_error = $2 WHERE id = $1`
+const sqlDead = `UPDATE sync_jobs SET state = 'dead', leased_until = NULL, last_error = $3
+WHERE id = $1 AND state = 'leased' AND attempts = $2`
 
 const sqlSweepDead = `DELETE FROM sync_jobs WHERE state = 'dead' AND created_at < now() - interval '14 days'`

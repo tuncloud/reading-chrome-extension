@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -340,6 +341,91 @@ func TestExpiredLeaseIsReclaimed(t *testing.T) {
 	wg.Wait()
 	if !<-res || !<-res {
 		t.Fatal("both Once calls must report handled")
+	}
+	if n := count(t, env.Pool, "id = $1", id); n != 0 {
+		t.Fatal("the reclaiming poller's ack must delete the row")
+	}
+}
+
+// Review finding 2: a settle from an expired lease must not touch a row another
+// worker has reclaimed (otherwise a stale release re-readies a running head, C4).
+func TestStaleSettleIsIgnored(t *testing.T) {
+	env := pgtest.New(t)
+	send(t, env.Pool, 0, msg.Article(inst, "h1"))
+	var entries atomic.Int32
+	entered := make(chan struct{}, 2)
+	release1, release2 := make(chan struct{}), make(chan struct{})
+	h := handlerFunc(func(context.Context, port.Job) error {
+		if entries.Add(1) > 1 { // the reclaiming poller: acks once released
+			entered <- struct{}{}
+			<-release2
+			return nil
+		}
+		entered <- struct{}{}
+		<-release1
+		return errors.New("stale failure")
+	})
+	p1 := &pgqueue.Poller{Pool: env.Pool, Handler: h, Log: quiet}
+	p2 := &pgqueue.Poller{Pool: env.Pool, Handler: h, Log: quiet}
+	type result struct {
+		ok  bool
+		err error
+	}
+	res1, res2 := make(chan result, 1), make(chan result, 1)
+	defer func() {
+		select {
+		case <-release2:
+		default:
+			close(release2)
+		}
+	}()
+	go func() { ok, err := p1.Once(context.Background()); res1 <- result{ok, err} }()
+	<-entered
+	if _, err := env.Pool.Exec(context.Background(), "UPDATE sync_jobs SET leased_until = now() - interval '1 second'"); err != nil {
+		close(release1)
+		t.Fatal(err)
+	}
+	go func() { ok, err := p2.Once(context.Background()); res2 <- result{ok, err} }()
+	<-entered
+
+	// P1's lease is gone; its failure must not re-ready the row P2 is running.
+	close(release1)
+	if r := <-res1; !r.ok || r.err != nil {
+		t.Fatalf("p1 Once = %v, %v; want (true, nil)", r.ok, r.err)
+	}
+	if n := count(t, env.Pool, "state = 'leased' AND attempts = 2 AND leased_until > now() AND last_error IS NULL"); n != 1 {
+		t.Fatal("a stale release must leave the reclaimed lease untouched")
+	}
+	close(release2)
+	if r := <-res2; !r.ok || r.err != nil {
+		t.Fatalf("p2 Once = %v, %v; want (true, nil)", r.ok, r.err)
+	}
+	if n := entries.Load(); n != 2 {
+		t.Fatalf("handler entered %d times, want 2", n)
+	}
+	if n := count(t, env.Pool, "group_id = $1", inst); n != 0 {
+		t.Fatalf("rows for group = %d, want 0 (stale release must not resurrect)", n)
+	}
+}
+
+// Review finding 1: last_error must be cut on a rune boundary, or Postgres rejects it.
+func TestLastErrorTruncationIsValidUTF8(t *testing.T) {
+	env := pgtest.New(t)
+	send(t, env.Pool, 0, msg.Article(inst, "h1"))
+	long := strings.Repeat("x", 999) + "é" + strings.Repeat("y", 50)
+	p := &pgqueue.Poller{Pool: env.Pool, Handler: handlerFunc(func(context.Context, port.Job) error {
+		return errors.New(long)
+	}), Log: quiet}
+	if !once(t, p) {
+		t.Fatal("Once must claim the job")
+	}
+	var lastErr string
+	if err := env.Pool.QueryRow(context.Background(),
+		"SELECT last_error FROM sync_jobs WHERE state = 'ready' AND leased_until IS NULL").Scan(&lastErr); err != nil {
+		t.Fatal(err)
+	}
+	if !utf8.ValidString(lastErr) || len(lastErr) > 1000 || !strings.HasPrefix(long, lastErr) {
+		t.Fatalf("last_error invalid: len %d valid %v", len(lastErr), utf8.ValidString(lastErr))
 	}
 }
 

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,6 +22,10 @@ const (
 	backoffStep  = 30 * time.Second
 	backoffMax   = 5 * time.Minute
 	maxLastError = 1000
+	// handlerTimeout is shorter than the 6-minute lease, so a job settles before it
+	// can be reclaimed; settleTimeout keeps a hung DB from blocking Run's return.
+	handlerTimeout = 5 * time.Minute
+	settleTimeout  = 10 * time.Second
 )
 
 // Poller claims one group head at a time, runs the handler and settles the job.
@@ -35,7 +41,8 @@ type Poller struct {
 }
 
 // Once claims, handles and settles at most one job. handled is false when nothing
-// was claimable. Claim and settle errors are returned.
+// was claimable. Claim and settle errors are returned; a settle that lost its lease to
+// another worker is not an error.
 func (p *Poller) Once(ctx context.Context) (handled bool, err error) {
 	var (
 		id                  int64
@@ -56,32 +63,27 @@ func (p *Poller) Once(ctx context.Context) (handled bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	// Settle under WithoutCancel too: a claimed job must never be left leased by shutdown.
-	ctx = context.WithoutCancel(ctx)
 	log := p.log().With("job_id", id, "group", group, "attempt", attempts)
 
 	var m msg.Message
 	if err := json.Unmarshal(body, &m); err != nil {
-		log.ErrorContext(ctx, "pgqueue: undecodable job dropped")
-		_, err = p.Pool.Exec(ctx, sqlAck, id)
-		return true, err
+		log.ErrorContext(ctx, "pgqueue: undecodable job dropped", "err", err)
+		return p.settle(ctx, log, sqlAck, id, attempts)
 	}
 	log = log.With("type", string(m.Type))
 
-	herr := p.Handler.HandleJob(ctx, m.Job())
+	// Shutdown never aborts a job mid-write, but the handler must finish inside its lease.
+	hctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), handlerTimeout)
+	herr := p.Handler.HandleJob(hctx, m.Job())
+	cancel()
 	if herr == nil {
 		log.InfoContext(ctx, "pgqueue: job done", "outcome", "ack")
-		_, err = p.Pool.Exec(ctx, sqlAck, id)
-		return true, err
+		return p.settle(ctx, log, sqlAck, id, attempts)
 	}
-	lastErr := herr.Error()
-	if len(lastErr) > maxLastError {
-		lastErr = lastErr[:maxLastError]
-	}
+	lastErr := truncate(herr.Error(), maxLastError)
 	if attempts >= maxAttempts {
 		log.ErrorContext(ctx, "pgqueue: job dead", "outcome", "dead", "err", herr)
-		_, err = p.Pool.Exec(ctx, sqlDead, id, lastErr)
-		return true, err
+		return p.settle(ctx, log, sqlDead, id, attempts, lastErr)
 	}
 	delay := min(backoffStep*time.Duration(attempts), backoffMax)
 	outcome := "backoff"
@@ -89,8 +91,33 @@ func (p *Poller) Once(ctx context.Context) (handled bool, err error) {
 		delay, outcome = ra.Delay, "retry_after"
 	}
 	log.WarnContext(ctx, "pgqueue: job failed", "outcome", outcome, "delay", delay, "err", herr)
-	_, err = p.Pool.Exec(ctx, sqlRelease, id, lastErr, delay)
-	return true, err
+	return p.settle(ctx, log, sqlRelease, id, attempts, lastErr, delay)
+}
+
+// settle runs a settle statement fenced to this claim's (id, attempts). Zero rows means
+// the lease expired and another worker owns the row: ignored, and the job counts as handled.
+func (p *Poller) settle(ctx context.Context, log *slog.Logger, sql string, id int64, attempts int, args ...any) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+	defer cancel()
+	tag, err := p.Pool.Exec(ctx, sql, append([]any{id, attempts}, args...)...)
+	if err != nil {
+		return true, err
+	}
+	if tag.RowsAffected() == 0 {
+		log.WarnContext(ctx, "queue: stale settle ignored")
+	}
+	return true, nil
+}
+
+// truncate cuts s to at most n bytes on a rune boundary, so Postgres accepts it as UTF-8.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return strings.ToValidUTF8(s[:n], "")
 }
 
 // Run polls with Workers loops until ctx is done, then waits for in-flight jobs to
