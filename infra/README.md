@@ -6,6 +6,8 @@ Terraform for the AWS side of the system (spec T2–T7). State is local and giti
 
 **Two environments in one AWS account:** dev and prod together would double DynamoDB provisioned capacity to 50 RCU/WCU and leave the Always Free tier (C11). Use separate accounts, or accept the cost.
 
+Running on Kubernetes + Postgres instead? See `backend/README.md` → Deploy to tuncloud.
+
 ## Prerequisites
 
 - Terraform ≥ 1.10: `brew install hashicorp/tap/terraform`.
