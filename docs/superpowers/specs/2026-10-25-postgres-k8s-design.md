@@ -179,10 +179,18 @@ CREATE INDEX sync_jobs_ready ON sync_jobs (run_at) WHERE state = 'ready';
   group waits behind it: that is the SQS FIFO behaviour C4/C21 depend on (e.g. the `day` job queued
   after an `article` job never runs before it). The conformance test for C4 runs two pollers against
   one group with a 429 on the head and asserts strict *ordered* processing.
-- **Ack:** `DELETE WHERE id = $1`.
-- **Fail:** `UPDATE SET state='ready', leased_until=NULL, run_at = now() + $backoff, last_error=$2`.
+- **Ack:** `DELETE WHERE id = $1 AND state = 'leased' AND attempts = $claimed`.
+- **Fail:** `UPDATE SET state='ready', leased_until=NULL, run_at = now() + $backoff, last_error=$2
+  WHERE id = $1 AND state = 'leased' AND attempts = $claimed`.
   Backoff for plain errors: `min(30s × attempts, 5m)`. For `RetryAfterError`: exactly the requested
   delay (already includes the jitter the use case adds). At `attempts ≥ 10`: `state='dead'`.
+- **Fenced settles** (added 2026-10-26 during implementation review): `$claimed` is the `attempts`
+  value the claim returned to *this* worker. A worker that overran its lease and was superseded
+  therefore cannot ack, release or kill a row another worker now holds; its settle affects 0 rows,
+  is logged, and is otherwise ignored. Without the fence a stale release could reopen a group that
+  is still being processed (two concurrent runs, breaking C4). To make overruns rare, the handler
+  runs under a 5-minute timeout, shorter than the 6-minute lease. `last_error` is truncated to
+  ≤ 1000 bytes on a rune boundary so the settle write can never fail on invalid UTF-8.
 - Expired leases need no sweeper: the claim query above already treats a `leased` row with
   `leased_until <= now()` as claimable, and the claim's own `UPDATE` renews the lease.
 
