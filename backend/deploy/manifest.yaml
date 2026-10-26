@@ -96,8 +96,8 @@ spec:
             - secretRef: { name: reading-tracker-db-secret }   # later entries win on key conflict
           ports:
             - { name: health, containerPort: 8081 }
-          livenessProbe:
-            httpGet: { path: /healthz, port: health }
+          livenessProbe:   # process only: a DB outage must not restart the pod
+            httpGet: { path: /livez, port: health }
           resources:
             requests: { cpu: 10m, memory: 32Mi }
             limits: { cpu: 200m, memory: 128Mi }
@@ -134,10 +134,10 @@ spec:
             - secretRef: { name: reading-tracker-db-secret }
           ports:
             - { name: http, containerPort: 8080 }
-          readinessProbe:
+          readinessProbe:   # DB ping
             httpGet: { path: /healthz, port: http }
-          livenessProbe:
-            httpGet: { path: /healthz, port: http }
+          livenessProbe:    # process only: a DB outage must not restart the pod
+            httpGet: { path: /livez, port: http }
           resources:
             requests: { cpu: 10m, memory: 32Mi }
             limits: { cpu: 200m, memory: 128Mi }

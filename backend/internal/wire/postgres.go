@@ -49,6 +49,15 @@ func Postgres(ctx context.Context, cfg *config.Config) (*PG, error) {
 	return &PG{Pool: pool, Store: postgres.New(pool), Queue: &pgqueue.Sender{Pool: pool, Delay: cfg.QueueDelay}}, nil
 }
 
+// Livez answers 200 "ok" unconditionally: a process-only liveness check, so a database
+// outage fails readiness (Healthz) without restart-storming the pods.
+func Livez() http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("ok"))
+	}
+}
+
 // Healthz answers 200 "ok" when the database pings within 2 s, else 503 "unavailable".
 func Healthz(pinger interface{ Ping(context.Context) error }) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

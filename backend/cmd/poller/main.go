@@ -1,5 +1,5 @@
 // Command poller is the Kubernetes Notion-sync process (STORE=postgres): it drains sync_jobs
-// and serves /healthz on HEALTH_ADDR.
+// and serves /healthz and /livez on HEALTH_ADDR.
 package main
 
 import (
@@ -49,6 +49,7 @@ func main() {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", wire.Healthz(pg.Pool))
+	mux.Handle("/livez", wire.Livez())
 	health := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := health.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

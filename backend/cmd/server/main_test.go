@@ -29,3 +29,12 @@ func TestHealthzReports503WhenDatabaseDown(t *testing.T) {
 		t.Fatalf("up: got %d %q", rec.Code, rec.Body.String())
 	}
 }
+
+// Final review F3: liveness is process-only, so a database outage never restarts pods.
+func TestLivezAlwaysOK(t *testing.T) {
+	rec := httptest.NewRecorder()
+	wire.Livez()(rec, httptest.NewRequest(http.MethodGet, "/livez", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
+		t.Fatalf("got %d %q, want 200 ok", rec.Code, rec.Body.String())
+	}
+}

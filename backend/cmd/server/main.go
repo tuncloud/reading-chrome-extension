@@ -1,4 +1,4 @@
-// Command server is the Kubernetes API process (STORE=postgres): Echo on LISTEN_ADDR plus /healthz.
+// Command server is the Kubernetes API process (STORE=postgres): Echo on LISTEN_ADDR plus /healthz and /livez.
 package main
 
 import (
@@ -37,6 +37,7 @@ func main() {
 	defer pg.Pool.Close()
 	e := wire.API(cfg, pg.Store, pg.Queue, log)
 	e.GET("/healthz", echo.WrapHandler(wire.Healthz(pg.Pool)))
+	e.GET("/livez", echo.WrapHandler(wire.Livez()))
 	addr := os.Getenv("LISTEN_ADDR")
 	if addr == "" {
 		addr = ":8080"
