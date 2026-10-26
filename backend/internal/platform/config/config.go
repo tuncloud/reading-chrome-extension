@@ -60,27 +60,32 @@ func Load(role Role, getenv func(string) string) (*Config, error) {
 		}
 		return v
 	}
+	store := strings.ToLower(strings.TrimSpace(getenv("STORE")))
+	if store == "" {
+		store = StoreDynamo
+	}
+	if store != StoreDynamo && store != StorePostgres {
+		return nil, fmt.Errorf("config: STORE must be dynamo or postgres, got %q", store)
+	}
 	c := &Config{
-		AppEnv:             req("APP_ENV"),
-		NotionClientID:     req("NOTION_CLIENT_ID"),
-		NotionClientSecret: req("NOTION_CLIENT_SECRET"),
-		NotionVersion:      req("NOTION_VERSION"),
-		NotionAPIBase:      strings.TrimRight(strings.TrimSpace(getenv("NOTION_API_BASE")), "/"),
-		PublicBaseURL:      strings.TrimRight(strings.TrimSpace(getenv("PUBLIC_BASE_URL")), "/"),
+		AppEnv: req("APP_ENV"),
+		Store:  store,
 	}
-	c.Store = strings.ToLower(strings.TrimSpace(getenv("STORE")))
-	if c.Store == "" {
-		c.Store = StoreDynamo
-	}
-	switch c.Store {
+	// TABLE_NAME/QUEUE_URL (dynamo) or DATABASE_URL (postgres) are read here, in
+	// the same position as the original TABLE_NAME/QUEUE_URL reads, so a
+	// multi-variable "missing env" message keeps its original order.
+	switch store {
 	case StoreDynamo:
 		c.TableName = req("TABLE_NAME")
 		c.QueueURL = req("QUEUE_URL")
 	case StorePostgres:
 		c.DatabaseURL = req("DATABASE_URL")
-	default:
-		return nil, fmt.Errorf("config: STORE must be dynamo or postgres, got %q", c.Store)
 	}
+	c.NotionClientID = req("NOTION_CLIENT_ID")
+	c.NotionClientSecret = req("NOTION_CLIENT_SECRET")
+	c.NotionVersion = req("NOTION_VERSION")
+	c.NotionAPIBase = strings.TrimRight(strings.TrimSpace(getenv("NOTION_API_BASE")), "/")
+	c.PublicBaseURL = strings.TrimRight(strings.TrimSpace(getenv("PUBLIC_BASE_URL")), "/")
 	keys := req("TOKEN_ENC_KEYS")
 	var pepper, extIDs, bucket string
 	if role == RoleAPI {

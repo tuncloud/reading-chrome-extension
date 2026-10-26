@@ -85,6 +85,18 @@ func TestDynamoModeStillNeedsTableAndQueue(t *testing.T) {
 	}
 }
 
+func TestMissingEnvListsInOriginalOrder(t *testing.T) {
+	env := apiEnv()
+	for _, k := range []string{"APP_ENV", "TABLE_NAME", "NOTION_CLIENT_ID"} {
+		delete(env, k)
+	}
+	_, err := Load(RoleAPI, getenv(env))
+	want := "config: missing env APP_ENV, TABLE_NAME, NOTION_CLIENT_ID"
+	if err == nil || err.Error() != want {
+		t.Fatalf("want error %q, got %v", want, err)
+	}
+}
+
 func TestUnknownStoreRejected(t *testing.T) {
 	env := apiEnv()
 	env["STORE"] = "mysql"
@@ -107,6 +119,15 @@ func TestQueueDelayMustCoverBucket(t *testing.T) {
 	_, err = Load(RoleAPI, getenv(env2))
 	if err == nil || !strings.Contains(err.Error(), "<= 900") {
 		t.Fatalf("want error containing %q, got %v", "<= 900", err)
+	}
+}
+
+func TestQueueDelayMustBeInteger(t *testing.T) {
+	env := pgEnv(RoleAPI)
+	env["QUEUE_DELAY_SECONDS"] = "abc"
+	_, err := Load(RoleAPI, getenv(env))
+	if err == nil || !strings.Contains(err.Error(), "QUEUE_DELAY_SECONDS") {
+		t.Fatalf("want error containing %q, got %v", "QUEUE_DELAY_SECONDS", err)
 	}
 }
 
