@@ -24,7 +24,7 @@ data:
   PUBLIC_BASE_URL: "https://reading.tuando.app"
   DEBOUNCE_BUCKET_SECONDS: "120"
   QUEUE_DELAY_SECONDS: "120"   # account.Delete relies on D >= 120 s
-  ALLOWED_EXTENSION_IDS: "REPLACE_WITH_EXTENSION_ID"
+  ALLOWED_EXTENSION_IDS: "eaamgcgkihpnafncmmpplmhhakohfffi"
   # TRACKING_CONFIG_JSON: '{...}'   # optional
 ---
 # Param Store /reading-tracker/reading-tracker is a SecureString holding one JSON object; every key
@@ -147,7 +147,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
     nginx.ingress.kubernetes.io/enable-cors: "true"
-    nginx.ingress.kubernetes.io/cors-allow-origin: "chrome-extension://REPLACE_WITH_EXTENSION_ID"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "chrome-extension://eaamgcgkihpnafncmmpplmhhakohfffi"
     nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, DELETE"
     nginx.ingress.kubernetes.io/cors-allow-headers: "authorization, content-type"
     nginx.ingress.kubernetes.io/cors-max-age: "3600"
