@@ -6,6 +6,8 @@ DynamoDB table; on Kubernetes it runs as two long-running processes, `cmd/server
 `cmd/poller`, sharing one Postgres database (`STORE=postgres`).
 Spec: [`../docs/reading-tracker-agent-spec.md`](../docs/reading-tracker-agent-spec.md).
 
+For the project-wide C4 architecture diagrams, see [`../docs/c4-architecture.md`](../docs/c4-architecture.md).
+
 For a single end-to-end checklist (local development and first deploy), see [`docs/runbook.md`](../docs/runbook.md).
 
 ## Prerequisites
