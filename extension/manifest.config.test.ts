@@ -24,8 +24,25 @@ describe('buildManifest', () => {
 
   test('module service worker, popup and options page', () => {
     expect(m.background).toEqual({ service_worker: 'background.js', type: 'module' })
-    expect(m.action).toEqual({ default_popup: 'popup.html' })
+    expect(m.action).toEqual({
+      default_popup: 'popup.html',
+      default_icon: {
+        16: 'icons/icon-16.png',
+        32: 'icons/icon-32.png',
+        48: 'icons/icon-48.png',
+        128: 'icons/icon-128.png',
+      },
+    })
     expect(m.options_ui).toEqual({ page: 'options.html', open_in_tab: true })
+  })
+
+  test('uses the logo at every Chrome-supported size', () => {
+    expect(m.icons).toEqual({
+      16: 'icons/icon-16.png',
+      32: 'icons/icon-32.png',
+      48: 'icons/icon-48.png',
+      128: 'icons/icon-128.png',
+    })
   })
 
   test('key is included only when given', () => {
