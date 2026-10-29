@@ -2,6 +2,8 @@
 
 Measures active reading time per article. The data is stored in IndexedDB and pushed to the backend, which writes it to the user's Notion. See `docs/reading-tracker-agent-spec.md` (T25–T31) and `docs/reading-tracker-onboarding.md` §5.
 
+For the project-wide C4 architecture diagrams, see [`docs/c4-architecture.md`](../docs/c4-architecture.md).
+
 ## Architecture
 
 Code is organized into five feature folders under `src/`:

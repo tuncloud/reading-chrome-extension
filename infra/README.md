@@ -2,6 +2,8 @@
 
 Terraform for the AWS side of the system (spec T2–T7). State is local and gitignored: see section 2. `make check` and `make test` run offline. Everything else needs AWS credentials for the target account (`aws configure` or `AWS_PROFILE`).
 
+For the project-wide C4 architecture diagrams, see [`../docs/c4-architecture.md`](../docs/c4-architecture.md).
+
 **Every code block below starts from the repository root.** For a single end-to-end checklist (local development and first deploy), see [`docs/runbook.md`](../docs/runbook.md).
 
 **Two environments in one AWS account:** dev and prod together would double DynamoDB provisioned capacity to 50 RCU/WCU and leave the Always Free tier (C11). Use separate accounts, or accept the cost.
