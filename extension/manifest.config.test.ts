@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs'
+import { inflateSync } from 'node:zlib'
 import { describe, expect, test } from 'vitest'
-import { apiHostPattern, buildManifest, STATIC_SITES } from './manifest.config'
+import { apiHostPattern, buildManifest, ICONS, STATIC_SITES } from './manifest.config'
 
 describe('buildManifest', () => {
   const m = buildManifest({ apiBase: 'https://abc.lambda-url.ap-southeast-1.on.aws', version: '0.1.0' })
@@ -43,6 +45,23 @@ describe('buildManifest', () => {
       48: 'icons/icon-48.png',
       128: 'icons/icon-128.png',
     })
+  })
+
+  test.each(Object.entries(ICONS))('icon %s is a decodable PNG of that size', (size, path) => {
+    const png = readFileSync(new URL(`public/${path}`, import.meta.url))
+    expect(png.readUInt32BE(16)).toBe(Number(size))
+    expect(png.readUInt32BE(20)).toBe(Number(size))
+    // Walk chunks so stray bytes (which break Chrome's decoder) fail here.
+    const idat: Buffer[] = []
+    let i = 8
+    while (i < png.length) {
+      const len = png.readUInt32BE(i)
+      const type = png.toString('latin1', i + 4, i + 8)
+      if (type === 'IDAT') idat.push(png.subarray(i + 8, i + 8 + len))
+      i += 12 + len
+    }
+    expect(i).toBe(png.length)
+    expect(inflateSync(Buffer.concat(idat)).length).toBe((Number(size) * 4 + 1) * Number(size))
   })
 
   test('key is included only when given', () => {
