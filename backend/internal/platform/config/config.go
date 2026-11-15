@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	_ "time/tzdata" // C15: provided.al2023 ships no zoneinfo.
+	_ "time/tzdata" // C15: the distroless image ships no zoneinfo.
 
 	"reading-tracker/backend/internal/platform/crypto"
 )

@@ -1,4 +1,4 @@
-// Package msg is the transport-free half of the queue adapter: notion-sync.fifo
+// Package msg is the transport-free half of the queue adapter: notion-sync
 // messages (spec §2.12), their dedup ids, the SyncQueue port and a test Recorder.
 package msg
 

@@ -121,6 +121,15 @@ func TestWorkerReadsBucket(t *testing.T) {
 	}
 }
 
+func TestWorkerNeedsBucket(t *testing.T) {
+	env := workerEnv()
+	delete(env, "DEBOUNCE_BUCKET_SECONDS")
+	_, err := Load(RoleWorker, getenv(env))
+	if err == nil || !strings.Contains(err.Error(), "missing env") || !strings.Contains(err.Error(), "DEBOUNCE_BUCKET_SECONDS") {
+		t.Fatalf("want missing env DEBOUNCE_BUCKET_SECONDS, got %v", err)
+	}
+}
+
 func TestLoadAPIHappyPath(t *testing.T) {
 	c, err := Load(RoleAPI, getenv(apiEnv()))
 	if err != nil {

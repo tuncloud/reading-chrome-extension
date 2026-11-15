@@ -17,7 +17,6 @@ metadata:
   namespace: reading-tracker
 data:
   APP_ENV: "prod"
-  STORE: "postgres"
   LISTEN_ADDR: ":8080"
   HEALTH_ADDR: ":8081"
   NOTION_VERSION: "2025-09-03"
@@ -137,7 +136,7 @@ spec:
 ---
 # No `tls:` block: nginx serves the *.tuando.app wildcard cert by default. DNS reading.tuando.app →
 # the ingress IP (same as gateway.tuando.app).
-# CORS mirrors the Lambda Function URL; replace REPLACE_WITH_EXTENSION_ID with the store extension id.
+# CORS allows only the extension origin; replace REPLACE_WITH_EXTENSION_ID with the store extension id.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

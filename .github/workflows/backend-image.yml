@@ -33,13 +33,8 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-      dynamodb:
-        image: amazon/dynamodb-local:latest
-        ports:
-          - 8000:8000
     env:
       PG_TEST_URL: postgres://reading:reading@localhost:5432/reading?sslmode=disable
-      DYNAMODB_ENDPOINT: http://localhost:8000
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -49,15 +44,6 @@ jobs:
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test -race ./...
-      # The k8s binaries must not link the AWS SDK (design: no AWS on the Postgres path).
-      - name: no AWS in cmd/server, cmd/poller, cmd/migrate
-        run: |
-          deps="$(go list -deps ./cmd/server ./cmd/poller ./cmd/migrate | grep -E 'aws-sdk-go|aws-lambda-go|smithy-go' || true)"
-          if [ -n "$deps" ]; then
-            echo "AWS packages linked into a k8s binary:" >&2
-            echo "$deps" >&2
-            exit 1
-          fi
 
   build:
     needs: test
