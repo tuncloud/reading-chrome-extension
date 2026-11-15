@@ -27,7 +27,7 @@ graph TB
 - Compute → **two long-running Go processes on Kubernetes (arm64)**: `cmd/server` (Echo HTTP API) and `cmd/poller` (Notion sync, called *the worker* below). Both apply pending migrations at startup; `cmd/migrate` applies them on its own. (D3)
 - Entry → **Kubernetes Ingress** in front of `cmd/server`; CORS restricted to the allowed extension IDs. (D4)
 - Server DB → **Postgres, one table per record type** (§3.1), schema in embedded SQL migrations. (D5)
-- Notion rate limit + debounce → **Postgres job queue `sync_jobs`, `group_id = installation_id`, bucketed dedup IDs, `run_at` delayed by D**. (D6, onboarding §4.3)
+- Notion rate limit + debounce → **Postgres job queue `sync_jobs`, `group_id = user#<user_id>`, bucketed dedup IDs, `run_at` delayed by D**. (D6, onboarding §4.3)
 - Token encryption → **AES-256-GCM in app**, keys from the process environment (on the cluster: a Kubernetes Secret, §3.5). No KMS CMK. (D7)
 - Deployment → **one Kubernetes manifest**, `backend/deploy/manifest.yaml`; the image is built and rolled out by `.github/workflows/backend-image.yml`. (D8)
 - Notion → **public integration, OAuth 2.0, template duplication**; pinned `Notion-Version: 2025-09-03`. (D9)
@@ -82,7 +82,7 @@ Query: `code`, `state` — or `error=access_denied&state`.
 4. Resolve user: `notion_user_links` row for `owner.user.id` → `user_id`, else create ULID `user_id` and insert the `users` row and its `notion_user_links` row (one transaction).
 5. Upsert the `installations` row `<bot_id>` with tokens encrypted (AAD = `bot_id`), `status`, workspace fields; insert the `user_installations` (`<uid>`, `<bot_id>`) pointer; set `users.active_installation_id = bot_id`.
 6. If `duplicated_template_id` → run **template resolution** (§2.11). Success → `status=active`; failure → `status=needs_setup`, `setup_error=<reason>`. No template → `needs_setup`.
-7. If status became `active` → run **resync enqueue** (T22).
+7. If status became `active` → run **resync enqueue** (T22) for the user. It is a **full** resync (every article and day of the user, not only those whose `version` is ahead of `notion_synced_version`) when any of these holds: the Library or Daily data source differs from the one stored before this callback; the previous `setup_error` was `resync_failed`; or this installation was not the user's active installation before this callback (so switching back to an earlier installation resyncs everything). Connecting another workspace therefore brings the whole reading history into that workspace's databases; the pages already written to the old workspace are left in place.
 8. `code` = 32 random bytes base64url. Insert an `auth_codes` row expiring in 120 s with `{user_id, installation_id, code_challenge, ext_redirect}`.
 9. `302 <ext_redirect>?code=<code>`.
 
@@ -136,7 +136,7 @@ Calls Notion `POST /v1/search` `{ "query": q, "filter": {"property":"object","va
 
 ### 2.7 `POST /v1/setup`
 **Request** `{ "parent_page_id": "1f2e…" }`
-**Handler does:** 409 if installation `active`. Create **Reading Library** then **Daily Log** under the parent (schemas §3.3) via `POST /v1/databases`; resolve data source + property IDs; save; `status=active`; resync enqueue.
+**Handler does:** 409 if installation `active`. Create **Reading Library** then **Daily Log** under the parent (schemas §3.3) via `POST /v1/databases`; resolve data source + property IDs; save; `status=active`; **full** resync enqueue for the user (every article and day).
 **Response** `200` → same shape as `installation` in 2.5.
 
 ### 2.8 `POST /v1/sync/push`
@@ -178,13 +178,13 @@ Calls Notion `POST /v1/search` `{ "query": q, "filter": {"property":"object","va
 - `canonical_url`: absolute `https`/`http`, ≤ 2048 chars. `source` ∈ `[a-z0-9_-]{1,32}`. Strings trimmed; `title` ≤ 500, `author`/`site_name` ≤ 200 chars. `word_count` 0…200000.
 - Segment: `id` UUID; `seq` ≥ 0; `1 ≤ active_seconds ≤ 3600`; `ended_at ≥ started_at`; `active_seconds ≤ (ended_at − started_at) + 5`; `0 ≤ max_progress ≤ 1`; `started_at` within [now − 30 d, now + 5 min]; `canonical_url` present in this request's `articles[]`.
 
-**Handler does** (installation = `users.active_installation_id`; none → 409 `no_installation`):
+**Handler does** (segments are written under the caller's `user_id`. The user must still have an installation, `users.active_installation_id`, whatever its status; none → 409 `no_installation`):
 1. `url_hash = hex(SHA-256(canonical_url))[:32]`; `date = started_at` in `tz`, `YYYY-MM-DD`.
 2. Per valid segment, **one** Postgres transaction (§3.2 "push transaction").
    - The segment row already exists (its insert affects no row) → `duplicate`.
    - Serialization failure or deadlock → the transaction is retried, at most 3 attempts in all, then `retry`. Other capacity errors (the server refused a connection: too many connections, or still starting up) → `retry`.
 3. In the same transaction, the monotonic raise of `articles.max_progress` and `articles.last_read_at` (§3.2), also for a duplicate.
-4. For each distinct `(url_hash)` and `(date)` touched by ≥1 accepted or duplicate segment (a duplicate re-enqueues because the push that committed it may have failed to enqueue): enqueue a job (§2.12).
+4. For each distinct `(url_hash)` and `(date)` touched by ≥1 accepted or duplicate segment (a duplicate re-enqueues because the push that committed it may have failed to enqueue): enqueue a job for the user (§2.12).
 5. If every segment came back `retry` → 503 `capacity_exceeded`.
 
 **Response** `200`
@@ -200,7 +200,7 @@ Client marks `accepted ∪ duplicate` as synced; keeps `retry`; drops `rejected`
 
 ### 2.9 `POST /v1/articles/status`
 **Request** `{ "canonical_urls": ["https://medium.com/p/8f3c2a1b9d4e"] }` (≤ 100)
-**Handler:** one query on `articles` for (`installation_id`, `url_hash` ∈ the requested hashes).
+**Handler:** needs an installation (none → 409 `no_installation`) but looks the articles up by user: one query on `articles` for (`user_id`, `url_hash` ∈ the requested hashes), so it answers from the user's reading history whichever installation wrote it.
 **Response** `200` (unknown URLs omitted)
 ```json
 {
@@ -212,6 +212,29 @@ Client marks `accepted ∪ duplicate` as synced; keeps `retry`; drops `rejected`
   }
 }
 ```
+
+### 2.18 `GET /v1/history?tz=<IANA zone>&limit=<n>` → `200`
+Auth: device token. It needs **a device, not an installation**: it answers the same way when the user's installation is `active`, `needs_setup`, `revoked` or absent, so a restore works right after a first connect. It never returns segments.
+
+- `tz` (required): an IANA zone name that `time.LoadLocation` loads; `Local` is rejected. Missing or unknown → 400 `invalid_request`.
+- `limit` (optional): absent → 50; above 100 → 100; not an integer or below 1 → 400 `invalid_request`.
+
+```json
+{
+  "articles": [
+    {
+      "canonical_url": "https://medium.com/p/8f3c2a1b9d4e", "source": "medium",
+      "title": "Designing Idempotent APIs", "author": "Jane Doe", "site_name": "Better Programming",
+      "word_count": 1820, "published_at": "2026-09-30",
+      "total_seconds": 734, "max_progress": 0.97, "last_read_at": "2026-10-06T03:20:00Z",
+      "completed": true, "notion_url": "https://www.notion.so/9a8b…"
+    }
+  ],
+  "today": { "date": "2026-10-06", "seconds": 1840 }
+}
+```
+- `articles`: the user's articles, `last_read_at` descending, rows without a `last_read_at` last, ties by `url_hash` ascending; `[]` when there are none. `notion_url` is `null` until a page exists. The server keeps no original (pre-canonical) URL, so none is returned.
+- `today`: `date` is the server clock's current date in `tz`; `seconds` is the stored `days.seconds` for that date (0 when the user has no row). Daily totals are dated in the time zone of the push that recorded them, so after the user changes time zone the figure can be off until the next day. That drift is accepted.
 
 ### 2.10 `GET /v1/config` (no auth) → `200`
 ```json
@@ -238,34 +261,40 @@ Values come from embedded defaults, overridable by env `TRACKING_CONFIG_JSON`. A
 
 | type | Body | `group_id` | `dedup_id` |
 |---|---|---|---|
-| article | `{"type":"article","installation_id":"<bot_id>","url_hash":"<hash>"}` | `<bot_id>` | `article#<bot_id>#<hash>#<floor(unix/B)>` |
-| day | `{"type":"day","installation_id":"<bot_id>","date":"2026-10-06"}` | `<bot_id>` | `day#<bot_id>#<date>#<floor(unix/B)>` |
-| purge | `{"type":"purge","user_id":"<uid>","installation_id":"<bot_id or empty>"}` | `<bot_id>` or `user#<uid>` | `purge#<uid>#<unix>` |
+| article | `{"type":"article","user_id":"<uid>","url_hash":"<hash>"}` | `user#<uid>` | `article#<uid>#<hash>#<floor(unix/B)>` |
+| day | `{"type":"day","user_id":"<uid>","date":"2026-10-06"}` | `user#<uid>` | `day#<uid>#<date>#<floor(unix/B)>` |
+| purge | `{"type":"purge","user_id":"<uid>","installation_id":"<bot_id>"}` (`installation_id` omitted when the user has none) | `user#<uid>` | `purge#<uid>#<unix>` |
+
+A job names the user, not an installation: the worker looks up the user's active installation when the job runs (§2.13 step 1), so a job survives a change of installation.
 
 `B` = `DEBOUNCE_BUCKET_SECONDS`, `D` = `QUEUE_DELAY_SECONDS`; a job's `run_at` = enqueue time + `D`. **Require `D ≥ B` and `B ≤ 300`** (C5); also `D ≤ 900`. Both processes refuse to start otherwise.
 
 - **Debounce:** a send whose `dedup_id` is already in the table is dropped (`INSERT … ON CONFLICT (dedup_id) DO NOTHING`). A job's row is deleted only when it is acked, which cannot happen before `run_at`, so with `D ≥ B` every push of one bucket lands while that bucket's job is still waiting, and collapses into it. Re-enqueues (resync on activation, the 404 case of §2.15) use a unique dedup id (`…#r<unix nanos>`), so they are never dropped.
-- **Ordering (C4, C21):** the poller claims only the oldest non-`dead` job of a group, only once its `run_at` has passed, and only while no other job of the group holds a live lease. A claim leases the job for 6 minutes and increments `attempts`. Jobs of one installation therefore run one at a time and in order; a failed or backed-off job blocks every job behind it in the group; different groups run in parallel.
+- **Ordering (C4, C21):** the poller claims only the oldest non-`dead` job of a group, only once its `run_at` has passed, and only while no other job of the group holds a live lease. A claim leases the job for 6 minutes and increments `attempts`. Jobs of one user therefore run one at a time and in order; a failed or backed-off job blocks every job behind it in the group; different groups run in parallel.
 - **Settling:** success → the row is deleted. Failure → the lease is released with `run_at = now + min(30 s × attempts, 5 min)`, or the Retry-After delay of §2.15. The 10th failed attempt marks the job `dead`: it stops blocking its group, keeps `last_error`, and is deleted after 14 days. A handler runs under a 60 s timeout; a lease that expires (crashed poller) makes the job claimable again.
 
 ### 2.13 Worker — `article` message
-1. Load the `installations` row. Missing or `status != active` → **ack** (data stays stored; resync on reactivation).
-2. Load the `articles` row. Compute `completed` (sticky: once true stays true):
+1. Resolve the user's active installation at run time: load the `users` row for `user_id`, then the `installations` row named by its `active_installation_id`. **Ack** (data stays stored; resync when an installation becomes active) when the user is missing or deleted, has no active installation, that installation is missing or `status != active`, or it belongs to another user.
+2. Load the `articles` row (`user_id`, `url_hash`); missing → ack. Compute `completed` (sticky: once true stays true):
    `est = word_count / words_per_minute * 60`; `completed = stored.completed || (max_progress ≥ complete_progress && (word_count == 0 || total_seconds ≥ complete_time_ratio * est))`.
 3. If no `notion_page_id`:
    - `total_seconds < min_create_seconds` → ack.
    - `POST /v1/data_sources/{library_ds_id}/query` with `{"filter":{"property":"<props.url>","url":{"equals":"<canonical_url>"}},"page_size":1}`; found → adopt its id/url.
    - else `POST /v1/pages` with `parent: {"type":"data_source_id","data_source_id":"<library_ds_id>"}`, **creation properties + server-owned metric properties** (§3.3), `children`: one `bookmark` block `{ "url": "<canonical_url>" }`.
-   - Save `notion_page_id`, `notion_url`.
+   - Save `notion_page_id`, `notion_url`, `notion_ds_id` (the installation's Library data source).
 4. Else `PATCH /v1/pages/{id}` with **server-owned metric properties only**.
 5. `UPDATE articles SET notion_synced_version = :v, notion_synced_at = :now, completed = :c WHERE notion_synced_version IS NULL OR notion_synced_version < :v` (an older version never overwrites a newer one).
 
+A row whose `notion_page_id` is set and whose recorded `notion_ds_id` differs from the installation's Library data source (its page lives in another workspace's or database's Library) has the page link cleared and the same message re-enqueued; the next run creates or adopts a page in the current Library (step 3). This is how the history reaches a newly connected workspace; the old page is left untouched.
+
 ### 2.14 Worker — `day` message
-1. Installation active check (as 2.13.1). Load the `days` row.
-2. Load the `articles` rows for `article_hashes` in one query → collect `notion_page_id`s (skip missing; cap 100).
+1. Resolve the user's active installation (as 2.13.1; the same cases are acknowledged). Load the `days` row (`user_id`, `date`); missing → ack.
+2. Load the user's `articles` rows for `article_hashes` in one query → collect `notion_page_id`s (skip missing; cap 100).
 3. No `notion_page_id`: query Daily Log by `Date` equals `date` → adopt, else create (`Name`=date, `Date`=date, `Minutes`, `Articles`).
 4. Else PATCH `Minutes = round(seconds/60)`, `Articles` = page ids.
-5. Save page id + synced version.
+5. Save page id (and `notion_ds_id`, the Daily Log data source) + synced version.
+
+As for articles, a `days` row linked to a page in another Daily Log data source has its link cleared and the message re-enqueued.
 
 ### 2.15 Worker — error handling (all Notion calls)
 | Notion response | Action |
@@ -284,14 +313,15 @@ Pacing: ≥ 350 ms between Notion calls within one poller process.
 
 ### 2.17 Other endpoints
 - `POST /v1/auth/logout` → set `devices.revoked_at` and delete the `device_tokens` row `<hmac>` (one transaction) → `204`.
-- `DELETE /v1/me` → revoke all devices of user (delete their `device_tokens` rows), set `users.deleted_at`, enqueue `purge` → `202`. Worker purge: for each of the user's installations, delete its `segments`, `articles`, `days` and `installations` rows (one transaction); delete the user's `device_tokens` rows and `notion_user_links` row; then delete the user's `devices`, `user_installations` and `users` rows (one transaction). **Never deletes Notion content.**
+- `DELETE /v1/me` → revoke all devices of user (delete their `device_tokens` rows), set `users.deleted_at`, enqueue `purge` (group `user#<uid>`) → `202`. Worker purge (skipped unless the user is marked deleted): for each of the user's installations, delete its `installations` row (one transaction each; an installation that now belongs to someone else is skipped); delete the user's `device_tokens` rows and `notion_user_links` row; then delete the user's `segments`, `articles` and `days` rows (by `user_id`) and their `devices`, `user_installations` and `users` rows (one transaction). Reading data belongs to the user, so it goes with the account; deleting an installation on its own deletes only that installation row and leaves the reading data. **Never deletes Notion content.**
 
 ---
 
 ## 3. Data model
 
 ### 3.1 Postgres tables
-- Schema: `backend/internal/platform/pgmigrate/migrations/0001_store.sql` (store) and `0002_sync_jobs.sql` (queue), embedded in the binaries and applied forward-only at startup. All timestamps are `timestamptz` unless noted.
+- Schema: `backend/internal/platform/pgmigrate/migrations/0001_store.sql` (store), `0002_sync_jobs.sql` (queue), `0003_reading_by_user.sql` (reading tables keyed by user) and `0004_sync_jobs_by_user.sql` (queued jobs rewritten to match), embedded in the binaries and applied forward-only at startup. All timestamps are `timestamptz` unless noted.
+- **Ownership:** reading history (`articles`, `segments`, `days`) belongs to the **user**; it is keyed by `user_id` and survives a new Notion authorization. Tokens, status and the Notion database ids belong to the **installation**. The Notion link columns on `articles` and `days` (`notion_page_id`, `notion_url`, `notion_ds_id`, `notion_synced_version`, `notion_synced_at`) refer to the page in the database of the user's *active* installation.
 - Expiring rows (`segments`, `oauth_states`, `auth_codes`) carry `expires_at`. The poller's housekeeping (at startup, then hourly) deletes rows with `expires_at < now`; until then they are still present, so every consume of `oauth_states`/`auth_codes` **must also check `expires_at > now`** (C12).
 
 #### `users`
@@ -313,13 +343,13 @@ Key `token_hmac`. `user_id`, `device_id`. Inserted with its `devices` row in one
 Key `id` (= Notion `bot_id`). `user_id`, `workspace_id`, `workspace_name`, `workspace_icon?`, `status` (`active`\|`needs_setup`\|`revoked`, enforced by a check constraint), `setup_error?`, `access_token_enc`, `refresh_token_enc`, `token_expires_at?` (text), `token_version` (int), `duplicated_template_id?`, `library_db_id?`, `library_ds_id?`, `library_url?`, `daily_db_id?`, `daily_ds_id?`, `props` (jsonb: logical_key → property id), `created_at`, `updated_at`.
 
 #### `articles`
-Key (`installation_id`, `url_hash`). `canonical_url`, `source`, `title`, `author`, `site_name`, `word_count`, `published_at` (text), `first_read_at`, `last_read_at`, `total_seconds` (bigint), `sessions` (bigint), `max_progress` (double), `completed` (bool, default false), `version` (bigint), `notion_page_id?`, `notion_url?`, `notion_ds_id?`, `notion_synced_version?`, `notion_synced_at?`.
+Key (`user_id`, `url_hash`). Index `articles_user_last_read` on (`user_id`, `last_read_at` DESC) serves the history endpoint (§2.18). `canonical_url`, `source`, `title`, `author`, `site_name`, `word_count`, `published_at` (text), `first_read_at`, `last_read_at`, `total_seconds` (bigint), `sessions` (bigint), `max_progress` (double), `completed` (bool, default false), `version` (bigint), `notion_page_id?`, `notion_url?`, `notion_ds_id?`, `notion_synced_version?`, `notion_synced_at?`.
 
 #### `segments`
-Key (`installation_id`, `id`). `session_id`, `seq`, `url_hash`, `device_id`, `started_at`, `ended_at`, `active_seconds`, `max_progress`, `expires_at` = `started_at + 90 d` (indexed for the sweep).
+Key (`user_id`, `id`). `session_id`, `seq`, `url_hash`, `device_id`, `started_at`, `ended_at`, `active_seconds`, `max_progress`, `expires_at` = `started_at + 90 d` (indexed for the sweep).
 
 #### `days`
-Key (`installation_id`, `date` — text `YYYY-MM-DD`). `seconds` (bigint), `article_hashes` (text[], each hash once), `version` (bigint), `notion_page_id?`, `notion_ds_id?`, `notion_synced_version?`.
+Key (`user_id`, `date` — text `YYYY-MM-DD`). `seconds` (bigint), `article_hashes` (text[], each hash once), `version` (bigint), `notion_page_id?`, `notion_ds_id?`, `notion_synced_version?`.
 
 #### `oauth_states`
 Key `state`. `ext_redirect`, `code_challenge`, `expires_at` = now + 600 s. Single use: consumed by `DELETE … WHERE state = :s AND expires_at > now RETURNING …`.
@@ -330,6 +360,11 @@ Key `code`. `user_id`, `installation_id`, `code_challenge`, `ext_redirect`, `exp
 #### `sync_jobs` (the queue, §2.12)
 Key `id` (bigserial; orders the jobs of a group). `group_id`, `dedup_id` (unique), `body` (jsonb: the message of §2.12), `state` (`ready` | `leased` | `dead`, default `ready`), `run_at`, `attempts` (default 0), `leased_until?`, `created_at`, `last_error?`. Acked jobs are deleted; `dead` jobs are deleted after 14 days.
 
+#### Migrations `0003` and `0004` (existing data)
+- **`0003`** re-keys the three reading tables from `installation_id` to the `user_id` of the row's installation. A row whose installation no longer exists cannot be attributed and is dropped. Rows of one user for the same article (or day) merge into one: `total_seconds`, `sessions`, `seconds` and `version` are **summed**; `max_progress` and `last_read_at` take the maximum, `first_read_at` the minimum; `completed` is true if any was; `article_hashes` is the union (each hash once); the descriptive article columns come from the row with the earliest `first_read_at`. The Notion link columns are kept only from the row that belonged to the user's active installation; a row from any other installation, merged or not, loses its link (all NULL, also when the user has no active installation), so its next sync writes it into the active installation's databases. Summed versions stay above any `notion_synced_version` kept, so a merged row is synced again. A segment id present under several installations of one user is kept once. It also creates `articles_user_last_read`.
+- **Known limitation, accepted:** `0003` merges by adding per-installation totals. If the same segment had been accepted under two installations of one user, its seconds are counted twice in the merged article and day totals.
+- **`0004`** rewrites the queue (the two files are applied in order at the same startup). Article and day jobs whose installation no longer exists, and purge jobs with no `user_id`, are dropped (`dead` jobs are not touched, and are not rewritten). The other article and day jobs get `installation_id` replaced by the installation's `user_id` in the body, group `user#<uid>` and dedup id `mig4#<id>`; purge jobs only move to group `user#<uid>`. Every rewritten article/day job (unless it is leased) gets `run_at` of at least 15 minutes from now, so an old poller still running during the rollout does not acknowledge jobs it cannot read. Finally, every article and day whose `version` is ahead of `notion_synced_version` (rows the merge left pending have no job) gets a new job, dedup id `mig4#article#<uid>#<hash>` or `mig4#day#<uid>#<date>`, also held back 15 minutes.
+
 ### 3.2 Write rules
 
 **Push transaction** (one per segment, C2):
@@ -338,16 +373,16 @@ INSERT INTO segments (…, expires_at = started_at + 90 d) ON CONFLICT DO NOTHIN
 -- only if that inserted a row (otherwise the outcome is `duplicate` and nothing is counted):
 INSERT INTO articles (canonical_url, source, title, author, site_name, word_count, published_at,
                       first_read_at = :started_at, total_seconds = :as, sessions = :isFirst, version = 1)
-  ON CONFLICT (installation_id, url_hash) DO UPDATE
+  ON CONFLICT (user_id, url_hash) DO UPDATE
   SET total_seconds += :as, sessions += :isFirst, version += 1        (:isFirst = 1 if seq == 0 else 0)
 INSERT INTO days (date, seconds = :as, article_hashes = {:h}, version = 1)
-  ON CONFLICT (installation_id, date) DO UPDATE
+  ON CONFLICT (user_id, date) DO UPDATE
   SET seconds += :as, version += 1, article_hashes = append :h unless already present
 -- always (also for a duplicate, so a lost raise heals):
 UPDATE articles SET max_progress = GREATEST(COALESCE(max_progress, 0), :p),
                     last_read_at = GREATEST(COALESCE(last_read_at, 'epoch'), :e)
 ```
-- A segment is applied exactly once: the increments run only when the segment row is new, in the same transaction as its insert.
+- A segment is applied exactly once: the increments run only when the segment row is new, in the same transaction as its insert. A segment id is unique per user, so the same id pushed again (from any device) is a `duplicate`.
 - Article metadata and `first_read_at` are written only when the `articles` row is created; a conflict updates the counters only.
 - `version` on `articles` and `days` goes up by one per applied segment; the worker records what it wrote in `notion_synced_version`, and resync (T22) picks rows whose `version` is ahead of it.
 - `max_progress` and `last_read_at` only ever rise (`GREATEST`). A `:p` of 0 cannot win, so `max_progress` is left out of the update.
@@ -396,9 +431,14 @@ articles: { canonical_url (PK), source, title, author, site_name, word_count, pu
 segments: { id (PK), session_id, seq, canonical_url, started_at, ended_at, active_seconds, max_progress,
             synced: 0 | 1, created_at }          // index: synced, started_at
 kv:       { key (PK), value }                    // device_token, device_id, installation, config cache,
-                                                 // enabled_domains, denied_domains, sync_backoff_until
+                                                 // enabled_domains, denied_domains, sync_backoff_until,
+                                                 // today_carry: { date, seconds }
 ```
 Synced segments older than 30 days are deleted locally.
+
+**Restore after connect.** After each successful connect the service worker calls `GET /v1/history` (§2.18; the device's time zone, limit 50) once, **before** the sync, and ignores a failure (it is logged; connecting is not blocked). It writes only to `articles` and `kv`, never to `segments`, so restored data is never pushed.
+- Merge per article, by `canonical_url`: `total_seconds` and `max_progress` take the larger of local and server (never the sum); `last_read_at` the later; `source`, `title`, `author`, `site_name`, `published_at`, `original_url` keep the local value when it is non-empty, else the server's (`original_url` falls back to the canonical URL); `word_count` keeps the local value when above 0. An article only the server has is stored as is.
+- `today_carry` = `{ date, seconds }`: `date` is the date the server reported, `seconds` is how far the server's total for that date exceeds the sum of local segments that start on that date (in the device's time zone), never below 0. The popup adds `seconds` to today's local minutes only when `date` equals the device's current local date. Deleting the account clears the key.
 
 ### 3.5 Environment variables
 
@@ -489,10 +529,13 @@ reading-chrome-extension/
   - *AC:* Minutes = round(seconds/60); relation only includes articles with a page id.
 - [ ] **T21 — Worker: errors + token refresh** (§2.15, §2.16). A failed job blocks the later jobs of its group (§2.12).
   - *AC:* 429 → the job's `run_at` is pushed back ≥ Retry-After; refresh stores **both** new tokens and bumps `token_version`; `invalid_grant` → `revoked`; archived page → page id cleared + re-enqueued.
-- [ ] **T22 — Resync on activation.** When installation becomes `active`, select the installation's `articles` rows with `version > notion_synced_version` (or never synced) and enqueue `article` for each; same for `days`.
-  - *AC:* after needs_setup → active, all pending articles appear in Notion without new pushes.
+- [ ] **T22 — Resync on activation.** When an installation becomes `active`, select the user's `articles` rows with `version > notion_synced_version` (or never synced) — all of them when the resync is full (§2.2 step 7, §2.7) — and enqueue `article` for each; same for `days`.
+  - *AC:* after needs_setup → active, all pending articles appear in Notion without new pushes; after connecting another workspace, every article and day of the user appears in the new databases.
 - [ ] **T23 — Account deletion + purge** (§2.17).
   - *AC:* after `DELETE /v1/me` and worker run, no row for `<uid>` or `<bot_id>` remains in any §3.1 store table; Notion untouched.
+
+- [ ] **T33 — `GET /v1/history`** (§2.18).
+  - *AC:* answers 200 for a user whose installation is absent, `needs_setup` or `revoked`; `tz` missing, unknown or `Local` → 400; `limit` absent → 50, 500 → 100, `0` or `abc` → 400; articles ordered by `last_read_at` descending with unread-time rows last; `today.seconds` equals the `days` row of today's date in `tz`.
 
 **Notion**
 - [ ] **T24 — Template page.** Public Notion page containing `Reading Library` and `Daily Log` exactly per §3.3, with views: "Reading now" (Status = Reading), "This week" (Last read within past week), "Completed", "Top rated" (Rating ≥ ⭐⭐⭐⭐), board by Status, gallery by Source; Daily Log bar chart of Minutes by Date. Configure its URL in the integration settings.
@@ -512,10 +555,13 @@ reading-chrome-extension/
   - *AC:* offline for 1 h then online → all segments synced exactly once (server `accepted`+`duplicate` covers all ids); retried batch after a timeout produces only `duplicate` for previously committed ids.
 - [ ] **T29 — Connect flow.** PKCE (verifier 64 chars), `chrome.identity.launchWebAuthFlow({url: API_BASE + '/v1/oauth/notion/start?…', interactive: true})`, parse `code`/`error` from redirect, `POST /v1/auth/token`, store token, `GET /v1/me`.
   - *AC:* user cancel / `error=access_denied` shows a message and stores nothing.
-- [ ] **T30 — Popup.** States: disconnected → "Connect Notion"; `needs_setup` → "Finish setup" (opens options); `revoked` → "Reconnect"; active → today's active minutes (local segments with `started_at` today in local tz), current tab article (title, minutes, progress), last 5 articles, "Open library in Notion" (`library_url`).
-  - *AC:* each installation status renders its own call-to-action; today's minutes equal sum of today's local segments / 60.
+- [ ] **T30 — Popup.** States: disconnected → "Connect Notion"; `needs_setup` → "Finish setup" (opens options); `revoked` → "Reconnect"; active → today's active minutes (local segments with `started_at` today in local tz, plus `today_carry` when its date is today's local date), current tab article (title, minutes, progress), last 5 articles, "Open library in Notion" (`library_url`).
+  - *AC:* each installation status renders its own call-to-action; today's minutes equal sum of today's local segments / 60, plus the restored carry (§3.4) when it is for today.
 - [ ] **T31 — Options.** Enabled domains (request optional host permission, then `chrome.scripting.registerContentScripts`), denied domains, setup page picker (`GET /v1/setup/pages`, `POST /v1/setup`), disconnect (`/v1/auth/logout`), delete account (`DELETE /v1/me`, confirm dialog).
   - *AC:* enabling `example.com` starts tracking there without reinstall; removing it unregisters the script; denied domain is never tracked even if enabled.
+
+- [ ] **T34 — Restore history after connect** (§3.4). After a successful connect, fetch `GET /v1/history`, merge into `articles`, store `today_carry`, then sync.
+  - *AC:* after clearing local storage and connecting again, the popup lists the article and today's minutes before anything new is read; local totals become the larger of local and server, never the sum; no `segments` row is created; a failing history call leaves the connect complete and the sync still runs.
 
 **End to end**
 - [ ] **T32 — Smoke test** against a deployed backend (or `make run` locally) + test Notion workspace.
@@ -548,6 +594,10 @@ reading-chrome-extension/
 21. **Incognito:** extension does not run.
 22. **Account deletion:** all store rows for the user gone after purge; Notion pages remain.
 23. **Freedium mirror change:** new mirror host added via `TRACKING_CONFIG_JSON`/config → canonical URL identical to old mirror's → same `articles` row.
+24. **Restore after reinstall:** connect, read an article, let it sync; clear the extension's storage and connect again → the popup lists the article with its time and shows today's minutes before anything new is read.
+25. **New authorization keeps history:** the same Notion user connects with a different `bot_id` → `GET /v1/history` returns the earlier articles; once the new installation is `active`, a full resync writes every article and day into its databases and the old workspace's pages stay as they were.
+26. **Restore never pushes:** after a restore no `segments` row exists for the restored articles and the next push carries nothing for them; a device that already had local reading for an article ends with the larger of the two totals, never their sum, and reading one more minute adds exactly one minute to the article and to today.
+27. **Restore failure does not block connect:** `GET /v1/history` fails (offline, 5xx, malformed body) → the connect still completes, the device token is stored, and the sync runs.
 
 ---
 
@@ -558,7 +608,7 @@ reading-chrome-extension/
 | C1 | Server **never** writes `Tags`, `Status`, `Rating`, `Notes` — not even on create. | User's manual curation in Notion is silently overwritten. |
 | C2 | Segment insert + aggregate increments in **one** transaction; the increments run only when the segment insert created a row (`ON CONFLICT DO NOTHING`). | Retries double-count reading time. |
 | C3 | Only the worker calls Notion page/write APIs; the API server calls Notion only for OAuth/setup/search. | Parallel API requests exceed 3 req/s → 429s; push latency tied to Notion. |
-| C4 | `group_id = installation_id` for every job (`user#<uid>` for a purge with no installation); one job per group at a time, in order. | Concurrent writes per connection → rate-limit violations and token-refresh races. |
+| C4 | `group_id = user#<user_id>` for every job (article, day and purge); one job per group at a time, in order. | Concurrent writes per connection → rate-limit violations and token-refresh races. |
 | C5 | Queue delay **D ≥ B** (bucket) and **B ≤ 300**. | Last updates in a bucket are dropped until the next read (stale Notion data). `B ≤ 300` dates from the SQS deduplication window; the Postgres queue no longer needs it (it deduplicates for as long as the row exists), but it stays enforced until deliberately relaxed. |
 | C6 | Worker writes **absolute** values read from the store, never deltas. | Redelivered messages corrupt totals. |
 | C7 | On refresh, persist **both** new access and refresh tokens, guarded by `token_version`. | Notion rotates refresh tokens; keeping the old one → `invalid_grant` → user forced to reconnect. |

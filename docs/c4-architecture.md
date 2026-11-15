@@ -39,7 +39,11 @@ C4Context
 2. The service worker stores flushed reading segments in IndexedDB.
 3. The service worker pushes pending records to the backend.
 4. The backend persists the record and enqueues a debounced synchronization job.
-5. The poller consumes the job and updates the user's Notion pages.
+5. The poller consumes the job, resolves the user's active installation, and updates the user's Notion pages.
+
+Reading history belongs to the user, not to one Notion authorization. After a
+connect, the service worker fetches `GET /v1/history` once and restores it into
+IndexedDB (articles only, so nothing is pushed back) before the first sync.
 
 ## 2. Container view
 
@@ -50,7 +54,8 @@ The browser-side containers are bundled from `extension/src`:
 - **Popup and options UI:** React pages for connection, library, and domain
   configuration.
 - **Background service worker:** message routing, IndexedDB persistence,
-  authentication, API calls, alarms, and synchronization scheduling.
+  authentication, API calls, alarms, synchronization scheduling, and the
+  one-time restore of reading history from the backend after a connect.
 
 The backend containers are implemented in `backend` and share the same use cases
 and ports. The store and the sync queue live in the same Postgres database.
@@ -65,15 +70,15 @@ C4Container
     System_Boundary(browser, "Chrome browser") {
         Container(content, "Content script", "TypeScript", "Detects supported articles and measures active reading")
         Container(ui, "Popup and options pages", "React + TypeScript", "Connection, library, and domain configuration")
-        Container(worker, "Background service worker", "TypeScript + MV3", "Routes messages, persists records, calls the backend, and schedules sync")
+        Container(worker, "Background service worker", "TypeScript + MV3", "Routes messages, persists records, calls the backend, schedules sync, and restores history after connect")
         ContainerDb(indexedDb, "IndexedDB", "Browser storage", "Pending reading segments, device/session state, and cached configuration")
     }
 
     System_Boundary(backend, "Reading Tracker backend") {
-        Container(api, "HTTP API", "Go + Echo", "Auth, Notion connection, setup, reading sync, library, and account endpoints")
+        Container(api, "HTTP API", "Go + Echo", "Auth, Notion connection, setup, reading sync, library (article status and history), and account endpoints")
         Container(sync, "Notion sync processor", "Go", "Consumes sync jobs, applies reading policy, and updates Notion")
         ContainerDb(store, "Application store", "Postgres", "Users, devices, OAuth grants, installations, reading records, and sync state")
-        ContainerDb(queue, "Sync queue", "Postgres table sync_jobs", "Debounced, ordered Notion synchronization jobs")
+        ContainerDb(queue, "Sync queue", "Postgres table sync_jobs", "Debounced Notion synchronization jobs, ordered per user")
     }
 
     Person(reader) --> content : Reads an article
@@ -110,7 +115,7 @@ C4Component
         Component(auth, "Auth use case", "Go", "Creates and validates device sessions")
         Component(connect, "Connect and setup use cases", "Go", "Completes Notion OAuth and creates workspace pages")
         Component(readsync, "Read sync use case", "Go", "Accepts reading segments and schedules debounced jobs")
-        Component(library, "Library use case", "Go", "Reads the user's synchronized articles and daily totals")
+        Component(library, "Library use case", "Go", "Reads the user's articles and daily totals: article status and GET /v1/history")
         Component(account, "Account use case", "Go", "Disconnects and purges account data")
         Component(storePorts, "Repository ports", "Go interfaces", "Users, devices, installations, OAuth, reading, and purge contracts")
         Component(queuePort, "Queue port", "Go interface", "Sync job sender contract")

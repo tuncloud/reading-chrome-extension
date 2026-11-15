@@ -66,7 +66,7 @@ Each of these was debated; the table exists so nobody silently undoes them.
 
 #### D6 — Respecting Notion's rate limit without shared memory
 
-| | In-memory `rate.Limiter` | **Postgres job queue `sync_jobs`, `group_id = installation` (chosen) ✅** |
+| | In-memory `rate.Limiter` | **Postgres job queue `sync_jobs`, `group_id = user` (chosen) ✅** |
 |---|---|---|
 | Correct across processes and pods | No | **Yes — only one job per group is processed at a time, claimed in the database** |
 | Debouncing bursts | Manual | **Free via deduplication IDs (§4.3)** |
@@ -99,7 +99,8 @@ Key versioning (`v1:`, `v2:` prefixes) allows rotation without re-encrypting eve
 | **Session** | One continuous visit to an article (open → leave). |
 | **Segment** | A slice of a session flushed by the extension (e.g. every 60 s of active time, or on tab hide). Append-only, has its own UUID. The unit of sync. |
 | **Active time** | Seconds when the tab is visible, the window focused, and the user interacted within the idle threshold. |
-| **Installation** | One Notion authorization (identified by Notion's `bot_id`) for one workspace. Holds tokens and the IDs of the two databases. |
+| **Installation** | One Notion authorization (identified by Notion's `bot_id`) for one workspace. Holds tokens, status and the IDs of the two databases. It does not own reading data. |
+| **Reading history** | Articles, segments and daily totals. They belong to the **user** (the Notion user, our `user_id`), not to an installation, so they survive a new authorization, and a reinstalled extension can restore them from the server (`GET /v1/history`). The Notion page links stored on them refer to the user's active installation's databases. |
 | **Reading Library** | Notion database, one page per article. |
 | **Daily Log** | Notion database, one page per day with minutes read — small enough for Notion chart views. |
 | **Server-owned / user-owned property** | Every Notion property is written by exactly one party. The server never touches user-owned ones. |
@@ -126,7 +127,7 @@ graph TB
 
     subgraph PGS["Postgres"]
         PGT[("store tables")]
-        Q["sync_jobs<br/>group = installation"]
+        Q["sync_jobs<br/>group = user"]
         DLQ["state = dead"]
     end
 
@@ -150,7 +151,7 @@ graph TB
 - **Content script** measures; it never talks to the network. Measuring in the page is the only way to see scroll, visibility and interaction.
 - **Service worker** is the only network client. It stores everything locally first (offline-first) and syncs in batches; losing connectivity or the server never loses data.
 - **`cmd/server` (API)** authenticates devices, writes reading data to Postgres atomically, and enqueues work. It **never writes reading data to Notion** — it only calls Notion for OAuth and one-time setup. This keeps request latency independent of Notion's rate limit.
-- **`cmd/poller` (the worker)** is the only component that writes pages to Notion and the only one that refreshes Notion tokens. Because it runs one job at a time per installation, token refresh can't race (Notion rotates refresh tokens; two concurrent refreshes would invalidate one another).
+- **`cmd/poller` (the worker)** is the only component that writes pages to Notion and the only one that refreshes Notion tokens. Because it runs one job at a time per user (and so per active installation), token refresh can't race (Notion rotates refresh tokens; two concurrent refreshes would invalidate one another).
 - **Secrets:** the Notion client secret and encryption keys exist only in the cluster's secret source and the pods' environment. **The extension holds no secret** except its own revocable device token.
 
 ---
@@ -178,8 +179,8 @@ This is why completion is a separate `Completed` checkbox rather than the server
 
 Every push enqueues a job in the Postgres table `sync_jobs`:
 
-- `group_id = installation_id` → the poller only claims the oldest job of a group, and only while no other job of that group is running, so each user's Notion connection is naturally serialized (and naturally paused while a 429 back-off is in effect).
-- `dedup_id = <type>#<installation>#<key>#<time bucket>` with a bucket of **B** seconds → all pushes for the same article in the same bucket collapse into one job (a second insert with the same `dedup_id` is dropped).
+- `group_id = user#<user_id>` → the poller only claims the oldest job of a group, and only while no other job of that group is running, so each user's Notion connection is naturally serialized (and naturally paused while a 429 back-off is in effect).
+- `dedup_id = <type>#<user_id>#<key>#<time bucket>` with a bucket of **B** seconds → all pushes for the same article in the same bucket collapse into one job (a second insert with the same `dedup_id` is dropped).
 - A **delay D ≥ B** on every job (`run_at = now + D`) guarantees that by the time the job is processed, every push that was deduplicated into it has already landed in Postgres. (If D < B, the last updates of a bucket would be dropped until the next read.) B must also be ≤ 300 s (C5).
 - The worker always **reads the latest aggregate** and writes absolute values to Notion, so processing twice is harmless.
 
@@ -220,9 +221,13 @@ sequenceDiagram
     A-->>X: 302 → https://EXT_ID.chromiumapp.org/?code=…
     X->>A: POST /v1/auth/token {code, code_verifier, device_name}
     A-->>X: device_token, installation status
+    X->>A: GET /v1/history?tz=… (restore)
+    A-->>X: recent articles + today's seconds, merged into IndexedDB (no segments)
 ```
 
 Why a second hop (one-time code + PKCE) instead of putting the device token straight in the redirect URL: URLs end up in logs and history; the PKCE verifier proves the redeemer is the extension instance that started the flow.
+
+Reading history belongs to the user, not to the authorization, so reconnecting never starts from an empty library: right after the connect the extension restores the user's recent articles and today's total from the server (a failed restore is ignored and does not block the connect). When the installation becomes `active` with databases other than the ones the user's rows were last written to — a new workspace, or switching back to an earlier one — the server enqueues every article and day of the user, so the history is written into that workspace; pages already in the old workspace are left in place.
 
 If the user skipped the template, the Options page lists pages the integration can see and lets them pick a parent; the server creates both databases there.
 
@@ -250,12 +255,12 @@ sequenceDiagram
         A->>D: one transaction: insert segment (if new) + add to article + add to day
         A->>D: same transaction: raise max_progress / last_read_at
     end
-    A->>Q: insert article + day jobs (group = installation, dedup = bucket)
+    A->>Q: insert article + day jobs (group = user, dedup = bucket)
     A-->>S: accepted / duplicate / rejected
     S->>S: mark accepted + duplicate as synced
     Note over Q: run_at = now + D
     W->>Q: claim group head
-    W->>D: read article aggregate (+ decrypt token)
+    W->>D: read the user's active installation (+ decrypt token) and the article aggregate
     alt no Notion page yet and total ≥ min seconds
         W->>N: query data source by URL → create page if absent
     else page exists
@@ -355,7 +360,7 @@ stateDiagram-v2
 - 🔶 **Tracking thresholds.** Idle threshold (60–90 s), segment size (~60 s), minimum active time before a Notion page is created (~30 s), and the completion rule (progress ≥ 90 % and active time ≥ some fraction of estimated reading time). Defaults are reasonable; tune after real use. They're served from `/v1/config` so they can change without an extension release.
 - 🔶 **Debounce bucket B / delay D.** Smaller = Notion updates sooner, more writes. Starting point B = D = 120 s.
 - 🔶 **Freedium mirror list.** Mirrors change; the default list is bundled and overridable via `/v1/config`. Which mirrors to ship initially?
-- 🔶 **Multiple workspaces per user.** v1 keeps one active installation per user (reconnecting to another workspace switches). Supporting several means routing each article to a chosen workspace.
+- 🔶 **Multiple workspaces per user.** v1 keeps one active installation per user (reconnecting to another workspace switches, and the user's whole history is written into the new one). Supporting several means routing each article to a chosen workspace.
 - 🔶 **Device token lifetime.** Non-expiring until revoked (simple) vs. rotating (safer). v1 assumes non-expiring + revocation.
 - 🔶 **Notion access-token expiry semantics.** The design refreshes reactively on 401; if Notion returns explicit expiry, refresh proactively in the worker.
 

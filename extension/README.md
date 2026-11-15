@@ -32,6 +32,8 @@ How a read becomes a Notion page:
 4. The `sync` alarm runs `background/sync.ts`, which sends them to `POST /v1/sync/push` through `background/api.ts`.
 5. The backend queues the Notion write.
 
+After each successful connect, `background/restore.ts` restores the reading history from the server (`GET /v1/history`) into IndexedDB before the first sync, so the popup lists earlier reading after a reinstall or a new Notion authorization.
+
 Modules call Dexie, `fetch` and `chrome.*` directly. Tests use fake-indexeddb, `test/helpers.ts` (fresh DB, clock, API stub) and `test/chrome.ts` (a `chrome` mock).
 
 For a single end-to-end checklist (local development and first deploy), see [`docs/runbook.md`](../docs/runbook.md).
