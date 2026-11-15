@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"reading-tracker/backend/internal/adapter/postgres"
 	"reading-tracker/backend/internal/adapter/storetest"
@@ -84,5 +87,73 @@ func TestSweepRemovesOnlyExpired(t *testing.T) {
 	}
 	if _, err := s.ConsumeAuthCode(ctx, "code-1", now); err != nil {
 		t.Fatalf("live auth code removed: %v", err)
+	}
+}
+
+func pgErr(code string) error { return &pgconn.PgError{Code: code} }
+
+// faultStore builds a store whose transactions fail with fault() and records back-off sleeps.
+func faultStore(t *testing.T, fault func() error) (*postgres.Store, *[]time.Duration) {
+	t.Helper()
+	var sleeps []time.Duration
+	s := postgres.New(pgtest.New(t).Pool,
+		postgres.WithSleep(func(d time.Duration) { sleeps = append(sleeps, d) }),
+		postgres.WithTxFault(fault))
+	return s, &sleeps
+}
+
+func faultSegment() domain.SegmentWrite {
+	return storetest.Segment("00000000-0000-4000-8000-000000000001", storetest.ArticleURL, 0, 60, 0.5, storetest.TestNow)
+}
+
+// Scenario 14: a capacity error is reported as retry, and nothing is written.
+func TestPushThrottleIsRetry(t *testing.T) {
+	ctx := context.Background()
+	s, sleeps := faultStore(t, func() error { return pgErr("53300") })
+	out, err := s.PushSegment(ctx, faultSegment())
+	if err != nil || out != domain.PushRetry {
+		t.Fatalf("PushSegment = %v, %v; want PushRetry, nil", out, err)
+	}
+	if len(*sleeps) != 0 {
+		t.Fatalf("sleeps = %v, want none", *sleeps)
+	}
+	if _, err := s.GetArticle(ctx, "bot-1", domain.URLHash(storetest.ArticleURL)); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("GetArticle err = %v, want ErrNotFound", err)
+	}
+}
+
+// A conflict is retried and the segment is counted exactly once (C2).
+func TestPushRetriesTransactionConflict(t *testing.T) {
+	ctx := context.Background()
+	calls := 0
+	s, sleeps := faultStore(t, func() error {
+		calls++
+		if calls <= 2 {
+			return pgErr("40001")
+		}
+		return nil
+	})
+	out, err := s.PushSegment(ctx, faultSegment())
+	if err != nil || out != domain.PushAccepted {
+		t.Fatalf("PushSegment = %v, %v; want PushAccepted, nil", out, err)
+	}
+	if want := []time.Duration{50 * time.Millisecond, 100 * time.Millisecond}; !slices.Equal(*sleeps, want) {
+		t.Fatalf("sleeps = %v, want %v", *sleeps, want)
+	}
+	a, err := s.GetArticle(ctx, "bot-1", domain.URLHash(storetest.ArticleURL))
+	storetest.Must(t, err)
+	if a.TotalSeconds != 60 || a.Version != 1 || a.Sessions != 1 {
+		t.Fatalf("article = total %d version %d sessions %d", a.TotalSeconds, a.Version, a.Sessions)
+	}
+}
+
+func TestPushGivesUpAfterThreeConflicts(t *testing.T) {
+	s, sleeps := faultStore(t, func() error { return pgErr("40P01") })
+	out, err := s.PushSegment(context.Background(), faultSegment())
+	if err != nil || out != domain.PushRetry {
+		t.Fatalf("PushSegment = %v, %v; want PushRetry, nil", out, err)
+	}
+	if want := []time.Duration{50 * time.Millisecond, 100 * time.Millisecond}; !slices.Equal(*sleeps, want) {
+		t.Fatalf("sleeps = %v, want %v", *sleeps, want)
 	}
 }

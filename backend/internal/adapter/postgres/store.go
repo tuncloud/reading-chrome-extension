@@ -17,6 +17,8 @@ import (
 type Store struct {
 	pool  *pgxpool.Pool
 	sleep func(time.Duration)
+	// txFault, when set, fails every tx before it opens (tests inject conflicts and capacity errors).
+	txFault func() error
 }
 
 // Option configures a Store.
@@ -53,6 +55,11 @@ func (s *Store) guarded(ctx context.Context, sql string, args ...any) error {
 
 // tx runs f in one transaction.
 func (s *Store) tx(ctx context.Context, f func(pgx.Tx) error) error {
+	if s.txFault != nil {
+		if err := s.txFault(); err != nil {
+			return tagged(err)
+		}
+	}
 	return tagged(pgx.BeginFunc(ctx, s.pool, f))
 }
 
