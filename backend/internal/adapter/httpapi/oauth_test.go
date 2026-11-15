@@ -219,8 +219,8 @@ func TestOAuthReconnectWithNewTemplateResyncsEverything(t *testing.T) {
 	if inst.Status != domain.StatusActive || inst.LibraryDSID != tpl2.LibraryDS {
 		t.Fatalf("installation %+v", inst)
 	}
-	if got := env.queue.Messages(); !reflect.DeepEqual(got, fullResync()) {
-		t.Fatalf("resync enqueued %+v, want %+v", got, fullResync())
+	if got := env.queue.Messages(); !reflect.DeepEqual(got, env.fullResync()) {
+		t.Fatalf("resync enqueued %+v, want %+v", got, env.fullResync())
 	}
 }
 
@@ -262,8 +262,8 @@ func TestOAuthCallbackResyncFailureNeedsSetupUntilReconnect(t *testing.T) {
 	if inst, _ = env.db.Store.GetInstallation(context.Background(), testBotID); inst.Status != domain.StatusActive || inst.SetupError != "" {
 		t.Fatalf("installation %+v", inst)
 	}
-	if got := env.queue.Messages(); !reflect.DeepEqual(got, fullResync()) {
-		t.Fatalf("resync enqueued %+v, want %+v", got, fullResync())
+	if got := env.queue.Messages(); !reflect.DeepEqual(got, env.fullResync()) {
+		t.Fatalf("resync enqueued %+v, want %+v", got, env.fullResync())
 	}
 }
 

@@ -19,34 +19,29 @@ const (
 // Message is the JSON body of a queue message.
 type Message struct {
 	Type           Type   `json:"type"`
-	InstallationID string `json:"installation_id"`
+	InstallationID string `json:"installation_id,omitempty"`
+	UserID         string `json:"user_id"`
 	URLHash        string `json:"url_hash,omitempty"`
 	Date           string `json:"date,omitempty"`
-	UserID         string `json:"user_id,omitempty"`
 }
 
-func Article(inst, urlHash string) Message {
-	return Message{Type: TypeArticle, InstallationID: inst, URLHash: urlHash}
+func Article(uid, urlHash string) Message {
+	return Message{Type: TypeArticle, UserID: uid, URLHash: urlHash}
 }
-func Day(inst, date string) Message { return Message{Type: TypeDay, InstallationID: inst, Date: date} }
-func Purge(userID, inst string) Message {
-	return Message{Type: TypePurge, InstallationID: inst, UserID: userID}
+func Day(uid, date string) Message { return Message{Type: TypeDay, UserID: uid, Date: date} }
+func Purge(uid, inst string) Message {
+	return Message{Type: TypePurge, InstallationID: inst, UserID: uid}
 }
 
-// GroupID serialises all work for one installation (C4).
-func (m Message) GroupID() string {
-	if m.InstallationID != "" {
-		return m.InstallationID
-	}
-	return "user#" + m.UserID
-}
+// GroupID serialises all work for one user (C4).
+func (m Message) GroupID() string { return "user#" + m.UserID }
 
 func (m Message) key() string {
 	switch m.Type {
 	case TypeArticle:
-		return "article#" + m.InstallationID + "#" + m.URLHash
+		return "article#" + m.UserID + "#" + m.URLHash
 	case TypeDay:
-		return "day#" + m.InstallationID + "#" + m.Date
+		return "day#" + m.UserID + "#" + m.Date
 	default:
 		return "purge#" + m.UserID
 	}

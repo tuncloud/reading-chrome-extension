@@ -77,6 +77,7 @@ func segment(id string, start time.Time, secs int, progress float64, seq int) ma
 type system struct {
 	t     *testing.T
 	store wire.Store
+	db    *postgrestest.Env
 	ns    *notiontest.Server
 	tpl   notiontest.Template
 	q     *msg.Recorder
@@ -97,7 +98,7 @@ func newSystem(t *testing.T) *system {
 		"DEVICE_TOKEN_PEPPER": base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32)),
 	}
 	env := postgrestest.New(t)
-	sys.store = env.Store
+	sys.db, sys.store = env, env.Store
 	vars["DATABASE_URL"] = env.URL
 	cfg, err := config.Load(config.RoleAPI, func(k string) string { return vars[k] })
 	if err != nil {
@@ -112,10 +113,14 @@ func newSystem(t *testing.T) *system {
 }
 
 // connect runs the OAuth flow accepting the template (scenario 1) and returns a device token.
-func (sys *system) connect() string {
+func (sys *system) connect() string { return sys.connectAs("bot-e2e", "tpl-1") }
+
+// connectAs runs the OAuth flow as the Notion user "nu" authorizing the bot with the
+// duplicated template, and returns a device token.
+func (sys *system) connectAs(bot, template string) string {
 	t, api := sys.t, sys.api
-	sys.ns.SetTokenResponse(map[string]any{"access_token": "at", "refresh_token": "rt", "bot_id": "bot-e2e", "workspace_id": "ws",
-		"workspace_name": "WS", "duplicated_template_id": "tpl-1", "owner": map[string]any{"type": "user", "user": map[string]any{"id": "nu", "name": "Tuan"}}})
+	sys.ns.SetTokenResponse(map[string]any{"access_token": "at", "refresh_token": "rt", "bot_id": bot, "workspace_id": "ws",
+		"workspace_name": "WS", "duplicated_template_id": template, "owner": map[string]any{"type": "user", "user": map[string]any{"id": "nu", "name": "Tuan"}}})
 	verifier := strings.Repeat("v", 64)
 	ext := "https://" + extID + ".chromiumapp.org/"
 	start := call(t, api, "GET", "/v1/oauth/notion/start?"+url.Values{"ext_redirect": {ext}, "code_challenge": {crypto.S256Challenge(verifier)}, "code_challenge_method": {"S256"}}.Encode(), nil, "")
@@ -258,5 +263,52 @@ func TestDeletedLibraryRecoversAfterSetup(t *testing.T) {
 	}
 	if !slices.Contains(related, urls[urlA]) || !slices.Contains(related, urls[urlB]) || len(related) != 2 {
 		t.Fatalf("day relates %v, want both new pages %v", related, urls)
+	}
+}
+
+// A new Notion authorization of the same user is a new installation, but the reading
+// history stays: nothing is re-read, and the old pages are left in the old workspace.
+func TestReconnectWithNewBotKeepsHistory(t *testing.T) {
+	sys := newSystem(t)
+	ns, tpl1 := sys.ns, sys.tpl
+	token := sys.connect()
+	url := "https://medium.com/p/8f3c2a1b9d4e"
+	push := map[string]any{"tz": "Asia/Ho_Chi_Minh",
+		"articles": []any{map[string]any{"canonical_url": url, "source": "medium", "title": "Designing Idempotent APIs", "word_count": 1820}},
+		"segments": []any{segment("00000000-0000-4000-8000-000000000001", sys.now.Add(-5*time.Minute), 180, 0.6, 0)}}
+	if rec := call(t, sys.api, "POST", "/v1/sync/push", push, token); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"retry":[]`) {
+		t.Fatalf("push %d %s", rec.Code, rec.Body)
+	}
+	deliver(t, sys.wk, sys.q)
+	if n := len(ns.Pages(tpl1.LibraryDS)); n != 1 {
+		t.Fatalf("%d pages in tpl-1's Library, want 1", n)
+	}
+
+	tpl2 := ns.AddTemplate("tpl-2")
+	token2 := sys.connectAs("bot-e2e-2", "tpl-2")
+	deliver(t, sys.wk, sys.q)
+
+	st := call(t, sys.api, "POST", "/v1/articles/status", map[string]any{"canonical_urls": []string{url}}, token2)
+	var body struct {
+		Items map[string]struct {
+			TotalSeconds int64 `json:"total_seconds"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(st.Body.Bytes(), &body); err != nil || st.Code != 200 {
+		t.Fatalf("status %d %s", st.Code, st.Body)
+	}
+	if got, ok := body.Items[url]; !ok || got.TotalSeconds != 180 {
+		t.Fatalf("status items %+v, want total_seconds 180", body.Items)
+	}
+
+	lib2 := ns.Pages(tpl2.LibraryDS)
+	if len(lib2) != 1 || lib2[0].Properties[notiontest.PropID("Reading time (min)")].(map[string]any)["number"] != 3.0 {
+		t.Fatalf("tpl-2 Library pages %+v, want one with Reading time 3", lib2)
+	}
+	if n := len(ns.Pages(tpl1.LibraryDS)); n != 1 {
+		t.Fatalf("%d pages in tpl-1's Library, want the old page to remain", n)
+	}
+	if n := sys.db.Count(t, "articles", "true"); n != 1 {
+		t.Fatalf("articles has %d rows, want 1", n)
 	}
 }

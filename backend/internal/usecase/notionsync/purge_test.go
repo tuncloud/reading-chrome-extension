@@ -11,7 +11,7 @@ import (
 func (e *wenv) seedUser(uid string) {
 	e.t.Helper()
 	s := e.db.Store
-	must(e.t, s.CreateUser(ctx, uid, domain.User{NotionUserID: "n-" + uid, Name: "T", CreatedAt: domain.Timestamp(e.now)}))
+	e.ensureUser(uid)
 	must(e.t, s.CreateDevice(ctx, uid, "d1", domain.Device{Name: "Mac", TokenHMAC: "h-" + uid, CreatedAt: domain.Timestamp(e.now), LastSeenAt: domain.Timestamp(e.now)}))
 	must(e.t, s.PutUserInstallation(ctx, uid, testBot, e.now))
 }

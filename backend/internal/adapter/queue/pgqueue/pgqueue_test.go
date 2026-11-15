@@ -125,8 +125,8 @@ func TestSendDedupsWithinBucket(t *testing.T) {
 	if n := count(t, env.Pool, "true"); n != 2 {
 		t.Fatalf("rows = %d, want 2", n)
 	}
-	body := `{"type":"article","installation_id":"` + inst + `","url_hash":"h1"}`
-	if n := count(t, env.Pool, "group_id = $1 AND body = $2::jsonb AND state = 'ready' AND run_at <= now()", inst, body); n != 2 {
+	body := `{"type":"article","user_id":"` + inst + `","url_hash":"h1"}`
+	if n := count(t, env.Pool, "group_id = $1 AND body = $2::jsonb AND state = 'ready' AND run_at <= now()", "user#"+inst, body); n != 2 {
 		t.Fatalf("rows with group/body/run_at = %d, want 2", n)
 	}
 }

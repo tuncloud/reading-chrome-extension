@@ -17,16 +17,16 @@ type SyncQueue struct {
 
 var _ port.SyncQueue = (*SyncQueue)(nil)
 
-func (q *SyncQueue) EnqueueSync(ctx context.Context, inst string, hashes, dates []string) error {
-	msgs := syncMessages(inst, hashes, dates)
+func (q *SyncQueue) EnqueueSync(ctx context.Context, uid string, hashes, dates []string) error {
+	msgs := syncMessages(uid, hashes, dates)
 	if len(msgs) == 0 {
 		return nil
 	}
 	return q.Sender.Send(ctx, Bucketed(q.Now(), q.Bucket, msgs...)...)
 }
 
-func (q *SyncQueue) EnqueueResync(ctx context.Context, inst string, hashes, dates []string) error {
-	msgs := syncMessages(inst, hashes, dates)
+func (q *SyncQueue) EnqueueResync(ctx context.Context, uid string, hashes, dates []string) error {
+	msgs := syncMessages(uid, hashes, dates)
 	if len(msgs) == 0 {
 		return nil
 	}
@@ -50,13 +50,13 @@ func (q *SyncQueue) EnqueuePurge(ctx context.Context, uid, inst string) error {
 
 // syncMessages lists article messages before day messages, so a day page can relate
 // to article pages created from the same batch.
-func syncMessages(inst string, hashes, dates []string) []Message {
+func syncMessages(uid string, hashes, dates []string) []Message {
 	msgs := make([]Message, 0, len(hashes)+len(dates))
 	for _, h := range hashes {
-		msgs = append(msgs, Article(inst, h))
+		msgs = append(msgs, Article(uid, h))
 	}
 	for _, d := range dates {
-		msgs = append(msgs, Day(inst, d))
+		msgs = append(msgs, Day(uid, d))
 	}
 	return msgs
 }

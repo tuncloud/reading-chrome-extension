@@ -54,7 +54,7 @@ func TestActivateEnqueuesPending(t *testing.T) {
 	inst := &domain.Installation{ID: "bot-1", UserID: "u1", Status: domain.StatusActive}
 	must(t, a.Activate(ctx, inst, false))
 	got := rec.Messages()
-	want := []msg.Message{msg.Article("bot-1", domain.URLHash("https://b.example/2")), msg.Day("bot-1", "2026-10-06")}
+	want := []msg.Message{msg.Article("u1", domain.URLHash("https://b.example/2")), msg.Day("u1", "2026-10-06")}
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
@@ -67,9 +67,9 @@ func TestActivateFullResendsSyncedItems(t *testing.T) {
 	// I1: a full resync (databases changed) also re-sends the already-synced article.
 	got := rec.Messages()
 	want := []msg.Message{
-		msg.Article("bot-1", domain.URLHash("https://a.example/1")),
-		msg.Article("bot-1", domain.URLHash("https://b.example/2")),
-		msg.Day("bot-1", "2026-10-06"),
+		msg.Article("u1", domain.URLHash("https://a.example/1")),
+		msg.Article("u1", domain.URLHash("https://b.example/2")),
+		msg.Day("u1", "2026-10-06"),
 	}
 	if len(got) != len(want) {
 		t.Fatalf("full resync enqueued %+v, want %+v", got, want)

@@ -95,7 +95,18 @@ func (e *wenv) seedInstallationWith(kr *crypto.Keyring, access, refresh string) 
 		RefreshTokenEnc: r, TokenVersion: 1, CreatedAt: domain.Timestamp(e.now), UpdatedAt: domain.Timestamp(e.now)}
 	inst.ApplyDatabases(e.tpl.DBConfig())
 	must(e.t, e.db.Store.PutInstallation(ctx, testBot, inst))
+	e.ensureUser(testUser)
+	must(e.t, e.db.Store.SetActiveInstallation(ctx, testUser, testBot))
 	return inst
+}
+
+// ensureUser creates the user (Notion user "n-<uid>") unless it already exists.
+func (e *wenv) ensureUser(uid string) {
+	e.t.Helper()
+	if _, err := e.db.Store.GetProfile(ctx, uid); err == nil {
+		return
+	}
+	must(e.t, e.db.Store.CreateUser(ctx, uid, domain.User{NotionUserID: "n-" + uid, Name: "T", CreatedAt: domain.Timestamp(e.now)}))
 }
 
 func (e *wenv) read(url string, seq, secs int, progress float64) {

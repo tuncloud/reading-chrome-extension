@@ -11,7 +11,7 @@ import (
 
 const today = "2026-10-06"
 
-func dayMsg() msg.Message { return msg.Day(testBot, today) }
+func dayMsg() msg.Message { return msg.Day(testUser, today) }
 
 func (e *wenv) onlyDayPage() *notiontest.Page {
 	e.t.Helper()
@@ -30,7 +30,7 @@ func TestDayMinutesAndRelation(t *testing.T) {
 	e.read(artURL, 0, 120, 0.5)
 	e.read(short, 0, 20, 0.1)  // below min_create_seconds → no page
 	e.read(artURL, 1, 10, 0.6) // day total 150 s → round(2.5) = 3
-	e.handle(msg.Article(testBot, domain.URLHash(artURL)), msg.Article(testBot, domain.URLHash(short)), dayMsg())
+	e.handle(msg.Article(testUser, domain.URLHash(artURL)), msg.Article(testUser, domain.URLHash(short)), dayMsg())
 
 	pg := e.onlyDayPage()
 	if num(pg, "Minutes") != 3 {

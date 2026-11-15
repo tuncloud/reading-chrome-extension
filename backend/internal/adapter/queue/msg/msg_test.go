@@ -19,7 +19,7 @@ const (
 func TestDedupIDBuckets(t *testing.T) {
 	bucket := 120 * time.Second
 	start := time.Unix(1000*120, 0)
-	m := Article(bot, hash)
+	m := Article("u1", hash)
 	a := m.DedupID(start.Add(5*time.Second), bucket)
 	b := m.DedupID(start.Add(119*time.Second), bucket)
 	c := m.DedupID(start.Add(120*time.Second), bucket)
@@ -29,10 +29,10 @@ func TestDedupIDBuckets(t *testing.T) {
 	if a == c {
 		t.Fatal("next bucket must differ")
 	}
-	if a != "article#"+bot+"#"+hash+"#1000" {
+	if a != "article#u1#"+hash+"#1000" {
 		t.Fatalf("format: %q", a)
 	}
-	if d := Day(bot, "2026-10-06").DedupID(start, bucket); d != "day#"+bot+"#2026-10-06#1000" {
+	if d := Day("u1", "2026-10-06").DedupID(start, bucket); d != "day#u1#2026-10-06#1000" {
 		t.Fatalf("day format: %q", d)
 	}
 }
@@ -40,7 +40,7 @@ func TestDedupIDBuckets(t *testing.T) {
 // Review focus 3: a worker re-enqueue inside the same bucket must not be deduplicated away.
 func TestRequeueDedupIDNeverCollides(t *testing.T) {
 	now := time.Unix(1000*120+5, 0)
-	m := Article(bot, hash)
+	m := Article("u1", hash)
 	r := m.RequeueDedupID(now)
 	if r == m.DedupID(now, 120*time.Second) || len(r) > 128 || r == m.RequeueDedupID(now.Add(time.Nanosecond)) {
 		t.Fatalf("requeue id %q collides or is too long", r)
@@ -48,14 +48,15 @@ func TestRequeueDedupIDNeverCollides(t *testing.T) {
 }
 
 func TestGroupIDs(t *testing.T) {
-	if g := Article(bot, hash).GroupID(); g != bot {
-		t.Fatalf("article group %q", g)
-	}
-	if g := Purge("u1", "").GroupID(); g != "user#u1" {
-		t.Fatalf("purge group without installation %q", g)
-	}
-	if g := Purge("u1", bot).GroupID(); g != bot {
-		t.Fatalf("purge group with installation %q", g)
+	for name, m := range map[string]Message{
+		"article":        Article("u1", hash),
+		"day":            Day("u1", "2026-10-06"),
+		"purge":          Purge("u1", bot),
+		"purge, no inst": Purge("u1", ""),
+	} {
+		if g := m.GroupID(); g != "user#u1" {
+			t.Fatalf("%s group %q", name, g)
+		}
 	}
 	if id := Purge("u1", bot).DedupID(time.Unix(42, 0), time.Minute); id != "purge#u1#42" {
 		t.Fatalf("purge dedup %q", id)
@@ -63,19 +64,21 @@ func TestGroupIDs(t *testing.T) {
 }
 
 func TestMessageJSONShape(t *testing.T) {
-	b, _ := json.Marshal(Article(bot, hash))
-	if string(b) != `{"type":"article","installation_id":"`+bot+`","url_hash":"`+hash+`"}` {
-		t.Fatalf("article json %s", b)
-	}
-	b, _ = json.Marshal(Purge("u1", ""))
-	if string(b) != `{"type":"purge","installation_id":"","user_id":"u1"}` {
-		t.Fatalf("purge json %s", b)
+	for want, m := range map[string]Message{
+		`{"type":"article","user_id":"u1","url_hash":"h1"}`:         Article("u1", "h1"),
+		`{"type":"day","user_id":"u1","date":"2026-10-06"}`:         Day("u1", "2026-10-06"),
+		`{"type":"purge","installation_id":"bot-1","user_id":"u1"}`: Purge("u1", "bot-1"),
+	} {
+		b, _ := json.Marshal(m)
+		if string(b) != want {
+			t.Fatalf("json %s, want %s", b, want)
+		}
 	}
 }
 
 func TestRecorder(t *testing.T) {
 	r := &Recorder{}
-	r.Send(context.Background(), Bucketed(time.Unix(0, 0), time.Minute, Article(bot, hash), Day(bot, "2026-10-06"))...)
+	r.Send(context.Background(), Bucketed(time.Unix(0, 0), time.Minute, Article("u1", hash), Day("u1", "2026-10-06"))...)
 	if got := r.Messages(); len(got) != 2 || got[1].Type != TypeDay {
 		t.Fatalf("got %+v", got)
 	}
@@ -91,15 +94,15 @@ func newSyncQueue(rec *Recorder, now time.Time) *SyncQueue {
 func TestEnqueueSyncDebouncesArticlesThenDays(t *testing.T) {
 	rec := &Recorder{}
 	q := newSyncQueue(rec, time.Unix(1000*120+5, 0))
-	if err := q.EnqueueSync(context.Background(), bot, []string{hash}, []string{"2026-10-06"}); err != nil {
+	if err := q.EnqueueSync(context.Background(), "u1", []string{hash}, []string{"2026-10-06"}); err != nil {
 		t.Fatal(err)
 	}
 	sent := rec.Drain()
-	if len(sent) != 2 || sent[0].Message != Article(bot, hash) || sent[1].Message != Day(bot, "2026-10-06") ||
-		sent[0].DedupID != "article#"+bot+"#"+hash+"#1000" {
+	if len(sent) != 2 || sent[0].Message != Article("u1", hash) || sent[1].Message != Day("u1", "2026-10-06") ||
+		sent[0].DedupID != "article#u1#"+hash+"#1000" {
 		t.Fatalf("sent %+v", sent)
 	}
-	if err := q.EnqueueSync(context.Background(), bot, nil, nil); err != nil || len(rec.Drain()) != 0 {
+	if err := q.EnqueueSync(context.Background(), "u1", nil, nil); err != nil || len(rec.Drain()) != 0 {
 		t.Fatal("nothing to send must send nothing")
 	}
 }
@@ -114,8 +117,8 @@ func TestResyncIDsNeverCollideWithPushIDs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(q.EnqueueSync(ctx, bot, []string{hash}, []string{"2026-10-06"}))
-	must(q.EnqueueResync(ctx, bot, []string{hash}, []string{"2026-10-06"}))
+	must(q.EnqueueSync(ctx, "u1", []string{hash}, []string{"2026-10-06"}))
+	must(q.EnqueueResync(ctx, "u1", []string{hash}, []string{"2026-10-06"}))
 	sent := rec.Drain()
 	if len(sent) != 4 {
 		t.Fatalf("sent %d", len(sent))
@@ -135,14 +138,14 @@ func TestResyncIDsNeverCollideWithPushIDs(t *testing.T) {
 func TestRequeueAndPurge(t *testing.T) {
 	rec := &Recorder{}
 	q := newSyncQueue(rec, time.Unix(42, 0))
-	if err := q.Requeue(context.Background(), port.Job{Type: port.JobDay, InstallationID: bot, Date: "2026-10-06"}); err != nil {
+	if err := q.Requeue(context.Background(), port.Job{Type: port.JobDay, UserID: "u1", Date: "2026-10-06"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := q.EnqueuePurge(context.Background(), "u1", bot); err != nil {
 		t.Fatal(err)
 	}
 	sent := rec.Drain()
-	if len(sent) != 2 || sent[0].Message != Day(bot, "2026-10-06") || !strings.Contains(sent[0].DedupID, "#r") ||
+	if len(sent) != 2 || sent[0].Message != Day("u1", "2026-10-06") || !strings.Contains(sent[0].DedupID, "#r") ||
 		sent[1].Message != Purge("u1", bot) || sent[1].DedupID != "purge#u1#42" {
 		t.Fatalf("sent %+v", sent)
 	}

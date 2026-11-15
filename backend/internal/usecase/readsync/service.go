@@ -91,7 +91,7 @@ func (s *Service) Push(ctx context.Context, userID, installationID, deviceID str
 		return nil, apperr.NewCapacity()
 	}
 	if len(touched.hashes)+len(touched.dates) > 0 {
-		if err := s.Queue.EnqueueSync(ctx, installationID, touched.hashes, touched.dates); err != nil {
+		if err := s.Queue.EnqueueSync(ctx, userID, touched.hashes, touched.dates); err != nil {
 			return nil, err
 		}
 	}

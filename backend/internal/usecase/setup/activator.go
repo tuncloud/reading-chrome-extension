@@ -54,7 +54,7 @@ func (a *Activator) resync(ctx context.Context, inst *domain.Installation, full 
 	if err != nil {
 		return err
 	}
-	return a.Queue.EnqueueResync(ctx, inst.ID, hashes, dates)
+	return a.Queue.EnqueueResync(ctx, inst.UserID, hashes, dates)
 }
 
 func (a *Activator) sleep(d time.Duration) {

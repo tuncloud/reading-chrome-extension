@@ -100,17 +100,29 @@ func (s *Service) sleep(d time.Duration) {
 	time.Sleep(d)
 }
 
-// activeInstallation returns nil (→ ack) when the installation is gone or not active;
-// its data stays stored and is resynced on reactivation (spec §2.13 step 1).
-func (s *Service) activeInstallation(ctx context.Context, id string) (*domain.Installation, error) {
-	inst, err := s.Installations.GetInstallation(ctx, id)
+// activeInstallation resolves the user's active installation at run time. It returns nil
+// (→ ack) when the user is gone or deleted, has no active installation, or that
+// installation is missing, not active, or someone else's; the reading data stays stored
+// and is resynced on activation (spec §2.13 step 1).
+func (s *Service) activeInstallation(ctx context.Context, uid string) (*domain.Installation, error) {
+	user, err := s.Users.GetProfile(ctx, uid)
 	if errors.Is(err, domain.ErrNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if inst.Status != domain.StatusActive {
+	if user.Deleted() || user.ActiveInstallationID == "" {
+		return nil, nil
+	}
+	inst, err := s.Installations.GetInstallation(ctx, user.ActiveInstallationID)
+	if errors.Is(err, domain.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if inst.Status != domain.StatusActive || inst.UserID != uid {
 		return nil, nil
 	}
 	return inst, nil

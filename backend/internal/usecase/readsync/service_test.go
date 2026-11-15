@@ -99,7 +99,7 @@ func TestPushEnqueuesOncePerKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := rec.Messages()
-	want := []msg.Message{msg.Article(bot, domain.URLHash(artURL)), msg.Article(bot, domain.URLHash(other)), msg.Day(bot, "2026-10-06")}
+	want := []msg.Message{msg.Article(user, domain.URLHash(artURL)), msg.Article(user, domain.URLHash(other)), msg.Day(user, "2026-10-06")}
 	if len(got) != len(want) {
 		t.Fatalf("got %+v", got)
 	}
@@ -124,7 +124,7 @@ func TestPushDateUsesRequestTZ(t *testing.T) {
 	if p.got[0].Date != "2026-10-06" {
 		t.Fatalf("date %q", p.got[0].Date)
 	}
-	if msgs := rec.Messages(); msgs[len(msgs)-1] != msg.Day(bot, "2026-10-06") {
+	if msgs := rec.Messages(); msgs[len(msgs)-1] != msg.Day(user, "2026-10-06") {
 		t.Fatalf("day message %+v", msgs)
 	}
 }

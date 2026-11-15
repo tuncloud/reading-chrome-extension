@@ -10,7 +10,7 @@ import (
 
 // syncArticle implements spec §2.13. It writes absolute values read from storage (C6).
 func (s *Service) syncArticle(ctx context.Context, job port.Job) error {
-	inst, err := s.activeInstallation(ctx, job.InstallationID)
+	inst, err := s.activeInstallation(ctx, job.UserID)
 	if inst == nil || err != nil {
 		return err
 	}

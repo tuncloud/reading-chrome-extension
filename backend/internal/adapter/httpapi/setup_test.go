@@ -31,8 +31,8 @@ func (env *testEnv) seedSyncedRead() {
 }
 
 // fullResync is what a resync must enqueue for seedSyncedRead once the databases changed.
-func fullResync() []msg.Message {
-	return []msg.Message{msg.Article(testBotID, domain.URLHash(readURL)), msg.Day(testBotID, "2026-10-06")}
+func (env *testEnv) fullResync() []msg.Message {
+	return []msg.Message{msg.Article(env.readerID(), domain.URLHash(readURL)), msg.Day(env.readerID(), "2026-10-06")}
 }
 
 func TestSetupPagesSearchesNotionWithDecryptedToken(t *testing.T) {
@@ -161,8 +161,8 @@ func TestPostSetupAfterDeletedLibraryResyncsEverything(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
-	if got := env.queue.Messages(); !reflect.DeepEqual(got, fullResync()) {
-		t.Fatalf("resync enqueued %+v, want %+v", got, fullResync())
+	if got := env.queue.Messages(); !reflect.DeepEqual(got, env.fullResync()) {
+		t.Fatalf("resync enqueued %+v, want %+v", got, env.fullResync())
 	}
 }
 
@@ -201,8 +201,8 @@ func TestPostSetupResyncFailureNeedsSetupUntilRetried(t *testing.T) {
 	if body := decode[view](t, rec); rec.Code != 200 || body.Status != "active" || body.SetupError != "" {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
-	if got := env.queue.Messages(); !reflect.DeepEqual(got, fullResync()) {
-		t.Fatalf("resync enqueued %+v, want %+v", got, fullResync())
+	if got := env.queue.Messages(); !reflect.DeepEqual(got, env.fullResync()) {
+		t.Fatalf("resync enqueued %+v, want %+v", got, env.fullResync())
 	}
 	if n := len(env.notion.Calls("POST", "/v1/databases")); n != 2 {
 		t.Fatalf("%d database creates across both attempts, want 2", n)
