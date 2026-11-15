@@ -10,7 +10,7 @@ import (
 
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
-	"reading-tracker/backend/internal/adapter/queue"
+	"reading-tracker/backend/internal/adapter/queue/msg"
 	"reading-tracker/backend/internal/domain"
 )
 
@@ -31,8 +31,8 @@ func (env *testEnv) seedSyncedRead() {
 }
 
 // fullResync is what a resync must enqueue for seedSyncedRead once the databases changed.
-func fullResync() []queue.Message {
-	return []queue.Message{queue.Article(testBotID, domain.URLHash(readURL)), queue.Day(testBotID, "2026-10-06")}
+func fullResync() []msg.Message {
+	return []msg.Message{msg.Article(testBotID, domain.URLHash(readURL)), msg.Day(testBotID, "2026-10-06")}
 }
 
 func TestSetupPagesSearchesNotionWithDecryptedToken(t *testing.T) {
@@ -174,7 +174,7 @@ func TestPostSetupResyncFailureNeedsSetupUntilRetried(t *testing.T) {
 	uid, tok := env.seedUser()
 	env.seedInstallation(uid, domain.StatusNeedsSetup)
 	env.seedSyncedRead()
-	env.queue.Err = errors.New("sqs down")
+	env.queue.Err = errors.New("queue down")
 
 	rec := env.do("POST", "/v1/setup", map[string]string{"parent_page_id": "parent-1"}, tok)
 	type view struct {
@@ -210,7 +210,7 @@ func TestPostSetupResyncFailureNeedsSetupUntilRetried(t *testing.T) {
 }
 
 // Review focus 5 / R2: a push followed by setup in the same debounce bucket must not
-// lose the resync to SQS's 5-minute deduplication: every resync dedup id differs from
+// lose the resync to the queue's dedup id: every resync dedup id differs from
 // the push's bucket ids.
 func TestResyncAfterPushInSameBucketIsDelivered(t *testing.T) {
 	env := newTestEnv(t)

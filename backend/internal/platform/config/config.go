@@ -15,12 +15,6 @@ import (
 // NotionVersion is pinned (C10); any other NOTION_VERSION fails fast.
 const NotionVersion = "2025-09-03"
 
-// Store selects the persistence backend: dynamo (DynamoDB + SQS) or postgres (DATABASE_URL).
-const (
-	StoreDynamo   = "dynamo"
-	StorePostgres = "postgres"
-)
-
 // Role selects which variables are required.
 type Role int
 
@@ -29,14 +23,11 @@ const (
 	RoleWorker
 )
 
-// Config is the parsed environment shared by cmd/api, cmd/worker and cmd/local.
+// Config is the parsed environment shared by cmd/server and cmd/poller.
 type Config struct {
 	AppEnv              string
-	Store               string // STORE: "dynamo" (default) or "postgres"
-	TableName           string
-	QueueURL            string
-	DatabaseURL         string        // DATABASE_URL, required when Store == postgres
-	QueueDelay          time.Duration // QUEUE_DELAY_SECONDS, postgres mode only; zero in dynamo mode
+	DatabaseURL         string        // DATABASE_URL
+	QueueDelay          time.Duration // QUEUE_DELAY_SECONDS, defaults to the debounce bucket
 	NotionClientID      string
 	NotionClientSecret  string
 	NotionVersion       string
@@ -60,44 +51,23 @@ func Load(role Role, getenv func(string) string) (*Config, error) {
 		}
 		return v
 	}
-	store := strings.ToLower(strings.TrimSpace(getenv("STORE")))
-	if store == "" {
-		store = StoreDynamo
-	}
-	if store != StoreDynamo && store != StorePostgres {
-		return nil, fmt.Errorf("config: STORE must be dynamo or postgres, got %q", store)
-	}
-	c := &Config{
-		AppEnv: req("APP_ENV"),
-		Store:  store,
-	}
-	// TABLE_NAME/QUEUE_URL (dynamo) or DATABASE_URL (postgres) are read here, in
-	// the same position as the original TABLE_NAME/QUEUE_URL reads, so a
-	// multi-variable "missing env" message keeps its original order.
-	switch store {
-	case StoreDynamo:
-		c.TableName = req("TABLE_NAME")
-		c.QueueURL = req("QUEUE_URL")
-	case StorePostgres:
-		c.DatabaseURL = req("DATABASE_URL")
-	}
+	c := &Config{AppEnv: req("APP_ENV")}
+	// DATABASE_URL is read right after APP_ENV so a multi-variable "missing env"
+	// message keeps a stable order.
+	c.DatabaseURL = req("DATABASE_URL")
 	c.NotionClientID = req("NOTION_CLIENT_ID")
 	c.NotionClientSecret = req("NOTION_CLIENT_SECRET")
 	c.NotionVersion = req("NOTION_VERSION")
 	c.NotionAPIBase = strings.TrimRight(strings.TrimSpace(getenv("NOTION_API_BASE")), "/")
 	c.PublicBaseURL = strings.TrimRight(strings.TrimSpace(getenv("PUBLIC_BASE_URL")), "/")
 	keys := req("TOKEN_ENC_KEYS")
-	var pepper, extIDs, bucket string
+	var pepper, extIDs string
 	if role == RoleAPI {
 		pepper = req("DEVICE_TOKEN_PEPPER")
 		extIDs = req("ALLOWED_EXTENSION_IDS")
 	}
-	// Dynamo mode needs the bucket only for the API role, as before; postgres mode
-	// needs it for both roles since QUEUE_DELAY_SECONDS defaults from it.
-	needBucket := role == RoleAPI || c.Store == StorePostgres
-	if needBucket {
-		bucket = req("DEBOUNCE_BUCKET_SECONDS")
-	}
+	// Both roles need the bucket: QUEUE_DELAY_SECONDS defaults from it.
+	bucket := req("DEBOUNCE_BUCKET_SECONDS")
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("config: missing env %s", strings.Join(missing, ", "))
 	}
@@ -126,31 +96,26 @@ func Load(role Role, getenv func(string) string) (*Config, error) {
 			return nil, fmt.Errorf("config: ALLOWED_EXTENSION_IDS has no ids")
 		}
 	}
-	if needBucket {
-		secs, err := strconv.Atoi(bucket)
-		if err != nil || secs < 1 || secs > 300 {
-			return nil, fmt.Errorf("config: DEBOUNCE_BUCKET_SECONDS must be 1..300 (C5), got %q", bucket)
-		}
-		c.DebounceBucket = time.Duration(secs) * time.Second
+	secs, err := strconv.Atoi(bucket)
+	if err != nil || secs < 1 || secs > 300 {
+		return nil, fmt.Errorf("config: DEBOUNCE_BUCKET_SECONDS must be 1..300 (C5), got %q", bucket)
 	}
-	if c.Store == StorePostgres {
-		delaySecs := getenv("QUEUE_DELAY_SECONDS")
-		delay := c.DebounceBucket
-		if v := strings.TrimSpace(delaySecs); v != "" {
-			secs, err := strconv.Atoi(v)
-			if err != nil {
-				return nil, fmt.Errorf("config: QUEUE_DELAY_SECONDS must be an integer, got %q", v)
-			}
-			delay = time.Duration(secs) * time.Second
+	c.DebounceBucket = time.Duration(secs) * time.Second
+	delay := c.DebounceBucket
+	if v := strings.TrimSpace(getenv("QUEUE_DELAY_SECONDS")); v != "" {
+		secs, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: QUEUE_DELAY_SECONDS must be an integer, got %q", v)
 		}
-		if delay < c.DebounceBucket {
-			return nil, fmt.Errorf("config: QUEUE_DELAY_SECONDS must be >= DEBOUNCE_BUCKET_SECONDS (C5), got %v", delay)
-		}
-		if delay > 900*time.Second {
-			return nil, fmt.Errorf("config: QUEUE_DELAY_SECONDS must be <= 900, got %v", delay)
-		}
-		c.QueueDelay = delay
+		delay = time.Duration(secs) * time.Second
 	}
+	if delay < c.DebounceBucket {
+		return nil, fmt.Errorf("config: QUEUE_DELAY_SECONDS must be >= DEBOUNCE_BUCKET_SECONDS (C5), got %v", delay)
+	}
+	if delay > 900*time.Second {
+		return nil, fmt.Errorf("config: QUEUE_DELAY_SECONDS must be <= 900, got %v", delay)
+	}
+	c.QueueDelay = delay
 	if c.Public, err = LoadPublic(getenv("TRACKING_CONFIG_JSON")); err != nil {
 		return nil, err
 	}

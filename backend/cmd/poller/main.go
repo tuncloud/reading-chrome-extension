@@ -1,4 +1,4 @@
-// Command poller is the Kubernetes Notion-sync process (STORE=postgres): it drains sync_jobs
+// Command poller is the Kubernetes Notion-sync process: it drains sync_jobs
 // and serves /healthz and /livez on HEALTH_ADDR.
 package main
 
@@ -22,10 +22,6 @@ func main() {
 	cfg, err := config.Load(config.RoleWorker, os.Getenv)
 	if err != nil {
 		log.Error("config", "err", err)
-		os.Exit(1)
-	}
-	if cfg.Store != config.StorePostgres {
-		log.Error("cmd/poller runs only with STORE=postgres")
 		os.Exit(1)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

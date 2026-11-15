@@ -1,5 +1,5 @@
 // Package pgqueue is the Postgres-backed notion-sync queue (design §5): a sync_jobs
-// table with strict per-group FIFO, replacing SQS FIFO outside Lambda.
+// table with strict per-group FIFO.
 package pgqueue
 
 import (

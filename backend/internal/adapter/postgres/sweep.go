@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Sweep deletes expired segments, OAuth states and auth codes (DynamoDB's TTL job).
+// Sweep deletes expired segments, OAuth states and auth codes (the housekeeping job).
 func (s *Store) Sweep(ctx context.Context, now time.Time) error {
 	for _, sql := range []string{
 		`DELETE FROM segments WHERE expires_at < $1`,

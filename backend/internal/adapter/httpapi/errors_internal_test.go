@@ -12,7 +12,7 @@ import (
 	"reading-tracker/backend/internal/usecase/apperr"
 )
 
-// Spec §2.0: a throttled DynamoDB read (requireDevice does three per request) is a
+// Spec §2.0: a throttled store read (requireDevice does three per request) is a
 // retryable 503 capacity_exceeded, not a 500.
 func TestToAPIErrorMapsThrottlingTo503(t *testing.T) {
 	cases := map[string]error{

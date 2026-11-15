@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"reading-tracker/backend/internal/adapter/queue"
+	"reading-tracker/backend/internal/adapter/queue/msg"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/usecase/apperr"
 	"reading-tracker/backend/internal/usecase/port"
@@ -47,9 +47,9 @@ func (f *fakePusher) PushSegment(_ context.Context, w domain.SegmentWrite) (doma
 	return domain.PushAccepted, nil
 }
 
-func newService() (*readsync.Service, *fakePusher, *queue.Recorder) {
-	p, rec := &fakePusher{throttle: map[string]bool{}}, &queue.Recorder{}
-	q := &queue.SyncQueue{Sender: rec, Bucket: 120 * time.Second, Now: func() time.Time { return now }}
+func newService() (*readsync.Service, *fakePusher, *msg.Recorder) {
+	p, rec := &fakePusher{throttle: map[string]bool{}}, &msg.Recorder{}
+	q := &msg.SyncQueue{Sender: rec, Bucket: 120 * time.Second, Now: func() time.Time { return now }}
 	return &readsync.Service{Reading: p, Queue: q, Now: q.Now}, p, rec
 }
 
@@ -98,7 +98,7 @@ func TestPushEnqueuesOncePerKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := rec.Messages()
-	want := []queue.Message{queue.Article(bot, domain.URLHash(artURL)), queue.Article(bot, domain.URLHash(other)), queue.Day(bot, "2026-10-06")}
+	want := []msg.Message{msg.Article(bot, domain.URLHash(artURL)), msg.Article(bot, domain.URLHash(other)), msg.Day(bot, "2026-10-06")}
 	if len(got) != len(want) {
 		t.Fatalf("got %+v", got)
 	}
@@ -115,7 +115,7 @@ func TestPushDateUsesRequestTZ(t *testing.T) {
 	started := time.Date(2026, 10, 5, 18, 30, 0, 0, time.UTC)
 	later := func() time.Time { return started.Add(time.Hour) }
 	svc.Now = later
-	svc.Queue.(*queue.SyncQueue).Now = later
+	svc.Queue.(*msg.SyncQueue).Now = later
 	req := readsync.PushRequest{TZ: "Asia/Ho_Chi_Minh", Articles: []readsync.Article{article(artURL)}, Segments: []readsync.Segment{seg(id(1), artURL, started, 60)}}
 	if _, err := svc.Push(ctx, bot, "dev-1", req); err != nil {
 		t.Fatal(err)
@@ -123,7 +123,7 @@ func TestPushDateUsesRequestTZ(t *testing.T) {
 	if p.got[0].Date != "2026-10-06" {
 		t.Fatalf("date %q", p.got[0].Date)
 	}
-	if msgs := rec.Messages(); msgs[len(msgs)-1] != queue.Day(bot, "2026-10-06") {
+	if msgs := rec.Messages(); msgs[len(msgs)-1] != msg.Day(bot, "2026-10-06") {
 		t.Fatalf("day message %+v", msgs)
 	}
 }
@@ -228,7 +228,7 @@ func TestPushTruncatesLongTitle(t *testing.T) {
 	}
 }
 
-// Stored times are UTC so DynamoDB string comparisons order correctly.
+// Stored times are UTC so string comparisons order correctly.
 func TestPushNormalizesOffsetTimestamps(t *testing.T) {
 	svc, p, _ := newService()
 	s := seg(id(1), artURL, now.Add(-time.Hour), 60)
@@ -246,7 +246,7 @@ func TestPushNormalizesOffsetTimestamps(t *testing.T) {
 func TestPushRetryAfterEnqueueFailureStillEnqueues(t *testing.T) {
 	svc, _, rec := newService()
 	req := readsync.PushRequest{TZ: "UTC", Articles: []readsync.Article{article(artURL)}, Segments: []readsync.Segment{seg(id(1), artURL, now.Add(-time.Hour), 60)}}
-	rec.Err = errors.New("sqs unavailable")
+	rec.Err = errors.New("queue unavailable")
 	if _, err := svc.Push(ctx, bot, "dev-1", req); err == nil {
 		t.Fatal("enqueue failure must fail the request so the client retries")
 	}

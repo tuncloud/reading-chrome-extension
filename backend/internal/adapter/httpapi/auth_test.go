@@ -114,7 +114,7 @@ func TestAuthTokenMalformedBody(t *testing.T) {
 	}
 }
 
-// Oversized or empty codes never reach DynamoDB (keys are ≤ 2 KB): plain invalid_grant.
+// Oversized or empty codes never reach the store (keys are ≤ 2 KB): plain invalid_grant.
 func TestAuthTokenOversizedOrEmptyCodeIsInvalidGrant(t *testing.T) {
 	env := newTestEnv(t)
 	for _, code := range []string{strings.Repeat("c", 3000), strings.Repeat("c", 129), ""} {

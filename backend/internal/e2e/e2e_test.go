@@ -22,7 +22,7 @@ import (
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
 	"reading-tracker/backend/internal/adapter/postgres/postgrestest"
-	"reading-tracker/backend/internal/adapter/queue"
+	"reading-tracker/backend/internal/adapter/queue/msg"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
@@ -50,7 +50,7 @@ func call(t *testing.T, e *echo.Echo, method, target string, body any, token str
 }
 
 // deliver feeds every queued message to the worker until the queue is empty.
-func deliver(t *testing.T, wk port.JobHandler, q *queue.Recorder) {
+func deliver(t *testing.T, wk port.JobHandler, q *msg.Recorder) {
 	t.Helper()
 	for round := 0; round < 5; round++ {
 		sent := q.Drain()
@@ -79,7 +79,7 @@ type system struct {
 	store wire.Store
 	ns    *notiontest.Server
 	tpl   notiontest.Template
-	q     *queue.Recorder
+	q     *msg.Recorder
 	api   *echo.Echo
 	wk    port.JobHandler
 	now   time.Time
@@ -87,7 +87,7 @@ type system struct {
 
 // newSystem wires the API, worker and fake Notion onto a fresh Postgres database.
 func newSystem(t *testing.T) *system {
-	sys := &system{t: t, ns: notiontest.New(t), q: &queue.Recorder{}, now: time.Date(2026, 10, 6, 3, 0, 0, 0, time.UTC)}
+	sys := &system{t: t, ns: notiontest.New(t), q: &msg.Recorder{}, now: time.Date(2026, 10, 6, 3, 0, 0, 0, time.UTC)}
 	sys.tpl = sys.ns.AddTemplate("tpl-1")
 	clock := func() time.Time { return sys.now }
 	vars := map[string]string{
@@ -98,7 +98,6 @@ func newSystem(t *testing.T) *system {
 	}
 	env := postgrestest.New(t)
 	sys.store = env.Store
-	vars["STORE"] = "postgres"
 	vars["DATABASE_URL"] = env.URL
 	cfg, err := config.Load(config.RoleAPI, func(k string) string { return vars[k] })
 	if err != nil {

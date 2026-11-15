@@ -247,7 +247,7 @@ func TestOAuthCallbackResyncFailureNeedsSetupUntilReconnect(t *testing.T) {
 	env.notion.AddTemplate("tpl-1")
 	env.connect(t, tokenResponse("tpl-1"))
 	env.seedSyncedRead()
-	env.queue.Err = errors.New("sqs down")
+	env.queue.Err = errors.New("queue down")
 
 	env.notion.AddTemplate("tpl-2")
 	env.connect(t, tokenResponse("tpl-2")) // still redirects with a code
@@ -267,7 +267,7 @@ func TestOAuthCallbackResyncFailureNeedsSetupUntilReconnect(t *testing.T) {
 	}
 }
 
-// Oversized or empty states never reach DynamoDB (keys are ≤ 2 KB): plain "Link expired".
+// Oversized or empty states never reach the store (keys are ≤ 2 KB): plain "Link expired".
 func TestOAuthCallbackOversizedOrEmptyStateRejected(t *testing.T) {
 	env := newTestEnv(t)
 	for _, state := range []string{strings.Repeat("s", 3000), strings.Repeat("s", 129), ""} {

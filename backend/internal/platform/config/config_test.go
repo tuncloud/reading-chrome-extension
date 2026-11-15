@@ -11,8 +11,7 @@ import (
 func apiEnv() map[string]string {
 	return map[string]string{
 		"APP_ENV":                 "test",
-		"TABLE_NAME":              "reading-test",
-		"QUEUE_URL":               "https://sqs.local/notion-sync-test.fifo",
+		"DATABASE_URL":            "postgres://u:p@h:5432/d",
 		"NOTION_CLIENT_ID":        "cid",
 		"NOTION_CLIENT_SECRET":    "csecret",
 		"NOTION_VERSION":          "2025-09-03",
@@ -25,39 +24,36 @@ func apiEnv() map[string]string {
 
 func getenv(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 
-// pgEnv builds a postgres-mode environment for role: no TABLE_NAME/QUEUE_URL,
-// STORE=postgres, DATABASE_URL set.
-func pgEnv(role Role) map[string]string {
+// workerEnv is apiEnv without the API-only variables.
+func workerEnv() map[string]string {
 	env := apiEnv()
-	delete(env, "TABLE_NAME")
-	delete(env, "QUEUE_URL")
-	env["STORE"] = "postgres"
-	env["DATABASE_URL"] = "postgres://u:p@h:5432/d"
-	if role == RoleWorker {
-		for _, k := range []string{"DEVICE_TOKEN_PEPPER", "ALLOWED_EXTENSION_IDS"} {
-			delete(env, k)
-		}
+	for _, k := range []string{"DEVICE_TOKEN_PEPPER", "ALLOWED_EXTENSION_IDS"} {
+		delete(env, k)
 	}
 	return env
 }
 
-func TestStoreDefaultsToDynamo(t *testing.T) {
-	c, err := Load(RoleAPI, getenv(apiEnv()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.Store != "dynamo" {
-		t.Fatalf("want Store=dynamo, got %q", c.Store)
+// The cluster manifest still sets STORE=postgres and an old .env.local may say dynamo.
+func TestStoreEnvIsIgnored(t *testing.T) {
+	for _, v := range []string{"", "postgres", "dynamo", "anything"} {
+		env := apiEnv()
+		env["STORE"] = v
+		env["TABLE_NAME"] = "t"
+		env["QUEUE_URL"] = "q"
+		c, err := Load(RoleAPI, getenv(env))
+		if err != nil {
+			t.Fatalf("STORE=%q: %v", v, err)
+		}
+		if c.DatabaseURL != apiEnv()["DATABASE_URL"] {
+			t.Fatalf("STORE=%q: DatabaseURL = %q", v, c.DatabaseURL)
+		}
 	}
 }
 
-func TestPostgresModeDoesNotNeedTableOrQueue(t *testing.T) {
-	c, err := Load(RoleAPI, getenv(pgEnv(RoleAPI)))
+func TestLoadDoesNotNeedTableOrQueue(t *testing.T) {
+	c, err := Load(RoleAPI, getenv(apiEnv()))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if c.Store != StorePostgres {
-		t.Fatalf("want Store=postgres, got %q", c.Store)
 	}
 	if c.DatabaseURL == "" {
 		t.Fatal("want DatabaseURL set")
@@ -67,54 +63,38 @@ func TestPostgresModeDoesNotNeedTableOrQueue(t *testing.T) {
 	}
 }
 
-func TestPostgresModeNeedsDatabaseURL(t *testing.T) {
-	env := pgEnv(RoleAPI)
-	delete(env, "DATABASE_URL")
-	_, err := Load(RoleAPI, getenv(env))
-	if err == nil || !strings.Contains(err.Error(), "missing env DATABASE_URL") {
-		t.Fatalf("want error containing %q, got %v", "missing env DATABASE_URL", err)
-	}
-}
-
-func TestDynamoModeStillNeedsTableAndQueue(t *testing.T) {
-	env := apiEnv()
-	delete(env, "TABLE_NAME")
-	_, err := Load(RoleAPI, getenv(env))
-	if err == nil || !strings.Contains(err.Error(), "TABLE_NAME") {
-		t.Fatalf("want error naming TABLE_NAME, got %v", err)
+func TestLoadNeedsDatabaseURL(t *testing.T) {
+	for _, role := range []Role{RoleAPI, RoleWorker} {
+		env := apiEnv()
+		delete(env, "DATABASE_URL")
+		_, err := Load(role, getenv(env))
+		if err == nil || !strings.Contains(err.Error(), "missing env") || !strings.Contains(err.Error(), "DATABASE_URL") {
+			t.Fatalf("role %d: want missing env DATABASE_URL, got %v", role, err)
+		}
 	}
 }
 
 func TestMissingEnvListsInOriginalOrder(t *testing.T) {
 	env := apiEnv()
-	for _, k := range []string{"APP_ENV", "TABLE_NAME", "NOTION_CLIENT_ID"} {
+	for _, k := range []string{"APP_ENV", "DATABASE_URL", "NOTION_CLIENT_ID"} {
 		delete(env, k)
 	}
 	_, err := Load(RoleAPI, getenv(env))
-	want := "config: missing env APP_ENV, TABLE_NAME, NOTION_CLIENT_ID"
+	want := "config: missing env APP_ENV, DATABASE_URL, NOTION_CLIENT_ID"
 	if err == nil || err.Error() != want {
 		t.Fatalf("want error %q, got %v", want, err)
 	}
 }
 
-func TestUnknownStoreRejected(t *testing.T) {
-	env := apiEnv()
-	env["STORE"] = "mysql"
-	_, err := Load(RoleAPI, getenv(env))
-	if err == nil || !strings.Contains(err.Error(), "STORE must be dynamo or postgres") {
-		t.Fatalf("want error containing %q, got %v", "STORE must be dynamo or postgres", err)
-	}
-}
-
 func TestQueueDelayMustCoverBucket(t *testing.T) {
-	env := pgEnv(RoleAPI)
+	env := apiEnv()
 	env["QUEUE_DELAY_SECONDS"] = "60"
 	_, err := Load(RoleAPI, getenv(env))
 	if err == nil || !strings.Contains(err.Error(), "QUEUE_DELAY_SECONDS must be >= DEBOUNCE_BUCKET_SECONDS (C5)") {
 		t.Fatalf("want error containing %q, got %v", "QUEUE_DELAY_SECONDS must be >= DEBOUNCE_BUCKET_SECONDS (C5)", err)
 	}
 
-	env2 := pgEnv(RoleAPI)
+	env2 := apiEnv()
 	env2["QUEUE_DELAY_SECONDS"] = "901"
 	_, err = Load(RoleAPI, getenv(env2))
 	if err == nil || !strings.Contains(err.Error(), "<= 900") {
@@ -123,7 +103,7 @@ func TestQueueDelayMustCoverBucket(t *testing.T) {
 }
 
 func TestQueueDelayMustBeInteger(t *testing.T) {
-	env := pgEnv(RoleAPI)
+	env := apiEnv()
 	env["QUEUE_DELAY_SECONDS"] = "abc"
 	_, err := Load(RoleAPI, getenv(env))
 	if err == nil || !strings.Contains(err.Error(), "QUEUE_DELAY_SECONDS") {
@@ -131,9 +111,8 @@ func TestQueueDelayMustBeInteger(t *testing.T) {
 	}
 }
 
-func TestPostgresWorkerReadsBucket(t *testing.T) {
-	env := pgEnv(RoleWorker)
-	c, err := Load(RoleWorker, getenv(env))
+func TestWorkerReadsBucket(t *testing.T) {
+	c, err := Load(RoleWorker, getenv(workerEnv()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,21 +137,8 @@ func TestLoadAPIHappyPath(t *testing.T) {
 	}
 }
 
-func TestLoadMissingTableName(t *testing.T) {
-	env := apiEnv()
-	delete(env, "TABLE_NAME")
-	_, err := Load(RoleAPI, getenv(env))
-	if err == nil || !strings.Contains(err.Error(), "TABLE_NAME") {
-		t.Fatalf("want error naming TABLE_NAME, got %v", err)
-	}
-}
-
 func TestLoadWorkerDoesNotNeedAPIOnlyVars(t *testing.T) {
-	env := apiEnv()
-	for _, k := range []string{"DEVICE_TOKEN_PEPPER", "ALLOWED_EXTENSION_IDS", "DEBOUNCE_BUCKET_SECONDS"} {
-		delete(env, k)
-	}
-	if _, err := Load(RoleWorker, getenv(env)); err != nil {
+	if _, err := Load(RoleWorker, getenv(workerEnv())); err != nil {
 		t.Fatal(err)
 	}
 }

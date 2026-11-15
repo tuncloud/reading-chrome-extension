@@ -262,7 +262,7 @@ func TestOtherGroupsKeepFlowingWhileOneIsParked(t *testing.T) {
 	if got := strings.Join(rec.calls(), ","); got != "article:h1,article:h2" {
 		t.Fatalf("calls = %s", got)
 	}
-	if n := count(t, env.Pool, "state = 'ready' AND leased_until IS NULL AND run_at > now() + interval '59 minutes'"); n != 1 {
+	if n := count(t, env.Pool, "state = 'ready' AND leased_until IS NULL AND run_at > now() + interval '59 minutes' AND run_at < now() + interval '61 minutes'"); n != 1 {
 		t.Fatalf("parked rows = %d, want 1", n)
 	}
 	if once(t, p) {

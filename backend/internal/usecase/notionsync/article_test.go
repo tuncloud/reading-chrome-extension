@@ -7,11 +7,11 @@ import (
 
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
-	"reading-tracker/backend/internal/adapter/queue"
+	"reading-tracker/backend/internal/adapter/queue/msg"
 	"reading-tracker/backend/internal/domain"
 )
 
-func articleMsg() queue.Message { return queue.Article(testBot, domain.URLHash(artURL)) }
+func articleMsg() msg.Message { return msg.Article(testBot, domain.URLHash(artURL)) }
 
 func (e *wenv) libraryPages() []*notiontest.Page { return e.ns.Pages(e.tpl.LibraryDS) }
 
@@ -227,7 +227,7 @@ func TestArticleLongURLAndCommaSiteStillCreate(t *testing.T) {
 	e.seedInstallation("tok", "rt")
 	long := "https://example.com/" + strings.Repeat("a", 2001)
 	e.readMeta(domain.ArticleMeta{CanonicalURL: long, Source: "generic", SiteName: "Better Programming, Inc", WordCount: 0}, 0, 120, 0.5)
-	if f := e.handle(queue.Article(testBot, domain.URLHash(long))); len(f) != 0 {
+	if f := e.handle(msg.Article(testBot, domain.URLHash(long))); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
 	}
 	pg := e.onlyLibraryPage()
@@ -350,8 +350,8 @@ func TestArticleLongURLWithoutDataSourceIsNotDuplicated(t *testing.T) {
 	e.read(long, 0, 120, 0.5)
 	must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(long), pg.ID, pg.URL, ""))
 
-	msg := queue.Article(testBot, domain.URLHash(long))
-	if f := e.handle(msg); len(f) != 0 {
+	m := msg.Article(testBot, domain.URLHash(long))
+	if f := e.handle(m); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
 	}
 	if n := len(e.libraryPages()); n != 1 {

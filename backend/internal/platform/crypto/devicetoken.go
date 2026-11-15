@@ -19,7 +19,7 @@ func NewDeviceToken() (string, error) {
 	return DeviceTokenPrefix + s, nil
 }
 
-// ValidDeviceTokenFormat rejects malformed bearer tokens before any DynamoDB read.
+// ValidDeviceTokenFormat rejects malformed bearer tokens before any store read.
 func ValidDeviceTokenFormat(tok string) bool {
 	rest, ok := strings.CutPrefix(tok, DeviceTokenPrefix)
 	return ok && len(rest) == 43 && isB64URL(rest)

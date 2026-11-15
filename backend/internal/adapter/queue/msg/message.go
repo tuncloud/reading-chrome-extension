@@ -62,7 +62,7 @@ func (m Message) DedupID(now time.Time, bucket time.Duration) string {
 }
 
 // RequeueDedupID never collides with DedupID, so a worker re-enqueue inside the
-// same bucket isn't swallowed by SQS's 5-minute dedup window.
+// same bucket isn't swallowed by dedup.
 func (m Message) RequeueDedupID(now time.Time) string {
 	return m.key() + "#r" + strconv.FormatInt(now.UnixNano(), 10)
 }

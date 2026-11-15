@@ -7,7 +7,7 @@ import (
 	"reading-tracker/backend/internal/usecase/port"
 )
 
-// SyncQueue implements port.SyncQueue on any Sender (SQS, Local or Recorder) and owns
+// SyncQueue implements port.SyncQueue on any Sender (pgqueue or Recorder) and owns
 // the dedup-id policy: bucketed for pushes (C5), unique for resync and requeue (R2).
 type SyncQueue struct {
 	Sender Sender

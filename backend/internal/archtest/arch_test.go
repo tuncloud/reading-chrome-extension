@@ -118,18 +118,18 @@ func TestViolationRules(t *testing.T) {
 		{"internal/usecase/auth", module + "/internal/usecase/port", false},
 		{"internal/usecase/auth", module + "/internal/platform/crypto", false},
 		{"internal/usecase/auth", module + "/internal/platform/config", true},
-		{"internal/usecase/auth", module + "/internal/adapter/dynamo", true},
+		{"internal/usecase/auth", module + "/internal/adapter/postgres", true},
 		{"internal/usecase/auth", "github.com/labstack/echo/v4", true},
 		{"internal/usecase/auth", "github.com/oklog/ulid/v2", false},
 		{"internal/adapter/httpapi", module + "/internal/usecase/auth", false},
-		{"internal/adapter/httpapi", module + "/internal/adapter/dynamo", true},
+		{"internal/adapter/httpapi", module + "/internal/adapter/postgres", true},
 		{"internal/adapter/notion/notiontest", module + "/internal/adapter/notion", false},
-		{"internal/adapter/queue", module + "/internal/wire", true},
+		{"internal/adapter/queue/pgqueue", module + "/internal/wire", true},
 		{"internal/usecase/setup", module + "/internal/wire", true},
 		{"internal/domain", module + "/internal/wire", true},
 		{"internal/platform/config", module + "/internal/platform/crypto", false},
 		{"internal/platform/config", module + "/internal/domain", true},
-		{"internal/wire", module + "/internal/adapter/dynamo", false},
+		{"internal/wire", module + "/internal/adapter/postgres", false},
 	}
 	for _, c := range cases {
 		if got := violation(c.pkg, c.imp) != ""; got != c.bad {

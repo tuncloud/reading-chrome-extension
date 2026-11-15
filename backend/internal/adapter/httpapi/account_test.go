@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"reading-tracker/backend/internal/adapter/queue"
+	"reading-tracker/backend/internal/adapter/queue/msg"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/crypto"
 )
@@ -49,7 +49,7 @@ func TestDeleteMeRevokesAllDevicesAndEnqueuesPurge(t *testing.T) {
 		}
 	}
 	msgs := env.queue.Messages()
-	if len(msgs) == 0 || msgs[len(msgs)-1] != queue.Purge(uid, testBotID) {
+	if len(msgs) == 0 || msgs[len(msgs)-1] != msg.Purge(uid, testBotID) {
 		t.Fatalf("messages %+v", msgs)
 	}
 	prof, err := env.db.Store.GetProfile(ctx, uid)
@@ -64,7 +64,7 @@ func TestDeleteMeLeavesAccountIntactWhenEnqueueFails(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()
 	env.seedInstallation(uid, domain.StatusActive)
-	env.queue.Err = errors.New("sqs down")
+	env.queue.Err = errors.New("queue down")
 
 	if rec := env.do("DELETE", "/v1/me", nil, tok); rec.Code != 500 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)

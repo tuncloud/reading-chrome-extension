@@ -3,7 +3,7 @@ package notionsync
 import (
 	"testing"
 
-	"reading-tracker/backend/internal/adapter/queue"
+	"reading-tracker/backend/internal/adapter/queue/msg"
 	"reading-tracker/backend/internal/domain"
 )
 
@@ -24,7 +24,7 @@ func TestPurgeRemovesAllUserData(t *testing.T) {
 	e.read(artURL, 0, 60, 0.5)
 	must(t, e.db.Store.MarkProfileDeleted(ctx, "u1", e.now))
 
-	if f := e.handle(queue.Purge("u1", testBot)); len(f) != 0 {
+	if f := e.handle(msg.Purge("u1", testBot)); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
 	}
 	for _, c := range []struct {
@@ -54,7 +54,7 @@ func TestPurgeIgnoresLiveUser(t *testing.T) {
 	e := newEnv(t)
 	e.seedInstallation("tok", "rt")
 	e.seedUser("u1")
-	e.handle(queue.Purge("u1", testBot))
+	e.handle(msg.Purge("u1", testBot))
 	if e.db.Count(t, "users", "id = $1", "u1") != 1 || e.db.Count(t, "installations", "id = $1", testBot) != 1 {
 		t.Fatal("purged a user that is not marked deleted")
 	}
@@ -66,7 +66,7 @@ func TestPurgeSkipsInstallationOwnedByAnotherUser(t *testing.T) {
 	e.seedInstallation("tok", "rt") // owned by u1
 	e.seedUser("u0")
 	must(t, e.db.Store.MarkProfileDeleted(ctx, "u0", e.now))
-	e.handle(queue.Purge("u0", testBot))
+	e.handle(msg.Purge("u0", testBot))
 	if e.db.Count(t, "installations", "id = $1", testBot) != 1 {
 		t.Fatal("deleted another user's installation")
 	}

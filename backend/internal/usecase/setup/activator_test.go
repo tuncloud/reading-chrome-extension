@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"reading-tracker/backend/internal/adapter/postgres/postgrestest"
-	"reading-tracker/backend/internal/adapter/queue"
+	"reading-tracker/backend/internal/adapter/queue/msg"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/usecase/setup"
 )
@@ -26,10 +26,10 @@ func must(t *testing.T, err error) {
 	}
 }
 
-func newActivator(t *testing.T) (*setup.Activator, *postgrestest.Env, *queue.Recorder) {
-	db, rec := postgrestest.New(t), &queue.Recorder{}
+func newActivator(t *testing.T) (*setup.Activator, *postgrestest.Env, *msg.Recorder) {
+	db, rec := postgrestest.New(t), &msg.Recorder{}
 	a := &setup.Activator{Reading: db.Store, Installations: db.Store,
-		Queue: &queue.SyncQueue{Sender: rec, Bucket: 120 * time.Second, Now: func() time.Time { return testNow }},
+		Queue: &msg.SyncQueue{Sender: rec, Bucket: 120 * time.Second, Now: func() time.Time { return testNow }},
 		Now:   func() time.Time { return testNow }, Sleep: func(time.Duration) {}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	return a, db, rec
 }
@@ -53,7 +53,7 @@ func TestActivateEnqueuesPending(t *testing.T) {
 	inst := &domain.Installation{ID: "bot-1", Status: domain.StatusActive}
 	must(t, a.Activate(ctx, inst, false))
 	got := rec.Messages()
-	want := []queue.Message{queue.Article("bot-1", domain.URLHash("https://b.example/2")), queue.Day("bot-1", "2026-10-06")}
+	want := []msg.Message{msg.Article("bot-1", domain.URLHash("https://b.example/2")), msg.Day("bot-1", "2026-10-06")}
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
@@ -65,10 +65,10 @@ func TestActivateFullResendsSyncedItems(t *testing.T) {
 	must(t, a.Activate(ctx, &domain.Installation{ID: "bot-1", Status: domain.StatusActive}, true))
 	// I1: a full resync (databases changed) also re-sends the already-synced article.
 	got := rec.Messages()
-	want := []queue.Message{
-		queue.Article("bot-1", domain.URLHash("https://a.example/1")),
-		queue.Article("bot-1", domain.URLHash("https://b.example/2")),
-		queue.Day("bot-1", "2026-10-06"),
+	want := []msg.Message{
+		msg.Article("bot-1", domain.URLHash("https://a.example/1")),
+		msg.Article("bot-1", domain.URLHash("https://b.example/2")),
+		msg.Day("bot-1", "2026-10-06"),
 	}
 	if len(got) != len(want) {
 		t.Fatalf("full resync enqueued %+v, want %+v", got, want)

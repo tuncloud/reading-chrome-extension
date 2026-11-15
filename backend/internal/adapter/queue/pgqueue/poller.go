@@ -23,7 +23,7 @@ const (
 	backoffStep  = 30 * time.Second
 	backoffMax   = 5 * time.Minute
 	maxLastError = 1000
-	// handlerTimeout matches the Lambda worker's 60 s timeout. It must stay below the
+	// handlerTimeout is 60 s. It must stay below the
 	// 6-minute lease (a job settles before it can be reclaimed) and below the poller
 	// pod's terminationGracePeriodSeconds minus settleTimeout (90 s - 10 s), so a job
 	// in flight at SIGTERM still settles before SIGKILL. settleTimeout keeps a hung DB

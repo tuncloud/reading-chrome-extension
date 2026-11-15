@@ -1,4 +1,4 @@
-// Command server is the Kubernetes API process (STORE=postgres): Echo on LISTEN_ADDR plus /healthz and /livez.
+// Command server is the Kubernetes API process: Echo on LISTEN_ADDR plus /healthz and /livez.
 package main
 
 import (
@@ -21,10 +21,6 @@ func main() {
 	cfg, err := config.Load(config.RoleAPI, os.Getenv)
 	if err != nil {
 		log.Error("config", "err", err)
-		os.Exit(1)
-	}
-	if cfg.Store != config.StorePostgres {
-		log.Error("cmd/server runs only with STORE=postgres")
 		os.Exit(1)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -17,7 +17,6 @@ func pgConfig(t *testing.T, dbURL string) *config.Config {
 	t.Helper()
 	env := map[string]string{
 		"APP_ENV":                 "test",
-		"STORE":                   "postgres",
 		"DATABASE_URL":            dbURL,
 		"NOTION_CLIENT_ID":        "cid",
 		"NOTION_CLIENT_SECRET":    "csecret",

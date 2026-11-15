@@ -1,6 +1,6 @@
 // Package wire is the composition root: it builds adapters, injects them into use
-// cases, and hands cmd/* a ready API handler or job handler. wire/awswire adds the
-// AWS clients and the SQS consumer. Only cmd/* (and integration tests) import it.
+// cases, and hands cmd/* a ready API handler or job handler. Only cmd/* (and integration
+// tests) import it.
 package wire
 
 import (
@@ -27,7 +27,7 @@ import (
 	"reading-tracker/backend/internal/usecase/setup"
 )
 
-// Logger writes JSON logs to stdout (CloudWatch).
+// Logger writes JSON logs to stdout (collected by the container runtime).
 func Logger() *slog.Logger { return slog.New(slog.NewJSONHandler(os.Stdout, nil)) }
 
 func NotionClient(cfg *config.Config, pacer notion.Pacer) *notion.Client {

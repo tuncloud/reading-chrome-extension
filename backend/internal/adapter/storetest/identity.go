@@ -146,7 +146,7 @@ func oauthStateConsumedOnce(t *testing.T, s IdentityStore) {
 	}
 }
 
-// Scenario 18: an expired item that DynamoDB has not reaped yet is still rejected (C12).
+// Scenario 18: an expired item that Sweep has not reaped yet is still rejected (C12).
 func expiredAuthCodeRejected(t *testing.T, s IdentityStore) {
 	Must(t, s.PutAuthCode(ctx, "code1", domain.AuthCode{UserID: "u1", InstallationID: "bot-1", CodeChallenge: "c"}, TestNow.Add(-time.Second)))
 	if _, err := s.ConsumeAuthCode(ctx, "code1", TestNow); !errors.Is(err, domain.ErrNotFound) {

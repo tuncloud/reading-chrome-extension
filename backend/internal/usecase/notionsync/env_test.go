@@ -13,7 +13,7 @@ import (
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
 	"reading-tracker/backend/internal/adapter/postgres/postgrestest"
-	"reading-tracker/backend/internal/adapter/queue"
+	"reading-tracker/backend/internal/adapter/queue/msg"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/usecase/port"
@@ -37,7 +37,7 @@ type wenv struct {
 	gw     *notion.Gateway
 	db     *postgrestest.Env
 	ns     *notiontest.Server
-	q      *queue.Recorder
+	q      *msg.Recorder
 	vis    *fakeVisibility
 	tpl    notiontest.Template
 	keys   *crypto.Keyring
@@ -62,7 +62,7 @@ func newEnvWithKeys(t *testing.T, keys string) *wenv {
 	t.Helper()
 	kr, err := crypto.ParseKeyring(keys)
 	must(t, err)
-	e := &wenv{t: t, db: postgrestest.New(t), ns: notiontest.New(t), q: &queue.Recorder{}, vis: &fakeVisibility{},
+	e := &wenv{t: t, db: postgrestest.New(t), ns: notiontest.New(t), q: &msg.Recorder{}, vis: &fakeVisibility{},
 		keys: kr, now: testNow, logs: &bytes.Buffer{}}
 	e.tpl = e.ns.AddTemplate("tpl-1")
 	e.gw = &notion.Gateway{Client: &notion.Client{BaseURL: e.ns.URL, Version: "2025-09-03", ClientID: "cid", ClientSecret: "csecret"}}
@@ -71,7 +71,7 @@ func newEnvWithKeys(t *testing.T, keys string) *wenv {
 	e.s = &Service{
 		Installations: e.db.Store, Reading: e.db.Store, Users: e.db.Store, Devices: e.db.Store, Purger: e.db.Store,
 		Pages: e.gw, Auth: e.gw, Sealer: kr,
-		Queue:  &queue.SyncQueue{Sender: e.q, Bucket: 120 * time.Second, Now: clock},
+		Queue:  &msg.SyncQueue{Sender: e.q, Bucket: 120 * time.Second, Now: clock},
 		Policy: domain.SyncPolicy{MinCreateSeconds: 30, CompleteProgress: 0.9, CompleteTimeRatio: 0.3, WordsPerMinute: 230},
 		Now:    clock,
 		Jitter: func() time.Duration { return 2 * time.Second },
@@ -123,7 +123,7 @@ type failure struct{ ItemIdentifier string }
 
 // handle runs the messages in order, as the queue consumer did: on the first error it
 // records any retry delay, then reports that message and every later one as failed.
-func (e *wenv) handle(msgs ...queue.Message) []failure {
+func (e *wenv) handle(msgs ...msg.Message) []failure {
 	e.t.Helper()
 	for i, m := range msgs {
 		err := e.s.HandleJob(ctx, m.Job())

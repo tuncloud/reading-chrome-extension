@@ -32,7 +32,7 @@ type pushResp struct {
 	Rejected  []struct{ ID, Reason string } `json:"rejected"`
 }
 
-// Scenario 2 end-to-end through the API and DynamoDB Local.
+// Scenario 2 end-to-end through the API and Postgres.
 func TestSyncPushTwiceIsDuplicate(t *testing.T) {
 	env := newTestEnv(t)
 	uid, tok := env.seedUser()

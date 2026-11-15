@@ -1,5 +1,5 @@
-// Package postgres is the relational repository: one table per DynamoDB item type
-// (schema in platform/pgmigrate), same semantics as adapter/dynamo.
+// Package postgres is the relational repository: one table per item type
+// (schema in platform/pgmigrate).
 package postgres
 
 import (

@@ -1,4 +1,4 @@
-// Package httpapi is the Echo adapter behind the api Lambda's Function URL (spec §2).
+// Package httpapi is the Echo adapter for the API (spec §2).
 // Handlers decode requests, call use cases and encode responses; nothing else.
 package httpapi
 
