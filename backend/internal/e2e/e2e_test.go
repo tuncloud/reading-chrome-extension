@@ -119,8 +119,12 @@ func (sys *system) connect() string { return sys.connectAs("bot-e2e", "tpl-1") }
 // duplicated template, and returns a device token.
 func (sys *system) connectAs(bot, template string) string {
 	t, api := sys.t, sys.api
-	sys.ns.SetTokenResponse(map[string]any{"access_token": "at", "refresh_token": "rt", "bot_id": bot, "workspace_id": "ws",
-		"workspace_name": "WS", "duplicated_template_id": template, "owner": map[string]any{"type": "user", "user": map[string]any{"id": "nu", "name": "Tuan"}}})
+	resp := map[string]any{"access_token": "at", "refresh_token": "rt", "bot_id": bot, "workspace_id": "ws",
+		"workspace_name": "WS", "owner": map[string]any{"type": "user", "user": map[string]any{"id": "nu", "name": "Tuan"}}}
+	if template != "" {
+		resp["duplicated_template_id"] = template
+	}
+	sys.ns.SetTokenResponse(resp)
 	verifier := strings.Repeat("v", 64)
 	ext := "https://" + extID + ".chromiumapp.org/"
 	start := call(t, api, "GET", "/v1/oauth/notion/start?"+url.Values{"ext_redirect": {ext}, "code_challenge": {crypto.S256Challenge(verifier)}, "code_challenge_method": {"S256"}}.Encode(), nil, "")
@@ -310,5 +314,58 @@ func TestReconnectWithNewBotKeepsHistory(t *testing.T) {
 	}
 	if n := sys.db.Count(t, "articles", "true"); n != 1 {
 		t.Fatalf("articles has %d rows, want 1", n)
+	}
+}
+
+// The rows were last written to the other installation's databases, so becoming active
+// again means everything is sent again, even though this installation's databases are unchanged.
+func TestSwitchingBackToAnEarlierInstallationResyncsEverything(t *testing.T) {
+	sys := newSystem(t)
+	ns, tpl1 := sys.ns, sys.tpl
+	token := sys.connect()
+	url := "https://medium.com/p/8f3c2a1b9d4e"
+	push := map[string]any{"tz": "Asia/Ho_Chi_Minh",
+		"articles": []any{map[string]any{"canonical_url": url, "source": "medium", "title": "Designing Idempotent APIs", "word_count": 1820}},
+		"segments": []any{segment("00000000-0000-4000-8000-000000000001", sys.now.Add(-5*time.Minute), 180, 0.6, 0)}}
+	if rec := call(t, sys.api, "POST", "/v1/sync/push", push, token); rec.Code != 200 {
+		t.Fatalf("push %d %s", rec.Code, rec.Body)
+	}
+	deliver(t, sys.wk, sys.q)
+	if n := len(ns.Pages(tpl1.LibraryDS)); n != 1 {
+		t.Fatalf("%d pages in tpl-1's Library, want 1", n)
+	}
+
+	tpl2 := ns.AddTemplate("tpl-2")
+	sys.connectAs("bot-e2e-2", "tpl-2")
+	deliver(t, sys.wk, sys.q)
+	hash := domain.URLHash(url)
+	uid := ""
+	if err := sys.db.Pool.QueryRow(context.Background(), `SELECT user_id FROM articles WHERE url_hash = $1`, hash).Scan(&uid); err != nil {
+		t.Fatal(err)
+	}
+	art, err := sys.store.GetArticle(context.Background(), uid, hash)
+	if err != nil || len(ns.Pages(tpl2.LibraryDS)) != 1 || art.NotionDataSourceID != tpl2.LibraryDS {
+		t.Fatalf("after the switch: article %+v %v, tpl-2 pages %d", art, err, len(ns.Pages(tpl2.LibraryDS)))
+	}
+
+	sys.connectAs("bot-e2e", "")
+	queued := sys.q.Messages()
+	if len(queued) != 2 || queued[0] != msg.Article(uid, hash) || queued[1] != msg.Day(uid, "2026-10-06") {
+		t.Fatalf("queued after switching back: %+v", queued)
+	}
+	deliver(t, sys.wk, sys.q)
+
+	art, err = sys.store.GetArticle(context.Background(), uid, hash)
+	if err != nil || art.NotionDataSourceID != tpl1.LibraryDS {
+		t.Fatalf("article %+v %v, want data source %s", art, err, tpl1.LibraryDS)
+	}
+	var live int
+	for _, p := range ns.Pages(tpl1.LibraryDS) {
+		if !p.Archived && p.Properties[notiontest.PropID("Reading time (min)")].(map[string]any)["number"] == 3.0 {
+			live++
+		}
+	}
+	if live != 1 {
+		t.Fatalf("%d live pages with Reading time 3 in tpl-1's Library, want 1", live)
 	}
 }

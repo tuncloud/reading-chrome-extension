@@ -195,13 +195,22 @@ func (s *Service) upsertInstallation(ctx context.Context, uid string, g *port.No
 	if err := s.Installations.PutUserInstallation(ctx, uid, g.BotID, now); err != nil {
 		return nil, err
 	}
+	// Read before the switch: an installation that was not active has missed every write
+	// made since, whatever its databases hold.
+	wasActive := false
+	if user, err := s.Users.GetProfile(ctx, uid); err == nil {
+		wasActive = user.ActiveInstallationID == g.BotID
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		return nil, err
+	}
 	if err := s.Users.SetActiveInstallation(ctx, uid, g.BotID); err != nil {
 		return nil, err
 	}
 	if inst.Status == domain.StatusActive {
 		// New databases (e.g. a newly duplicated template) → re-send everything (scenario 10).
-		// So does recovering from a failed resync, which may have been a full one.
-		full := inst.LibraryDSID != prevLibrary || inst.DailyDSID != prevDaily || prevSetupError == domain.SetupErrResyncFailed
+		// So does recovering from a failed resync, which may have been a full one, and
+		// becoming active again after another installation was (the rows were last written there).
+		full := inst.LibraryDSID != prevLibrary || inst.DailyDSID != prevDaily || prevSetupError == domain.SetupErrResyncFailed || !wasActive
 		if err := s.Activator.Activate(ctx, inst, full); err != nil {
 			return nil, err
 		}
