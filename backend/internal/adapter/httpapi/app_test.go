@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -9,16 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
 	"reading-tracker/backend/internal/wire"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
 func TestConfigEndpoint(t *testing.T) {
@@ -179,18 +175,20 @@ func TestRequestLogOmitsQueryAndToken(t *testing.T) {
 	}
 }
 
-type throttledReadsDB struct{ dynamo.API }
+// throttledAuth fails the first read the API makes (the device-token lookup) the
+// way the Postgres adapter reports capacity errors.
+type throttledAuth struct{ wire.Store }
 
-func (throttledReadsDB) GetItem(context.Context, *dynamodb.GetItemInput, ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
-	return nil, &types.ProvisionedThroughputExceededException{Message: aws.String("slow down")}
+func (throttledAuth) GetDeviceToken(context.Context, string) (*domain.DeviceToken, error) {
+	return nil, fmt.Errorf("postgres: too many connections: %w", domain.ErrThrottled)
 }
 
-// Review focus 2: a DynamoDB throttle on the API path (auth reads the device token
+// Review focus 2: a Postgres capacity error on the API path (auth reads the device token
 // first) is still 503 capacity_exceeded now that errors cross the use-case boundary.
 func TestThrottledReadIs503(t *testing.T) {
 	env := newTestEnv(t)
 	_, tok := env.seedUser()
-	e := wire.NewAPI(wire.APIDeps{Config: env.cfg, Store: dynamo.New(throttledReadsDB{env.db.DB}, env.db.Table),
+	e := wire.NewAPI(wire.APIDeps{Config: env.cfg, Store: throttledAuth{env.db.Store},
 		Notion: &notion.Client{BaseURL: env.notion.URL, Version: "2025-09-03"}, Queue: env.queue,
 		Now: func() time.Time { return env.now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	req := httptest.NewRequest("GET", "/v1/me", nil)

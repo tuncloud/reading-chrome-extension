@@ -49,11 +49,9 @@ func TestAuthTokenHappyPath(t *testing.T) {
 	if ref.DeviceID != r.DeviceID || ref.UserID != r.User.ID {
 		t.Fatalf("token ref %+v", ref)
 	}
-	for _, item := range env.db.Scan(t) {
-		for _, v := range item {
-			if strings.Contains(fmtAV(v), r.DeviceToken) {
-				t.Fatal("plaintext device token stored")
-			}
+	for _, row := range env.db.Dump(t) {
+		if strings.Contains(row, r.DeviceToken) {
+			t.Fatal("plaintext device token stored")
 		}
 	}
 	if rec := env.do("GET", "/v1/me", nil, r.DeviceToken); rec.Code != 200 {

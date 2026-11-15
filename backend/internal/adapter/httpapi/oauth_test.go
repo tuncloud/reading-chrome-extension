@@ -3,7 +3,6 @@ package httpapi_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/url"
 	"reflect"
 	"strings"
@@ -13,9 +12,6 @@ import (
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/crypto"
 )
-
-// fmtAV renders an attribute value (e.g. &{secret {}}) so scans can look for plaintext.
-func fmtAV(v any) string { return fmt.Sprintf("%v", v) }
 
 func startURL(ext string) string {
 	q := url.Values{"ext_redirect": {ext}, "code_challenge": {crypto.S256Challenge(testVerifier)}, "code_challenge_method": {"S256"}}
@@ -108,11 +104,9 @@ func TestOAuthCallbackHappyPathWithTemplate(t *testing.T) {
 	if inst.Status != domain.StatusActive || inst.LibraryDSID != tpl.LibraryDS || inst.DuplicatedTemplateID != "tpl-1" || inst.TokenVersion != 1 {
 		t.Fatalf("installation %+v", inst)
 	}
-	for _, item := range env.db.Scan(t) {
-		for k, v := range item {
-			if s := fmtAV(v); strings.Contains(s, "secret-access-token") || strings.Contains(s, "secret-refresh-token") {
-				t.Fatalf("plaintext token stored in %s", k)
-			}
+	for _, row := range env.db.Dump(t) {
+		if strings.Contains(row, "secret-access-token") || strings.Contains(row, "secret-refresh-token") {
+			t.Fatal("plaintext token stored")
 		}
 	}
 	plain, err := env.cfg.Keys.Open(inst.AccessTokenEnc, []byte(testBotID))

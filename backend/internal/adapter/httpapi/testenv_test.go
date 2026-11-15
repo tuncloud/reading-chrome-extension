@@ -12,15 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/labstack/echo/v4"
 
-	"reading-tracker/backend/internal/adapter/dynamo"
-	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
+	"reading-tracker/backend/internal/adapter/postgres/postgrestest"
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/config"
@@ -37,7 +33,7 @@ var testVerifier = strings.Repeat("v", 64)
 
 type testEnv struct {
 	t      *testing.T
-	db     *dynamotest.Env
+	db     *postgrestest.Env
 	notion *notiontest.Server
 	queue  *queue.Recorder
 	cfg    *config.Config
@@ -49,10 +45,10 @@ type testEnv struct {
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
-	env := &testEnv{t: t, db: dynamotest.New(t), notion: notiontest.New(t), queue: &queue.Recorder{}, logs: &bytes.Buffer{},
+	env := &testEnv{t: t, db: postgrestest.New(t), notion: notiontest.New(t), queue: &queue.Recorder{}, logs: &bytes.Buffer{},
 		now: time.Date(2026, 10, 6, 3, 12, 0, 0, time.UTC)}
 	vars := map[string]string{
-		"APP_ENV": "test", "TABLE_NAME": env.db.Table, "QUEUE_URL": "local", "NOTION_CLIENT_ID": "cid",
+		"APP_ENV": "test", "STORE": "postgres", "DATABASE_URL": env.db.URL, "NOTION_CLIENT_ID": "cid",
 		"NOTION_CLIENT_SECRET": "csecret", "NOTION_VERSION": "2025-09-03", "NOTION_API_BASE": env.notion.URL,
 		"TOKEN_ENC_KEYS":          "v1:" + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
 		"DEVICE_TOKEN_PEPPER":     base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32)),
@@ -155,17 +151,15 @@ func (env *testEnv) seedInstallation(uid, status string) *domain.Installation {
 	return inst
 }
 
-// setDeviceAttr overwrites one attribute of the device item in place, leaving every other
-// item (notably the DEVTOKEN lookup) untouched.
+// setDeviceAttr overwrites one timestamp column of the device row in place, leaving every
+// other row (notably the device-token lookup) untouched.
 func (env *testEnv) setDeviceAttr(uid, deviceID, attr, value string) {
 	env.t.Helper()
-	_, err := env.db.DB.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
-		TableName:                 aws.String(env.db.Table),
-		Key:                       map[string]types.AttributeValue{"pk": &types.AttributeValueMemberS{Value: dynamo.UserPK(uid)}, "sk": &types.AttributeValueMemberS{Value: dynamo.DeviceSK(deviceID)}},
-		UpdateExpression:          aws.String("SET #a = :v"),
-		ExpressionAttributeNames:  map[string]string{"#a": attr},
-		ExpressionAttributeValues: map[string]types.AttributeValue{":v": &types.AttributeValueMemberS{Value: value}},
-	})
+	if attr != "revoked_at" && attr != "last_seen_at" {
+		env.t.Fatalf("setDeviceAttr: unsupported attribute %q", attr)
+	}
+	_, err := env.db.Pool.Exec(context.Background(),
+		"UPDATE devices SET "+attr+" = $1::timestamptz WHERE user_id = $2 AND id = $3", value, uid, deviceID)
 	must(env.t, err)
 }
 
