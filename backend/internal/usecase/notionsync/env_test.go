@@ -4,20 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-lambda-go/events"
-
-	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
+	"reading-tracker/backend/internal/adapter/postgres/postgrestest"
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/crypto"
+	"reading-tracker/backend/internal/usecase/port"
 )
 
 var (
@@ -32,17 +31,11 @@ const (
 
 type fakeVisibility struct{ calls []time.Duration }
 
-func (f *fakeVisibility) ChangeVisibility(_ context.Context, _ string, d time.Duration) error {
-	f.calls = append(f.calls, d)
-	return nil
-}
-
 type wenv struct {
 	t      *testing.T
 	s      *Service
-	c      *queue.Consumer
 	gw     *notion.Gateway
-	db     *dynamotest.Env
+	db     *postgrestest.Env
 	ns     *notiontest.Server
 	q      *queue.Recorder
 	vis    *fakeVisibility
@@ -69,7 +62,7 @@ func newEnvWithKeys(t *testing.T, keys string) *wenv {
 	t.Helper()
 	kr, err := crypto.ParseKeyring(keys)
 	must(t, err)
-	e := &wenv{t: t, db: dynamotest.New(t), ns: notiontest.New(t), q: &queue.Recorder{}, vis: &fakeVisibility{},
+	e := &wenv{t: t, db: postgrestest.New(t), ns: notiontest.New(t), q: &queue.Recorder{}, vis: &fakeVisibility{},
 		keys: kr, now: testNow, logs: &bytes.Buffer{}}
 	e.tpl = e.ns.AddTemplate("tpl-1")
 	e.gw = &notion.Gateway{Client: &notion.Client{BaseURL: e.ns.URL, Version: "2025-09-03", ClientID: "cid", ClientSecret: "csecret"}}
@@ -85,7 +78,6 @@ func newEnvWithKeys(t *testing.T, keys string) *wenv {
 		Sleep:  func(d time.Duration) { e.sleeps = append(e.sleeps, d) },
 		Log:    log,
 	}
-	e.c = &queue.Consumer{Handler: e.s, Visibility: e.vis, Log: log}
 	return e
 }
 
@@ -127,18 +119,28 @@ func (e *wenv) readMeta(meta domain.ArticleMeta, seq, secs int, progress float64
 	e.now = e.now.Add(time.Duration(secs) * time.Second)
 }
 
-// handle runs the messages as one SQS batch and returns the reported failures.
-func (e *wenv) handle(msgs ...queue.Message) []events.SQSBatchItemFailure {
+type failure struct{ ItemIdentifier string }
+
+// handle runs the messages in order, as the queue consumer did: on the first error it
+// records any retry delay, then reports that message and every later one as failed.
+func (e *wenv) handle(msgs ...queue.Message) []failure {
 	e.t.Helper()
-	var ev events.SQSEvent
 	for i, m := range msgs {
-		body, err := json.Marshal(m)
-		must(e.t, err)
-		ev.Records = append(ev.Records, events.SQSMessage{MessageId: fmt.Sprintf("m%d", i), ReceiptHandle: fmt.Sprintf("rh%d", i), Body: string(body)})
+		err := e.s.HandleJob(ctx, m.Job())
+		if err == nil {
+			continue
+		}
+		var ra *port.RetryAfterError
+		if errors.As(err, &ra) {
+			e.vis.calls = append(e.vis.calls, ra.Delay)
+		}
+		var out []failure
+		for k := i; k < len(msgs); k++ {
+			out = append(out, failure{ItemIdentifier: fmt.Sprintf("m%d", k)})
+		}
+		return out
 	}
-	resp, err := e.c.HandleSQS(ctx, ev)
-	must(e.t, err)
-	return resp.BatchItemFailures
+	return nil
 }
 
 func pid(name string) string { return notiontest.PropID(name) }

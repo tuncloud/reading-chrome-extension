@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
+	"reading-tracker/backend/internal/adapter/postgres/postgrestest"
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/usecase/setup"
@@ -26,15 +26,15 @@ func must(t *testing.T, err error) {
 	}
 }
 
-func newActivator(t *testing.T) (*setup.Activator, *dynamotest.Env, *queue.Recorder) {
-	db, rec := dynamotest.New(t), &queue.Recorder{}
+func newActivator(t *testing.T) (*setup.Activator, *postgrestest.Env, *queue.Recorder) {
+	db, rec := postgrestest.New(t), &queue.Recorder{}
 	a := &setup.Activator{Reading: db.Store, Installations: db.Store,
 		Queue: &queue.SyncQueue{Sender: rec, Bucket: 120 * time.Second, Now: func() time.Time { return testNow }},
 		Now:   func() time.Time { return testNow }, Sleep: func(time.Duration) {}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	return a, db, rec
 }
 
-func pushTwo(t *testing.T, db *dynamotest.Env) {
+func pushTwo(t *testing.T, db *postgrestest.Env) {
 	for i, u := range []string{"https://a.example/1", "https://b.example/2"} {
 		_, err := db.Store.PushSegment(ctx, domain.SegmentWrite{
 			InstallationID: "bot-1", DeviceID: "d", SegmentID: []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}[i],

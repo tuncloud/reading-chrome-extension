@@ -3,7 +3,6 @@ package notionsync
 import (
 	"testing"
 
-	"reading-tracker/backend/internal/adapter/dynamo"
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
 )
@@ -17,12 +16,6 @@ func (e *wenv) seedUser(uid string) {
 	must(e.t, s.PutUserInstallation(ctx, uid, testBot, e.now))
 }
 
-func (e *wenv) remaining(pk string) int {
-	keys, err := e.db.Store.PartitionKeys(ctx, pk)
-	must(e.t, err)
-	return len(keys)
-}
-
 // T23 AC / scenario 22: every item of the user is gone; Notion untouched.
 func TestPurgeRemovesAllUserData(t *testing.T) {
 	e := newEnv(t)
@@ -34,9 +27,22 @@ func TestPurgeRemovesAllUserData(t *testing.T) {
 	if f := e.handle(queue.Purge("u1", testBot)); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
 	}
-	for _, pk := range []string{dynamo.UserPK("u1"), dynamo.InstPK(testBot), dynamo.NUserPK("n-u1"), dynamo.DevTokenPK("h-u1")} {
-		if n := e.remaining(pk); n != 0 {
-			t.Errorf("%s still has %d items", pk, n)
+	for _, c := range []struct {
+		table, where string
+		arg          any
+	}{
+		{"users", "id = $1", "u1"},
+		{"user_installations", "user_id = $1", "u1"},
+		{"devices", "user_id = $1", "u1"},
+		{"device_tokens", "token_hmac = $1", "h-u1"},
+		{"notion_user_links", "notion_user_id = $1", "n-u1"},
+		{"installations", "id = $1", testBot},
+		{"articles", "installation_id = $1", testBot},
+		{"segments", "installation_id = $1", testBot},
+		{"days", "installation_id = $1", testBot},
+	} {
+		if n := e.db.Count(t, c.table, c.where, c.arg); n != 0 {
+			t.Errorf("%s still has %d rows", c.table, n)
 		}
 	}
 	if n := len(e.ns.Requests()); n != 0 {
@@ -49,7 +55,7 @@ func TestPurgeIgnoresLiveUser(t *testing.T) {
 	e.seedInstallation("tok", "rt")
 	e.seedUser("u1")
 	e.handle(queue.Purge("u1", testBot))
-	if e.remaining(dynamo.UserPK("u1")) == 0 || e.remaining(dynamo.InstPK(testBot)) == 0 {
+	if e.db.Count(t, "users", "id = $1", "u1") != 1 || e.db.Count(t, "installations", "id = $1", testBot) != 1 {
 		t.Fatal("purged a user that is not marked deleted")
 	}
 }
@@ -61,10 +67,10 @@ func TestPurgeSkipsInstallationOwnedByAnotherUser(t *testing.T) {
 	e.seedUser("u0")
 	must(t, e.db.Store.MarkProfileDeleted(ctx, "u0", e.now))
 	e.handle(queue.Purge("u0", testBot))
-	if e.remaining(dynamo.InstPK(testBot)) == 0 {
+	if e.db.Count(t, "installations", "id = $1", testBot) != 1 {
 		t.Fatal("deleted another user's installation")
 	}
-	if e.remaining(dynamo.UserPK("u0")) != 0 {
+	if e.db.Count(t, "users", "id = $1", "u0") != 0 {
 		t.Fatal("u0 not purged")
 	}
 }
