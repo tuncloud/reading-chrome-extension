@@ -22,6 +22,7 @@ var (
 const (
 	artURL = "https://medium.com/p/8f3c2a1b9d4e"
 	bot    = "bot-1"
+	user   = "u1" // bot's user
 )
 
 // fakePusher remembers committed segment ids, like the real conditional put.
@@ -76,7 +77,7 @@ func TestPushClassifiesOutcomes(t *testing.T) {
 	req := readsync.PushRequest{TZ: "UTC", Articles: []readsync.Article{article(artURL)}, Segments: []readsync.Segment{
 		seg(id(1), artURL, now.Add(-time.Hour), 58), seg(id(2), artURL, now.Add(-time.Hour), 58), seg(id(3), artURL, now.Add(-time.Hour), 58), bad,
 	}}
-	resp, err := svc.Push(ctx, bot, "dev-1", req)
+	resp, err := svc.Push(ctx, user, bot, "dev-1", req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func TestPushEnqueuesOncePerKey(t *testing.T) {
 	req := readsync.PushRequest{TZ: "UTC", Articles: []readsync.Article{article(artURL), article(other)}, Segments: []readsync.Segment{
 		seg(id(1), artURL, start, 60), seg(id(2), artURL, start.Add(time.Minute), 60), seg(id(3), artURL, start.Add(2*time.Minute), 60), seg(id(4), other, start, 60),
 	}}
-	if _, err := svc.Push(ctx, bot, "dev-1", req); err != nil {
+	if _, err := svc.Push(ctx, user, bot, "dev-1", req); err != nil {
 		t.Fatal(err)
 	}
 	got := rec.Messages()
@@ -117,7 +118,7 @@ func TestPushDateUsesRequestTZ(t *testing.T) {
 	svc.Now = later
 	svc.Queue.(*msg.SyncQueue).Now = later
 	req := readsync.PushRequest{TZ: "Asia/Ho_Chi_Minh", Articles: []readsync.Article{article(artURL)}, Segments: []readsync.Segment{seg(id(1), artURL, started, 60)}}
-	if _, err := svc.Push(ctx, bot, "dev-1", req); err != nil {
+	if _, err := svc.Push(ctx, user, bot, "dev-1", req); err != nil {
 		t.Fatal(err)
 	}
 	if p.got[0].Date != "2026-10-06" {
@@ -154,7 +155,7 @@ func TestPushValidationReasons(t *testing.T) {
 		n++
 	}
 	req := readsync.PushRequest{TZ: "UTC", Articles: []readsync.Article{article(artURL), {CanonicalURL: "ftp://bad.example/x", Source: "x"}}, Segments: segs}
-	resp, err := svc.Push(ctx, bot, "dev-1", req)
+	resp, err := svc.Push(ctx, user, bot, "dev-1", req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +177,7 @@ func TestPushAllThrottled(t *testing.T) {
 	svc, p, _ := newService()
 	p.throttle[id(1)] = true
 	req := readsync.PushRequest{TZ: "UTC", Articles: []readsync.Article{article(artURL)}, Segments: []readsync.Segment{seg(id(1), artURL, now.Add(-time.Hour), 60)}}
-	if _, err := svc.Push(ctx, bot, "dev-1", req); !isKind(err, apperr.Capacity) {
+	if _, err := svc.Push(ctx, user, bot, "dev-1", req); !isKind(err, apperr.Capacity) {
 		t.Fatalf("err %v", err)
 	}
 }
@@ -188,7 +189,7 @@ func isKind(err error, k apperr.Kind) bool {
 
 func TestPushWithoutInstallation(t *testing.T) {
 	svc, p, _ := newService()
-	_, err := svc.Push(ctx, "", "dev-1", readsync.PushRequest{TZ: "UTC"})
+	_, err := svc.Push(ctx, user, "", "dev-1", readsync.PushRequest{TZ: "UTC"})
 	ae, ok := apperr.As(err)
 	if !ok || ae.Kind != apperr.NoInstallation || ae.Msg != "connect Notion first" {
 		t.Fatalf("err %v", err)
@@ -201,12 +202,12 @@ func TestPushWithoutInstallation(t *testing.T) {
 func TestPushEnvelopeErrors(t *testing.T) {
 	svc, _, _ := newService()
 	many := make([]readsync.Segment, 51)
-	_, err := svc.Push(ctx, bot, "dev-1", readsync.PushRequest{TZ: "UTC", Segments: many})
+	_, err := svc.Push(ctx, user, bot, "dev-1", readsync.PushRequest{TZ: "UTC", Segments: many})
 	if !isKind(err, apperr.TooLarge) {
 		t.Fatalf("51 segments: %v", err)
 	}
 	for _, tz := range []string{"", "Mars/Olympus", "Local"} {
-		_, err = svc.Push(ctx, bot, "dev-1", readsync.PushRequest{TZ: tz})
+		_, err = svc.Push(ctx, user, bot, "dev-1", readsync.PushRequest{TZ: tz})
 		if !isKind(err, apperr.Invalid) {
 			t.Fatalf("tz %q: %v", tz, err)
 		}
@@ -219,7 +220,7 @@ func TestPushTruncatesLongTitle(t *testing.T) {
 	a := article(artURL)
 	a.Title = strings.Repeat("Đ", 600)
 	req := readsync.PushRequest{TZ: "UTC", Articles: []readsync.Article{a}, Segments: []readsync.Segment{seg(id(1), artURL, now.Add(-time.Hour), 60)}}
-	resp, err := svc.Push(ctx, bot, "dev-1", req)
+	resp, err := svc.Push(ctx, user, bot, "dev-1", req)
 	if err != nil || len(resp.Accepted) != 1 {
 		t.Fatalf("resp %+v err %v", resp, err)
 	}
@@ -234,7 +235,7 @@ func TestPushNormalizesOffsetTimestamps(t *testing.T) {
 	s := seg(id(1), artURL, now.Add(-time.Hour), 60)
 	s.StartedAt = now.Add(-time.Hour).In(time.FixedZone("ICT", 7*3600)).Format(time.RFC3339)
 	req := readsync.PushRequest{TZ: "UTC", Articles: []readsync.Article{article(artURL)}, Segments: []readsync.Segment{s}}
-	if _, err := svc.Push(ctx, bot, "dev-1", req); err != nil {
+	if _, err := svc.Push(ctx, user, bot, "dev-1", req); err != nil {
 		t.Fatal(err)
 	}
 	if got := domain.Timestamp(p.got[0].StartedAt); got != domain.Timestamp(now.Add(-time.Hour)) {
@@ -247,11 +248,11 @@ func TestPushRetryAfterEnqueueFailureStillEnqueues(t *testing.T) {
 	svc, _, rec := newService()
 	req := readsync.PushRequest{TZ: "UTC", Articles: []readsync.Article{article(artURL)}, Segments: []readsync.Segment{seg(id(1), artURL, now.Add(-time.Hour), 60)}}
 	rec.Err = errors.New("queue unavailable")
-	if _, err := svc.Push(ctx, bot, "dev-1", req); err == nil {
+	if _, err := svc.Push(ctx, user, bot, "dev-1", req); err == nil {
 		t.Fatal("enqueue failure must fail the request so the client retries")
 	}
 	rec.Err = nil
-	resp, err := svc.Push(ctx, bot, "dev-1", req)
+	resp, err := svc.Push(ctx, user, bot, "dev-1", req)
 	if err != nil || len(resp.Duplicate) != 1 {
 		t.Fatalf("retry resp %+v err %v", resp, err)
 	}

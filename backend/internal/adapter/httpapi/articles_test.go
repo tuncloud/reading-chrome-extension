@@ -25,11 +25,11 @@ func TestArticlesStatus(t *testing.T) {
 	env.seedInstallation(uid, domain.StatusActive)
 	ctx := context.Background()
 	u := "https://medium.com/p/8f3c2a1b9d4e"
-	_, err := env.db.Store.PushSegment(ctx, domain.SegmentWrite{InstallationID: testBotID, DeviceID: "dev-1", SegmentID: "00000000-0000-4000-8000-000000000001",
+	_, err := env.db.Store.PushSegment(ctx, domain.SegmentWrite{UserID: uid, DeviceID: "dev-1", SegmentID: "00000000-0000-4000-8000-000000000001",
 		SessionID: "s", URLHash: domain.URLHash(u), Date: "2026-10-06", StartedAt: env.now, EndedAt: env.now.Add(time.Minute),
 		ActiveSeconds: 60, MaxProgress: 0.97, Article: domain.ArticleMeta{CanonicalURL: u, Source: "medium"}})
 	must(t, err)
-	must(t, env.db.Store.SetArticlePage(ctx, testBotID, domain.URLHash(u), "page-1", "https://www.notion.so/page-1", "ds-1"))
+	must(t, env.db.Store.SetArticlePage(ctx, uid, domain.URLHash(u), "page-1", "https://www.notion.so/page-1", "ds-1"))
 
 	rec := env.do("POST", "/v1/articles/status", map[string]any{"canonical_urls": []string{u, "https://unknown.example/x"}}, tok)
 	if rec.Code != 200 {

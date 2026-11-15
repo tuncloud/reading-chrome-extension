@@ -18,7 +18,7 @@ func (s *Service) syncDay(ctx context.Context, job port.Job) error {
 	if inst == nil || err != nil {
 		return err
 	}
-	day, err := s.Reading.GetDay(ctx, inst.ID, job.Date)
+	day, err := s.Reading.GetDay(ctx, inst.UserID, job.Date)
 	if errors.Is(err, domain.ErrNotFound) {
 		return nil
 	}
@@ -26,9 +26,9 @@ func (s *Service) syncDay(ctx context.Context, job port.Job) error {
 		return err
 	}
 	if day.NotionPageID != "" && day.NotionDataSourceID != "" && !domain.SameID(day.NotionDataSourceID, inst.DailyDSID) {
-		return s.forgetDayPage(ctx, inst.ID, job) // R1, as for articles
+		return s.forgetDayPage(ctx, inst.UserID, job) // R1, as for articles
 	}
-	pageIDs, err := s.dayArticlePages(ctx, inst.ID, day.ArticleHashes)
+	pageIDs, err := s.dayArticlePages(ctx, inst.UserID, day.ArticleHashes)
 	if err != nil {
 		return err
 	}
@@ -46,31 +46,31 @@ func (s *Service) syncDay(ctx context.Context, job port.Job) error {
 		})
 		legacy := day.NotionDataSourceID == ""
 		if port.IsNotionKind(err, port.NotionPageGone) || (legacy && isBadRequest(err)) {
-			return s.forgetDayPage(ctx, inst.ID, job)
+			return s.forgetDayPage(ctx, inst.UserID, job)
 		}
 		if err != nil {
 			return err
 		}
 		if legacy {
-			if err := s.Reading.SetDayPage(ctx, inst.ID, job.Date, day.NotionPageID, inst.DailyDSID); err != nil {
+			if err := s.Reading.SetDayPage(ctx, inst.UserID, job.Date, day.NotionPageID, inst.DailyDSID); err != nil {
 				return err
 			}
 		}
 	}
-	return s.Reading.MarkDaySynced(ctx, inst.ID, job.Date, day.Version)
+	return s.Reading.MarkDaySynced(ctx, inst.UserID, job.Date, day.Version)
 }
 
-func (s *Service) forgetDayPage(ctx context.Context, inst string, job port.Job) error {
-	if err := s.Reading.ClearDayPage(ctx, inst, job.Date); err != nil {
+func (s *Service) forgetDayPage(ctx context.Context, uid string, job port.Job) error {
+	if err := s.Reading.ClearDayPage(ctx, uid, job.Date); err != nil {
 		return err
 	}
 	return s.Queue.Requeue(ctx, job)
 }
 
 // dayArticlePages returns the page ids of the day's articles that have one (≤ 100).
-func (s *Service) dayArticlePages(ctx context.Context, inst string, hashes []string) ([]string, error) {
+func (s *Service) dayArticlePages(ctx context.Context, uid string, hashes []string) ([]string, error) {
 	sorted := slices.Sorted(slices.Values(hashes))
-	arts, err := s.Reading.BatchGetArticles(ctx, inst, sorted)
+	arts, err := s.Reading.BatchGetArticles(ctx, uid, sorted)
 	if err != nil {
 		return nil, err
 	}
@@ -117,5 +117,5 @@ func (s *Service) createDayPage(ctx context.Context, sess *session, day *domain.
 			return err
 		}
 	}
-	return s.Reading.SetDayPage(ctx, sess.inst.ID, day.Date, page.ID, sess.inst.DailyDSID)
+	return s.Reading.SetDayPage(ctx, sess.inst.UserID, day.Date, page.ID, sess.inst.DailyDSID)
 }

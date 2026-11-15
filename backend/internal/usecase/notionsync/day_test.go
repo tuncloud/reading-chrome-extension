@@ -44,7 +44,7 @@ func TestDayMinutesAndRelation(t *testing.T) {
 	if pg.Properties[pid("Date")].(map[string]any)["date"].(map[string]any)["start"] != today {
 		t.Fatal("date not set")
 	}
-	d, _ := e.db.Store.GetDay(ctx, testBot, today)
+	d, _ := e.db.Store.GetDay(ctx, testUser, today)
 	if d.NotionPageID != pg.ID || d.NotionSyncedVersion != 3 {
 		t.Fatalf("day %+v", d)
 	}
@@ -84,7 +84,7 @@ func TestDayAdoptedPageGoneIsRecreated(t *testing.T) {
 	if len(pages) != 2 || len(e.ns.Calls("POST", "/v1/pages")) != 1 {
 		t.Fatalf("%d daily pages, %d creates", len(pages), len(e.ns.Calls("POST", "/v1/pages")))
 	}
-	d, err := e.db.Store.GetDay(ctx, testBot, today)
+	d, err := e.db.Store.GetDay(ctx, testUser, today)
 	must(t, err)
 	if d.NotionPageID != pages[1].ID || d.NotionPageID == existing.ID {
 		t.Fatalf("day %+v", d)
@@ -130,12 +130,12 @@ func TestDayPageInOldDailyLogIsRecreated(t *testing.T) {
 	old := e.ns.AddTemplate("old-tpl")
 	stale := e.ns.AddPage(old.DailyDS, map[string]any{pid("Date"): map[string]any{"date": map[string]any{"start": today}}})
 	e.read(artURL, 0, 60, 0.5)
-	must(t, e.db.Store.SetDayPage(ctx, testBot, today, stale.ID, old.DailyDS))
+	must(t, e.db.Store.SetDayPage(ctx, testUser, today, stale.ID, old.DailyDS))
 
 	if f := e.handle(dayMsg()); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
 	}
-	d, err := e.db.Store.GetDay(ctx, testBot, today)
+	d, err := e.db.Store.GetDay(ctx, testUser, today)
 	must(t, err)
 	if d.NotionPageID != "" || d.NotionSyncedVersion != 0 {
 		t.Fatalf("page in the old Daily Log kept: %+v", d)
@@ -146,7 +146,7 @@ func TestDayPageInOldDailyLogIsRecreated(t *testing.T) {
 	}
 	e.handle(sent[0].Message)
 	pg := e.onlyDayPage()
-	if d, _ = e.db.Store.GetDay(ctx, testBot, today); d.NotionPageID != pg.ID || num(pg, "Minutes") != 1 {
+	if d, _ = e.db.Store.GetDay(ctx, testUser, today); d.NotionPageID != pg.ID || num(pg, "Minutes") != 1 {
 		t.Fatalf("day %+v, new page %s", d, pg.ID)
 	}
 }
@@ -176,7 +176,7 @@ func TestDayInOldDatabaseIsRecreatedBeforePatch(t *testing.T) {
 		t.Fatalf("requeue %+v", sent)
 	}
 	e.handle(sent[0].Message)
-	d, err := e.db.Store.GetDay(ctx, testBot, today)
+	d, err := e.db.Store.GetDay(ctx, testUser, today)
 	must(t, err)
 	if pages := e.ns.Pages("daily2-ds"); len(pages) != 1 || d.NotionPageID != pages[0].ID || d.NotionDataSourceID != "daily2-ds" {
 		t.Fatalf("day not re-created in the new Daily Log: %+v", d)
@@ -189,7 +189,7 @@ func TestDayPageWithoutDataSourceIsRelinked(t *testing.T) {
 	e.seedInstallation("tok", "rt")
 	pg := e.ns.AddPage(e.tpl.DailyDS, map[string]any{pid("Date"): map[string]any{"date": map[string]any{"start": today}}})
 	e.read(artURL, 0, 60, 0.5)
-	must(t, e.db.Store.SetDayPage(ctx, testBot, today, pg.ID, ""))
+	must(t, e.db.Store.SetDayPage(ctx, testUser, today, pg.ID, ""))
 
 	if f := e.handle(dayMsg()); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
@@ -200,7 +200,7 @@ func TestDayPageWithoutDataSourceIsRelinked(t *testing.T) {
 	if more := e.q.Drain(); len(more) != 0 {
 		t.Fatalf("requeued: %+v", more)
 	}
-	d, err := e.db.Store.GetDay(ctx, testBot, today)
+	d, err := e.db.Store.GetDay(ctx, testUser, today)
 	must(t, err)
 	if d.NotionPageID != pg.ID || d.NotionDataSourceID != e.tpl.DailyDS {
 		t.Fatalf("day %+v", d)
@@ -217,13 +217,13 @@ func TestDayWithoutDataSourceFallsBackToForget(t *testing.T) {
 			e.seedInstallation("tok", "rt")
 			pg := e.ns.AddPage(e.tpl.DailyDS, map[string]any{pid("Date"): map[string]any{"date": map[string]any{"start": today}}})
 			e.read(artURL, 0, 60, 0.5)
-			must(t, e.db.Store.SetDayPage(ctx, testBot, today, pg.ID, ""))
+			must(t, e.db.Store.SetDayPage(ctx, testUser, today, pg.ID, ""))
 			e.ns.FailNext("PATCH", "/v1/pages/"+pg.ID, f)
 
 			if fl := e.handle(dayMsg()); len(fl) != 0 {
 				t.Fatalf("failures %+v", fl)
 			}
-			d, err := e.db.Store.GetDay(ctx, testBot, today)
+			d, err := e.db.Store.GetDay(ctx, testUser, today)
 			must(t, err)
 			if d.NotionPageID != "" {
 				t.Fatalf("page link not cleared: %+v", d)
@@ -242,7 +242,7 @@ func TestDayPageInOtherDataSourceIsRelinked(t *testing.T) {
 	e.seedInstallation("tok", "rt")
 	pg := e.ns.AddPage(e.tpl.DailyDS, map[string]any{pid("Date"): map[string]any{"date": map[string]any{"start": today}}})
 	e.read(artURL, 0, 60, 0.5)
-	must(t, e.db.Store.SetDayPage(ctx, testBot, today, pg.ID, "old-ds"))
+	must(t, e.db.Store.SetDayPage(ctx, testUser, today, pg.ID, "old-ds"))
 
 	if f := e.handle(dayMsg()); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
@@ -255,7 +255,7 @@ func TestDayPageInOtherDataSourceIsRelinked(t *testing.T) {
 		t.Fatalf("requeue %+v", sent)
 	}
 	e.handle(sent[0].Message)
-	d, err := e.db.Store.GetDay(ctx, testBot, today)
+	d, err := e.db.Store.GetDay(ctx, testUser, today)
 	must(t, err)
 	if d.NotionPageID != pg.ID || d.NotionDataSourceID != e.tpl.DailyDS {
 		t.Fatalf("day %+v", d)
@@ -272,14 +272,14 @@ func TestDayArticlePagesCapsRelationAtOneHundred(t *testing.T) {
 	for i := 0; i < maxDayRelations+1; i++ {
 		url := fmt.Sprintf("https://example.com/a/%03d", i)
 		e.read(url, 0, 60, 0.5)
-		must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(url), fmt.Sprintf("page-%03d", i), "https://notion.so/p", "ds"))
+		must(t, e.db.Store.SetArticlePage(ctx, testUser, domain.URLHash(url), fmt.Sprintf("page-%03d", i), "https://notion.so/p", "ds"))
 	}
-	d, err := e.db.Store.GetDay(ctx, testBot, today)
+	d, err := e.db.Store.GetDay(ctx, testUser, today)
 	must(t, err)
 	if len(d.ArticleHashes) != maxDayRelations+1 {
 		t.Fatalf("day has %d articles", len(d.ArticleHashes))
 	}
-	ids, err := e.s.dayArticlePages(ctx, testBot, d.ArticleHashes)
+	ids, err := e.s.dayArticlePages(ctx, testUser, d.ArticleHashes)
 	must(t, err)
 	if len(ids) != maxDayRelations {
 		t.Fatalf("relation ids %d, want %d", len(ids), maxDayRelations)

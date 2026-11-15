@@ -50,12 +50,12 @@ func TestConcurrentPushesCountEverySegmentOnce(t *testing.T) {
 	for err := range errs {
 		t.Fatal(err)
 	}
-	a, err := s.GetArticle(ctx, "bot-1", domain.URLHash(storetest.ArticleURL))
+	a, err := s.GetArticle(ctx, storetest.UserID, domain.URLHash(storetest.ArticleURL))
 	storetest.Must(t, err)
 	if a.TotalSeconds != n*60 || a.Version != n || a.Sessions != 1 {
 		t.Fatalf("article = total %d version %d sessions %d", a.TotalSeconds, a.Version, a.Sessions)
 	}
-	d, err := s.GetDay(ctx, "bot-1", "2026-10-06")
+	d, err := s.GetDay(ctx, storetest.UserID, "2026-10-06")
 	storetest.Must(t, err)
 	if d.Seconds != n*60 || d.Version != n || len(d.ArticleHashes) != 1 {
 		t.Fatalf("day = %+v", d)
@@ -117,7 +117,7 @@ func TestPushThrottleIsRetry(t *testing.T) {
 	if len(*sleeps) != 0 {
 		t.Fatalf("sleeps = %v, want none", *sleeps)
 	}
-	if _, err := s.GetArticle(ctx, "bot-1", domain.URLHash(storetest.ArticleURL)); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := s.GetArticle(ctx, storetest.UserID, domain.URLHash(storetest.ArticleURL)); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("GetArticle err = %v, want ErrNotFound", err)
 	}
 }
@@ -140,7 +140,7 @@ func TestPushRetriesTransactionConflict(t *testing.T) {
 	if want := []time.Duration{50 * time.Millisecond, 100 * time.Millisecond}; !slices.Equal(*sleeps, want) {
 		t.Fatalf("sleeps = %v, want %v", *sleeps, want)
 	}
-	a, err := s.GetArticle(ctx, "bot-1", domain.URLHash(storetest.ArticleURL))
+	a, err := s.GetArticle(ctx, storetest.UserID, domain.URLHash(storetest.ArticleURL))
 	storetest.Must(t, err)
 	if a.TotalSeconds != 60 || a.Version != 1 || a.Sessions != 1 {
 		t.Fatalf("article = total %d version %d sessions %d", a.TotalSeconds, a.Version, a.Sessions)

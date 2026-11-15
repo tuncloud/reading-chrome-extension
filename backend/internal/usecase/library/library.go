@@ -25,13 +25,13 @@ type ArticleStatus struct {
 	NotionURL    string
 }
 
-// Status returns the known articles keyed by the caller's URL strings. Unknown URLs
-// are omitted.
-func (s *Service) Status(ctx context.Context, instID string, urls []string) (map[string]ArticleStatus, error) {
+// Status returns the user's known articles keyed by the caller's URL strings. Unknown
+// URLs are omitted. An empty installationID means the user has none (apperr.NoInstallation).
+func (s *Service) Status(ctx context.Context, userID, installationID string, urls []string) (map[string]ArticleStatus, error) {
 	if len(urls) > maxStatusURLs {
 		return nil, apperr.NewTooLarge("canonical_urls exceeds 100")
 	}
-	if instID == "" {
+	if installationID == "" {
 		return nil, apperr.NewNoInstallation()
 	}
 	urlByHash := map[string]string{}
@@ -43,7 +43,7 @@ func (s *Service) Status(ctx context.Context, instID string, urls []string) (map
 			hashes = append(hashes, h)
 		}
 	}
-	arts, err := s.Reading.BatchGetArticles(ctx, instID, hashes)
+	arts, err := s.Reading.BatchGetArticles(ctx, userID, hashes)
 	if err != nil {
 		return nil, err
 	}

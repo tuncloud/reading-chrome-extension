@@ -23,8 +23,9 @@ var (
 )
 
 const (
-	testBot = "b7c1e0f2-0000-4000-8000-000000000001"
-	artURL  = "https://medium.com/p/8f3c2a1b9d4e"
+	testBot  = "b7c1e0f2-0000-4000-8000-000000000001"
+	testUser = "u1" // testBot's user, who owns the reading data
+	artURL   = "https://medium.com/p/8f3c2a1b9d4e"
 )
 
 type wenv struct {
@@ -90,7 +91,7 @@ func (e *wenv) seedInstallationWith(kr *crypto.Keyring, access, refresh string) 
 		r, err = kr.Seal([]byte(refresh), []byte(testBot))
 		must(e.t, err)
 	}
-	inst := &domain.Installation{ID: testBot, UserID: "u1", WorkspaceName: "WS", Status: domain.StatusActive, AccessTokenEnc: a,
+	inst := &domain.Installation{ID: testBot, UserID: testUser, WorkspaceName: "WS", Status: domain.StatusActive, AccessTokenEnc: a,
 		RefreshTokenEnc: r, TokenVersion: 1, CreatedAt: domain.Timestamp(e.now), UpdatedAt: domain.Timestamp(e.now)}
 	inst.ApplyDatabases(e.tpl.DBConfig())
 	must(e.t, e.db.Store.PutInstallation(ctx, testBot, inst))
@@ -106,7 +107,7 @@ func (e *wenv) read(url string, seq, secs int, progress float64) {
 func (e *wenv) readMeta(meta domain.ArticleMeta, seq, secs int, progress float64) {
 	e.t.Helper()
 	e.segs++
-	_, err := e.db.Store.PushSegment(ctx, domain.SegmentWrite{InstallationID: testBot, DeviceID: "d1",
+	_, err := e.db.Store.PushSegment(ctx, domain.SegmentWrite{UserID: testUser, DeviceID: "d1",
 		SegmentID: fmt.Sprintf("00000000-0000-4000-8000-%012d", e.segs), SessionID: "s1", Seq: seq,
 		URLHash: domain.URLHash(meta.CanonicalURL), Date: "2026-10-06", StartedAt: e.now,
 		EndedAt: e.now.Add(time.Duration(secs) * time.Second), ActiveSeconds: secs, MaxProgress: progress, Article: meta})

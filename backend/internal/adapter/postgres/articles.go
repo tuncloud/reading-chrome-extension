@@ -37,9 +37,9 @@ func scanArticle(row pgx.Row) (*domain.Article, error) {
 	return &a, nil
 }
 
-func (s *Store) GetArticle(ctx context.Context, inst, hash string) (*domain.Article, error) {
+func (s *Store) GetArticle(ctx context.Context, uid, hash string) (*domain.Article, error) {
 	a, err := scanArticle(s.pool.QueryRow(ctx, `SELECT `+articleColumns+` FROM articles
-		WHERE installation_id = $1 AND url_hash = $2`, inst, hash))
+		WHERE user_id = $1 AND url_hash = $2`, uid, hash))
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -47,9 +47,9 @@ func (s *Store) GetArticle(ctx context.Context, inst, hash string) (*domain.Arti
 }
 
 // BatchGetArticles loads articles keyed by hash; missing ones are absent from the map.
-func (s *Store) BatchGetArticles(ctx context.Context, inst string, hashes []string) (map[string]*domain.Article, error) {
+func (s *Store) BatchGetArticles(ctx context.Context, uid string, hashes []string) (map[string]*domain.Article, error) {
 	rows, err := s.pool.Query(ctx, `SELECT `+articleColumns+` FROM articles
-		WHERE installation_id = $1 AND url_hash = ANY($2)`, inst, hashes)
+		WHERE user_id = $1 AND url_hash = ANY($2)`, uid, hashes)
 	if err != nil {
 		return nil, tagged(err)
 	}
@@ -64,20 +64,20 @@ func (s *Store) BatchGetArticles(ctx context.Context, inst string, hashes []stri
 	return out, nil
 }
 
-func (s *Store) SetArticlePage(ctx context.Context, inst, hash, pageID, url, dataSourceID string) error {
+func (s *Store) SetArticlePage(ctx context.Context, uid, hash, pageID, url, dataSourceID string) error {
 	return s.guarded(ctx, `UPDATE articles SET notion_page_id = $3, notion_url = $4, notion_ds_id = $5
-		WHERE installation_id = $1 AND url_hash = $2`, inst, hash, pageID, url, dataSourceID)
+		WHERE user_id = $1 AND url_hash = $2`, uid, hash, pageID, url, dataSourceID)
 }
 
-func (s *Store) ClearArticlePage(ctx context.Context, inst, hash string) error {
+func (s *Store) ClearArticlePage(ctx context.Context, uid, hash string) error {
 	return s.exec(ctx, `UPDATE articles SET notion_page_id = NULL, notion_url = NULL, notion_ds_id = NULL
-		WHERE installation_id = $1 AND url_hash = $2`, inst, hash)
+		WHERE user_id = $1 AND url_hash = $2`, uid, hash)
 }
 
 // MarkArticleSynced records the version written to Notion (spec §2.13 step 5).
 // An older version never overwrites a newer one; a write that loses is a no-op.
-func (s *Store) MarkArticleSynced(ctx context.Context, inst, hash string, version int64, completed bool, now time.Time) error {
+func (s *Store) MarkArticleSynced(ctx context.Context, uid, hash string, version int64, completed bool, now time.Time) error {
 	return s.exec(ctx, `UPDATE articles SET notion_synced_version = $3, notion_synced_at = $4, completed = $5
-		WHERE installation_id = $1 AND url_hash = $2 AND (notion_synced_version IS NULL OR notion_synced_version < $3)`,
-		inst, hash, version, now, completed)
+		WHERE user_id = $1 AND url_hash = $2 AND (notion_synced_version IS NULL OR notion_synced_version < $3)`,
+		uid, hash, version, now, completed)
 }

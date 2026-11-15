@@ -49,22 +49,24 @@ type Installations interface {
 	UpdateInstallationTokens(ctx context.Context, botID, accessEnc, refreshEnc string, oldVersion int, now time.Time) error
 }
 
-// Reading is the SEG, ART and DAY store.
+// Reading is the SEG, ART and DAY store. Reading data belongs to a user: every
+// method's first string argument (uid) is the user id, not an installation id.
 type Reading interface {
 	PushSegment(ctx context.Context, w domain.SegmentWrite) (domain.PushOutcome, error)
-	GetArticle(ctx context.Context, inst, hash string) (*domain.Article, error)
-	BatchGetArticles(ctx context.Context, inst string, hashes []string) (map[string]*domain.Article, error)
-	SetArticlePage(ctx context.Context, inst, hash, pageID, url, dataSourceID string) error
-	ClearArticlePage(ctx context.Context, inst, hash string) error
-	MarkArticleSynced(ctx context.Context, inst, hash string, version int64, completed bool, now time.Time) error
-	GetDay(ctx context.Context, inst, date string) (*domain.Day, error)
-	SetDayPage(ctx context.Context, inst, date, pageID, dataSourceID string) error
-	ClearDayPage(ctx context.Context, inst, date string) error
-	MarkDaySynced(ctx context.Context, inst, date string, version int64) error
-	PendingSync(ctx context.Context, inst string, all bool) (hashes, dates []string, err error)
+	GetArticle(ctx context.Context, uid, hash string) (*domain.Article, error)
+	BatchGetArticles(ctx context.Context, uid string, hashes []string) (map[string]*domain.Article, error)
+	SetArticlePage(ctx context.Context, uid, hash, pageID, url, dataSourceID string) error
+	ClearArticlePage(ctx context.Context, uid, hash string) error
+	MarkArticleSynced(ctx context.Context, uid, hash string, version int64, completed bool, now time.Time) error
+	GetDay(ctx context.Context, uid, date string) (*domain.Day, error)
+	SetDayPage(ctx context.Context, uid, date, pageID, dataSourceID string) error
+	ClearDayPage(ctx context.Context, uid, date string) error
+	MarkDaySynced(ctx context.Context, uid, date string, version int64) error
+	PendingSync(ctx context.Context, uid string, all bool) (hashes, dates []string, err error)
 }
 
 // DataPurger deletes every stored item of an installation or user (spec §2.17).
+// Reading data belongs to the user, so only DeleteUserData removes it.
 type DataPurger interface {
 	DeleteInstallationData(ctx context.Context, botID string) error
 	DeleteUserData(ctx context.Context, uid string) error

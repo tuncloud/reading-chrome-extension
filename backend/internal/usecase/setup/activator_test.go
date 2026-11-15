@@ -34,23 +34,24 @@ func newActivator(t *testing.T) (*setup.Activator, *postgrestest.Env, *msg.Recor
 	return a, db, rec
 }
 
+// pushTwo records two articles read by u1, bot-1's user; the first is already synced.
 func pushTwo(t *testing.T, db *postgrestest.Env) {
 	for i, u := range []string{"https://a.example/1", "https://b.example/2"} {
 		_, err := db.Store.PushSegment(ctx, domain.SegmentWrite{
-			InstallationID: "bot-1", DeviceID: "d", SegmentID: []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}[i],
+			UserID: "u1", DeviceID: "d", SegmentID: []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}[i],
 			SessionID: "s", URLHash: domain.URLHash(u), Date: "2026-10-06", StartedAt: testNow, EndedAt: testNow.Add(time.Minute),
 			ActiveSeconds: 60, MaxProgress: 0.5, Article: domain.ArticleMeta{CanonicalURL: u, Source: "generic"},
 		})
 		must(t, err)
 	}
-	must(t, db.Store.MarkArticleSynced(ctx, "bot-1", domain.URLHash("https://a.example/1"), 1, false, testNow))
+	must(t, db.Store.MarkArticleSynced(ctx, "u1", domain.URLHash("https://a.example/1"), 1, false, testNow))
 }
 
 // T22: activation enqueues every article/day whose version is ahead of Notion.
 func TestActivateEnqueuesPending(t *testing.T) {
 	a, db, rec := newActivator(t)
 	pushTwo(t, db)
-	inst := &domain.Installation{ID: "bot-1", Status: domain.StatusActive}
+	inst := &domain.Installation{ID: "bot-1", UserID: "u1", Status: domain.StatusActive}
 	must(t, a.Activate(ctx, inst, false))
 	got := rec.Messages()
 	want := []msg.Message{msg.Article("bot-1", domain.URLHash("https://b.example/2")), msg.Day("bot-1", "2026-10-06")}
@@ -62,7 +63,7 @@ func TestActivateEnqueuesPending(t *testing.T) {
 func TestActivateFullResendsSyncedItems(t *testing.T) {
 	a, db, rec := newActivator(t)
 	pushTwo(t, db)
-	must(t, a.Activate(ctx, &domain.Installation{ID: "bot-1", Status: domain.StatusActive}, true))
+	must(t, a.Activate(ctx, &domain.Installation{ID: "bot-1", UserID: "u1", Status: domain.StatusActive}, true))
 	// I1: a full resync (databases changed) also re-sends the already-synced article.
 	got := rec.Messages()
 	want := []msg.Message{

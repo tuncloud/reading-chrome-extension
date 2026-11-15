@@ -1,7 +1,9 @@
 package pgmigrate
 
-// Files and Plan expose the embedded migrations and the version planner to the tests.
+// Files, Plan and UpThrough expose the embedded migrations, the version planner
+// and a bounded Up to the tests.
 var (
-	Files = files
-	Plan  = plan
+	Files     = files
+	Plan      = plan
+	UpThrough = up
 )

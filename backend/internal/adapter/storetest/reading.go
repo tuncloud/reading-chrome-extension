@@ -24,6 +24,7 @@ var readingChecks = []struct {
 	{"EmptyOptionalFieldsRoundTrip", emptyOptionalFieldsRoundTrip},
 	{"PurgeRemovesInstallationAndUserData", purgeRemovesInstallationAndUserData},
 	{"BatchGetArticlesReturnsOnlyExisting", batchGetArticlesReturnsOnlyExisting},
+	{"ReadingIsPerUser", readingIsPerUser},
 }
 
 // T10 AC + scenario 2: the same segment twice increments aggregates once (C2).
@@ -36,7 +37,7 @@ func pushSegmentTwiceCountsOnce(t *testing.T, s ReadingStore) {
 	if out := Push(t, s, w); out != domain.PushDuplicate {
 		t.Fatalf("second push = %v, want duplicate", out)
 	}
-	a, err := s.GetArticle(ctx, "bot-1", domain.URLHash(ArticleURL))
+	a, err := s.GetArticle(ctx, UserID, domain.URLHash(ArticleURL))
 	Must(t, err)
 	if a.TotalSeconds != 58 || a.Sessions != 1 || a.Version != 1 || a.MaxProgress != 0.42 || a.CanonicalURL != ArticleURL || a.Title != "Designing Idempotent APIs" {
 		t.Fatalf("aggregate wrong: %+v", a)
@@ -44,7 +45,7 @@ func pushSegmentTwiceCountsOnce(t *testing.T, s ReadingStore) {
 	if a.FirstReadAt != domain.Timestamp(TestNow) || a.LastReadAt != domain.Timestamp(TestNow.Add(58*time.Second)) {
 		t.Fatalf("read times wrong: first=%s last=%s", a.FirstReadAt, a.LastReadAt)
 	}
-	d, err := s.GetDay(ctx, "bot-1", "2026-10-06")
+	d, err := s.GetDay(ctx, UserID, "2026-10-06")
 	Must(t, err)
 	if d.Seconds != 58 || d.Version != 1 || len(d.ArticleHashes) != 1 || d.ArticleHashes[0] != domain.URLHash(ArticleURL) {
 		t.Fatalf("day wrong: %+v", d)
@@ -55,7 +56,7 @@ func pushSegmentTwiceCountsOnce(t *testing.T, s ReadingStore) {
 func maxProgressNeverDecreases(t *testing.T, s ReadingStore) {
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000001", ArticleURL, 0, 60, 0.6, TestNow.Add(time.Hour)))
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000002", ArticleURL, 1, 60, 0.3, TestNow))
-	a, _ := s.GetArticle(ctx, "bot-1", domain.URLHash(ArticleURL))
+	a, _ := s.GetArticle(ctx, UserID, domain.URLHash(ArticleURL))
 	if a.MaxProgress != 0.6 {
 		t.Fatalf("max_progress = %v, want 0.6", a.MaxProgress)
 	}
@@ -71,7 +72,7 @@ func maxProgressNeverDecreases(t *testing.T, s ReadingStore) {
 func outOfOrderSessionCountedOnce(t *testing.T, s ReadingStore) {
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000002", ArticleURL, 1, 60, 0.5, TestNow.Add(time.Minute)))
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000001", ArticleURL, 0, 60, 0.2, TestNow))
-	a, _ := s.GetArticle(ctx, "bot-1", domain.URLHash(ArticleURL))
+	a, _ := s.GetArticle(ctx, UserID, domain.URLHash(ArticleURL))
 	if a.Sessions != 1 || a.TotalSeconds != 120 {
 		t.Fatalf("sessions=%d total=%d", a.Sessions, a.TotalSeconds)
 	}
@@ -80,9 +81,9 @@ func outOfOrderSessionCountedOnce(t *testing.T, s ReadingStore) {
 func markArticleSyncedIsMonotonic(t *testing.T, s ReadingStore) {
 	h := domain.URLHash(ArticleURL)
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000001", ArticleURL, 0, 60, 0.5, TestNow))
-	Must(t, s.MarkArticleSynced(ctx, "bot-1", h, 2, true, TestNow))
-	Must(t, s.MarkArticleSynced(ctx, "bot-1", h, 1, false, TestNow))
-	a, _ := s.GetArticle(ctx, "bot-1", h)
+	Must(t, s.MarkArticleSynced(ctx, UserID, h, 2, true, TestNow))
+	Must(t, s.MarkArticleSynced(ctx, UserID, h, 1, false, TestNow))
+	a, _ := s.GetArticle(ctx, UserID, h)
 	if a.NotionSyncedVersion != 2 || !a.Completed {
 		t.Fatalf("older version overwrote newer: %+v", a)
 	}
@@ -91,18 +92,18 @@ func markArticleSyncedIsMonotonic(t *testing.T, s ReadingStore) {
 func articleAndDayPageLinks(t *testing.T, s ReadingStore) {
 	h := domain.URLHash(ArticleURL)
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000001", ArticleURL, 0, 60, 0.5, TestNow))
-	Must(t, s.SetArticlePage(ctx, "bot-1", h, "page-1", "https://notion.so/page-1", "ds-1"))
-	Must(t, s.SetDayPage(ctx, "bot-1", "2026-10-06", "day-page-1", "ds-2"))
-	a, _ := s.GetArticle(ctx, "bot-1", h)
-	d, _ := s.GetDay(ctx, "bot-1", "2026-10-06")
+	Must(t, s.SetArticlePage(ctx, UserID, h, "page-1", "https://notion.so/page-1", "ds-1"))
+	Must(t, s.SetDayPage(ctx, UserID, "2026-10-06", "day-page-1", "ds-2"))
+	a, _ := s.GetArticle(ctx, UserID, h)
+	d, _ := s.GetDay(ctx, UserID, "2026-10-06")
 	if a.NotionPageID != "page-1" || a.NotionURL != "https://notion.so/page-1" || d.NotionPageID != "day-page-1" ||
 		a.NotionDataSourceID != "ds-1" || d.NotionDataSourceID != "ds-2" {
 		t.Fatalf("links not saved: %+v %+v", a, d)
 	}
-	Must(t, s.ClearArticlePage(ctx, "bot-1", h))
-	Must(t, s.ClearDayPage(ctx, "bot-1", "2026-10-06"))
-	a, _ = s.GetArticle(ctx, "bot-1", h)
-	d, _ = s.GetDay(ctx, "bot-1", "2026-10-06")
+	Must(t, s.ClearArticlePage(ctx, UserID, h))
+	Must(t, s.ClearDayPage(ctx, UserID, "2026-10-06"))
+	a, _ = s.GetArticle(ctx, UserID, h)
+	d, _ = s.GetDay(ctx, UserID, "2026-10-06")
 	if a.NotionPageID != "" || a.NotionURL != "" || d.NotionPageID != "" ||
 		a.NotionDataSourceID != "" || d.NotionDataSourceID != "" {
 		t.Fatalf("links not cleared: %+v %+v", a, d)
@@ -114,9 +115,9 @@ func pendingSync(t *testing.T, s ReadingStore) {
 	other := "https://example.com/post"
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000001", ArticleURL, 0, 60, 0.5, TestNow))
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000002", other, 0, 60, 0.5, TestNow))
-	Must(t, s.MarkArticleSynced(ctx, "bot-1", domain.URLHash(ArticleURL), 1, false, TestNow))
+	Must(t, s.MarkArticleSynced(ctx, UserID, domain.URLHash(ArticleURL), 1, false, TestNow))
 
-	hashes, dates, err := s.PendingSync(ctx, "bot-1", false)
+	hashes, dates, err := s.PendingSync(ctx, UserID, false)
 	Must(t, err)
 	if len(hashes) != 1 || hashes[0] != domain.URLHash(other) {
 		t.Fatalf("hashes = %v", hashes)
@@ -124,8 +125,8 @@ func pendingSync(t *testing.T, s ReadingStore) {
 	if len(dates) != 1 || dates[0] != "2026-10-06" {
 		t.Fatalf("dates = %v", dates)
 	}
-	Must(t, s.MarkDaySynced(ctx, "bot-1", "2026-10-06", 2))
-	if _, dates, _ = s.PendingSync(ctx, "bot-1", false); len(dates) != 0 {
+	Must(t, s.MarkDaySynced(ctx, UserID, "2026-10-06", 2))
+	if _, dates, _ = s.PendingSync(ctx, UserID, false); len(dates) != 0 {
 		t.Fatalf("synced day still pending: %v", dates)
 	}
 }
@@ -135,10 +136,10 @@ func pendingSyncAllIncludesSynced(t *testing.T, s ReadingStore) {
 	other := "https://example.com/post"
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000001", ArticleURL, 0, 60, 0.5, TestNow))
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000002", other, 0, 60, 0.5, TestNow))
-	Must(t, s.MarkArticleSynced(ctx, "bot-1", domain.URLHash(ArticleURL), 1, false, TestNow))
-	Must(t, s.MarkDaySynced(ctx, "bot-1", "2026-10-06", 2))
+	Must(t, s.MarkArticleSynced(ctx, UserID, domain.URLHash(ArticleURL), 1, false, TestNow))
+	Must(t, s.MarkDaySynced(ctx, UserID, "2026-10-06", 2))
 
-	hashes, dates, err := s.PendingSync(ctx, "bot-1", true)
+	hashes, dates, err := s.PendingSync(ctx, UserID, true)
 	Must(t, err)
 	want := []string{domain.URLHash(ArticleURL), domain.URLHash(other)}
 	slices.Sort(want)
@@ -184,14 +185,15 @@ func emptyOptionalFieldsRoundTrip(t *testing.T, s ReadingStore) {
 	}
 
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000001", ArticleURL, 0, 60, 0, TestNow))
-	a, err := s.GetArticle(ctx, "bot-1", domain.URLHash(ArticleURL))
+	a, err := s.GetArticle(ctx, UserID, domain.URLHash(ArticleURL))
 	Must(t, err)
 	if a.MaxProgress != 0 || a.NotionPageID != "" || a.NotionSyncedAt != "" {
 		t.Fatalf("article optional fields not empty: %+v", a)
 	}
 }
 
-// Spec §2.17: purging an installation and a user leaves nothing readable behind.
+// Spec §2.17: purging an installation removes only the installation; reading data
+// belongs to the user, and purging the user leaves nothing readable behind.
 func purgeRemovesInstallationAndUserData(t *testing.T, s ReadingStore) {
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000001", ArticleURL, 0, 60, 0.5, TestNow))
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000002", ArticleURL, 1, 60, 0.6, TestNow.Add(time.Minute)))
@@ -204,18 +206,25 @@ func purgeRemovesInstallationAndUserData(t *testing.T, s ReadingStore) {
 	if _, err := s.GetInstallation(ctx, "bot-1"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("GetInstallation after purge: %v", err)
 	}
-	if _, err := s.GetArticle(ctx, "bot-1", domain.URLHash(ArticleURL)); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("GetArticle after purge: %v", err)
+	if _, err := s.GetArticle(ctx, "u1", domain.URLHash(ArticleURL)); err != nil {
+		t.Fatalf("GetArticle after installation purge: %v, want the user's article kept", err)
 	}
-	if _, err := s.GetDay(ctx, "bot-1", "2026-10-06"); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("GetDay after purge: %v", err)
-	}
-	hashes, dates, err := s.PendingSync(ctx, "bot-1", true)
-	Must(t, err)
-	if len(hashes) != 0 || len(dates) != 0 {
-		t.Fatalf("PendingSync after purge: %v %v", hashes, dates)
+	if _, err := s.GetDay(ctx, "u1", "2026-10-06"); err != nil {
+		t.Fatalf("GetDay after installation purge: %v, want the user's day kept", err)
 	}
 
+	Must(t, s.DeleteUserData(ctx, "u1"))
+	if _, err := s.GetArticle(ctx, "u1", domain.URLHash(ArticleURL)); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("GetArticle after user purge: %v", err)
+	}
+	if _, err := s.GetDay(ctx, "u1", "2026-10-06"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("GetDay after user purge: %v", err)
+	}
+	hashes, dates, err := s.PendingSync(ctx, "u1", true)
+	Must(t, err)
+	if len(hashes) != 0 || len(dates) != 0 {
+		t.Fatalf("PendingSync after user purge: %v %v", hashes, dates)
+	}
 	Must(t, s.DeleteUserData(ctx, "u1"))
 	if _, err := s.GetProfile(ctx, "u1"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("GetProfile after purge: %v", err)
@@ -236,9 +245,28 @@ func purgeRemovesInstallationAndUserData(t *testing.T, s ReadingStore) {
 func batchGetArticlesReturnsOnlyExisting(t *testing.T, s ReadingStore) {
 	Push(t, s, Segment("00000000-0000-4000-8000-000000000001", ArticleURL, 0, 60, 0.5, TestNow))
 	unknown1, unknown2 := domain.URLHash("https://example.com/a"), domain.URLHash("https://example.com/b")
-	got, err := s.BatchGetArticles(ctx, "bot-1", []string{domain.URLHash(ArticleURL), unknown1, unknown2, unknown1})
+	got, err := s.BatchGetArticles(ctx, UserID, []string{domain.URLHash(ArticleURL), unknown1, unknown2, unknown1})
 	Must(t, err)
 	if len(got) != 1 || got[domain.URLHash(ArticleURL)] == nil {
 		t.Fatalf("got %d entries: %+v", len(got), got)
+	}
+}
+
+// readingIsPerUser: one user's reading is invisible to another.
+func readingIsPerUser(t *testing.T, s ReadingStore) {
+	Push(t, s, Segment("00000000-0000-4000-8000-000000000001", ArticleURL, 0, 60, 0.5, TestNow))
+	h := domain.URLHash(ArticleURL)
+	if _, err := s.GetArticle(ctx, "u2", h); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("GetArticle as u2: %v, want ErrNotFound", err)
+	}
+	got, err := s.BatchGetArticles(ctx, "u2", []string{h})
+	Must(t, err)
+	if len(got) != 0 {
+		t.Fatalf("BatchGetArticles as u2 = %+v, want empty", got)
+	}
+	hashes, dates, err := s.PendingSync(ctx, "u2", true)
+	Must(t, err)
+	if len(hashes) != 0 || len(dates) != 0 {
+		t.Fatalf("PendingSync as u2: %v %v, want empty", hashes, dates)
 	}
 }

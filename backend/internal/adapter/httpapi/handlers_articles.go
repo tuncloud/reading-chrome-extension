@@ -25,7 +25,8 @@ func (h *handlers) articlesStatus(c echo.Context) error {
 	if err := decodeJSON(c, &req); err != nil {
 		return err
 	}
-	got, err := h.Library.Status(c.Request().Context(), principal(c).InstallationID(), req.CanonicalURLs)
+	p := principal(c)
+	got, err := h.Library.Status(c.Request().Context(), p.UserID, p.InstallationID(), req.CanonicalURLs)
 	if err != nil {
 		return err
 	}

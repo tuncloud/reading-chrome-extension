@@ -49,7 +49,7 @@ func TestSyncPushTwiceIsDuplicate(t *testing.T) {
 	if len(second.Duplicate) != 1 || len(second.Accepted) != 0 {
 		t.Fatalf("second %+v", second)
 	}
-	a, err := env.db.Store.GetArticle(context.Background(), testBotID, domain.URLHash("https://medium.com/p/8f3c2a1b9d4e"))
+	a, err := env.db.Store.GetArticle(context.Background(), uid, domain.URLHash("https://medium.com/p/8f3c2a1b9d4e"))
 	must(t, err)
 	if a.TotalSeconds != 58 {
 		t.Fatalf("total %d", a.TotalSeconds)

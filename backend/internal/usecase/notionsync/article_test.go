@@ -26,7 +26,7 @@ func (e *wenv) onlyLibraryPage() *notiontest.Page {
 
 func (e *wenv) article(url string) *domain.Article {
 	e.t.Helper()
-	a, err := e.db.Store.GetArticle(ctx, testBot, domain.URLHash(url))
+	a, err := e.db.Store.GetArticle(ctx, testUser, domain.URLHash(url))
 	must(e.t, err)
 	return a
 }
@@ -252,7 +252,7 @@ func TestArticlePageInOldLibraryIsRecreated(t *testing.T) {
 	stale := e.ns.AddPage(old.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
 	e.ns.DeleteDataSource(old.LibraryDS)
 	e.read(artURL, 0, 120, 0.5)
-	must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), stale.ID, stale.URL, old.LibraryDS))
+	must(t, e.db.Store.SetArticlePage(ctx, testUser, domain.URLHash(artURL), stale.ID, stale.URL, old.LibraryDS))
 
 	if f := e.handle(articleMsg()); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
@@ -324,7 +324,7 @@ func TestArticlePageWithoutDataSourceIsRelinked(t *testing.T) {
 	e.seedInstallation("tok", "rt")
 	pg := e.ns.AddPage(e.tpl.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
 	e.read(artURL, 0, 120, 0.5)
-	must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), pg.ID, pg.URL, ""))
+	must(t, e.db.Store.SetArticlePage(ctx, testUser, domain.URLHash(artURL), pg.ID, pg.URL, ""))
 
 	if f := e.handle(articleMsg()); len(f) != 0 {
 		t.Fatalf("failures %+v", f)
@@ -348,7 +348,7 @@ func TestArticleLongURLWithoutDataSourceIsNotDuplicated(t *testing.T) {
 	long := "https://example.com/" + strings.Repeat("a", 2001-len("https://example.com/"))
 	pg := e.ns.AddPage(e.tpl.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": long}})
 	e.read(long, 0, 120, 0.5)
-	must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(long), pg.ID, pg.URL, ""))
+	must(t, e.db.Store.SetArticlePage(ctx, testUser, domain.URLHash(long), pg.ID, pg.URL, ""))
 
 	m := msg.Article(testBot, domain.URLHash(long))
 	if f := e.handle(m); len(f) != 0 {
@@ -381,7 +381,7 @@ func TestArticleWithoutDataSourceFallsBackToForget(t *testing.T) {
 			e.seedInstallation("tok", "rt")
 			pg := e.ns.AddPage(e.tpl.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
 			e.read(artURL, 0, 120, 0.5)
-			must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), pg.ID, pg.URL, ""))
+			must(t, e.db.Store.SetArticlePage(ctx, testUser, domain.URLHash(artURL), pg.ID, pg.URL, ""))
 			e.ns.FailNext("PATCH", "/v1/pages/"+pg.ID, f)
 
 			if fl := e.handle(articleMsg()); len(fl) != 0 {
@@ -409,7 +409,7 @@ func TestArticleWithoutDataSourceKeepsLinkOnTransientFailure(t *testing.T) {
 			e.seedInstallation("tok", "rt")
 			pg := e.ns.AddPage(e.tpl.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
 			e.read(artURL, 0, 120, 0.5)
-			must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), pg.ID, pg.URL, ""))
+			must(t, e.db.Store.SetArticlePage(ctx, testUser, domain.URLHash(artURL), pg.ID, pg.URL, ""))
 			e.ns.FailNext("PATCH", "/v1/pages/"+pg.ID, f)
 
 			if fl := e.handle(articleMsg()); len(fl) != 1 {
@@ -431,7 +431,7 @@ func TestArticlePageInOtherDataSourceIsRelinked(t *testing.T) {
 	e.seedInstallation("tok", "rt")
 	pg := e.ns.AddPage(e.tpl.LibraryDS, map[string]any{pid("URL"): map[string]any{"url": artURL}})
 	e.read(artURL, 0, 120, 0.5)
-	must(t, e.db.Store.SetArticlePage(ctx, testBot, domain.URLHash(artURL), pg.ID, pg.URL, "old-ds"))
+	must(t, e.db.Store.SetArticlePage(ctx, testUser, domain.URLHash(artURL), pg.ID, pg.URL, "old-ds"))
 
 	if f := e.handle(articleMsg()); len(f) != 0 {
 		t.Fatalf("failures %+v", f)

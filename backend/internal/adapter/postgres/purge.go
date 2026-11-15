@@ -6,19 +6,19 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// DeleteInstallationData removes an installation and its reading data (spec §2.17).
+// DeleteInstallationData removes an installation (spec §2.17). Reading data belongs
+// to the user and is left in place.
 func (s *Store) DeleteInstallationData(ctx context.Context, botID string) error {
-	return s.deleteAll(ctx, botID,
-		`DELETE FROM segments WHERE installation_id = $1`,
-		`DELETE FROM articles WHERE installation_id = $1`,
-		`DELETE FROM days WHERE installation_id = $1`,
-		`DELETE FROM installations WHERE id = $1`)
+	return s.deleteAll(ctx, botID, `DELETE FROM installations WHERE id = $1`)
 }
 
-// DeleteUserData removes a user's profile, devices and installation pointers. Device
-// tokens and the Notion user link are removed by the purge use case itself.
+// DeleteUserData removes a user's reading data, profile, devices and installation
+// pointers. Device tokens and the Notion user link are removed by the purge use case itself.
 func (s *Store) DeleteUserData(ctx context.Context, uid string) error {
 	return s.deleteAll(ctx, uid,
+		`DELETE FROM segments WHERE user_id = $1`,
+		`DELETE FROM articles WHERE user_id = $1`,
+		`DELETE FROM days WHERE user_id = $1`,
 		`DELETE FROM devices WHERE user_id = $1`,
 		`DELETE FROM user_installations WHERE user_id = $1`,
 		`DELETE FROM users WHERE id = $1`)

@@ -14,7 +14,7 @@ func (s *Service) syncArticle(ctx context.Context, job port.Job) error {
 	if inst == nil || err != nil {
 		return err
 	}
-	art, err := s.Reading.GetArticle(ctx, inst.ID, job.URLHash)
+	art, err := s.Reading.GetArticle(ctx, inst.UserID, job.URLHash)
 	if errors.Is(err, domain.ErrNotFound) {
 		return nil
 	}
@@ -31,7 +31,7 @@ func (s *Service) syncArticle(ctx context.Context, job port.Job) error {
 	case art.NotionPageID != "" && art.NotionDataSourceID != "" && !domain.SameID(art.NotionDataSourceID, inst.LibraryDSID):
 		// R1: the page lives in a database this installation no longer writes to. Its property ids differ
 		// from ours, so a PATCH would be rejected; re-create instead.
-		return s.forgetArticlePage(ctx, inst.ID, job)
+		return s.forgetArticlePage(ctx, inst.UserID, job)
 	case art.NotionPageID == "":
 		if art.TotalSeconds < int64(s.Policy.MinCreateSeconds) {
 			return nil
@@ -48,7 +48,7 @@ func (s *Service) syncArticle(ctx context.Context, job port.Job) error {
 		// is too long to look up (> 2000 chars) is then recreated rather than adopted.
 		legacy := art.NotionDataSourceID == ""
 		if port.IsNotionKind(err, port.NotionPageGone) || (legacy && isBadRequest(err)) {
-			return s.forgetArticlePage(ctx, inst.ID, job)
+			return s.forgetArticlePage(ctx, inst.UserID, job)
 		}
 		if err != nil {
 			return err
@@ -56,12 +56,12 @@ func (s *Service) syncArticle(ctx context.Context, job port.Job) error {
 		if legacy {
 			// R1: a legacy row (no recorded data source) accepted the PATCH, so the page is in our database:
 			// back-fill instead of re-creating (a re-create would orphan it, e.g. for URLs Notion cannot query).
-			if err := s.Reading.SetArticlePage(ctx, inst.ID, job.URLHash, art.NotionPageID, art.NotionURL, inst.LibraryDSID); err != nil {
+			if err := s.Reading.SetArticlePage(ctx, inst.UserID, job.URLHash, art.NotionPageID, art.NotionURL, inst.LibraryDSID); err != nil {
 				return err
 			}
 		}
 	}
-	return s.Reading.MarkArticleSynced(ctx, inst.ID, job.URLHash, art.Version, completed, s.Now())
+	return s.Reading.MarkArticleSynced(ctx, inst.UserID, job.URLHash, art.Version, completed, s.Now())
 }
 
 // isBadRequest reports a Notion 400 rejection: the property ids do not match the page's database.
@@ -72,8 +72,8 @@ func isBadRequest(err error) bool {
 
 // forgetArticlePage clears the page link and re-delivers the job, which then creates
 // (or adopts) a page in the current Library.
-func (s *Service) forgetArticlePage(ctx context.Context, inst string, job port.Job) error {
-	if err := s.Reading.ClearArticlePage(ctx, inst, job.URLHash); err != nil {
+func (s *Service) forgetArticlePage(ctx context.Context, uid string, job port.Job) error {
+	if err := s.Reading.ClearArticlePage(ctx, uid, job.URLHash); err != nil {
 		return err
 	}
 	return s.Queue.Requeue(ctx, job)
@@ -110,5 +110,5 @@ func (s *Service) createArticlePage(ctx context.Context, sess *session, art *dom
 			return err
 		}
 	}
-	return s.Reading.SetArticlePage(ctx, sess.inst.ID, art.Hash, page.ID, page.URL, sess.inst.LibraryDSID)
+	return s.Reading.SetArticlePage(ctx, sess.inst.UserID, art.Hash, page.ID, page.URL, sess.inst.LibraryDSID)
 }

@@ -14,7 +14,7 @@ func (h *handlers) syncPush(c echo.Context) error {
 	if err := decodeJSON(c, &req); err != nil {
 		return err
 	}
-	resp, err := h.ReadSync.Push(c.Request().Context(), p.InstallationID(), p.Device.ID, req.toInput())
+	resp, err := h.ReadSync.Push(c.Request().Context(), p.UserID, p.InstallationID(), p.Device.ID, req.toInput())
 	if err != nil {
 		return err
 	}

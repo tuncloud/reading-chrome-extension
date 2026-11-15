@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,7 +53,12 @@ func plan(fsys fs.FS) ([]migration, error) {
 
 // Up applies every embedded migration not yet recorded in schema_migrations.
 // Each file runs in its own transaction together with its version insert.
-func Up(ctx context.Context, pool *pgxpool.Pool) (err error) {
+func Up(ctx context.Context, pool *pgxpool.Pool) error {
+	return up(ctx, pool, math.MaxInt)
+}
+
+// up applies the pending migrations whose version is at most through.
+func up(ctx context.Context, pool *pgxpool.Pool, through int) (err error) {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("pgmigrate: acquire: %w", err)
@@ -76,6 +82,9 @@ func Up(ctx context.Context, pool *pgxpool.Pool) (err error) {
 	}
 	for _, mg := range migrations {
 		name, base, version := mg.Name, mg.Base, mg.Version
+		if version > through {
+			break
+		}
 		var applied bool
 		if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)", version).Scan(&applied); err != nil {
 			return fmt.Errorf("pgmigrate: check %s: %w", base, err)

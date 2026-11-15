@@ -151,6 +151,14 @@ func (env *testEnv) seedInstallation(uid, status string) *domain.Installation {
 	return inst
 }
 
+// readerID is the user of the stored testBotID installation, who owns the reading data.
+func (env *testEnv) readerID() string {
+	env.t.Helper()
+	inst, err := env.db.Store.GetInstallation(context.Background(), testBotID)
+	must(env.t, err)
+	return inst.UserID
+}
+
 // setDeviceAttr overwrites one timestamp column of the device row in place, leaving every
 // other row (notably the device-token lookup) untouched.
 func (env *testEnv) setDeviceAttr(uid, deviceID, attr, value string) {

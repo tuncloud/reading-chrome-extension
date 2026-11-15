@@ -16,10 +16,10 @@ type Service struct {
 	Now     func() time.Time
 }
 
-// Push validates, writes each segment in its own transaction (C25), and enqueues
-// one article/day message per touched key. It accepts any installation status; an empty
-// installationID means the device has none (apperr.NoInstallation).
-func (s *Service) Push(ctx context.Context, installationID, deviceID string, req PushRequest) (*PushResponse, error) {
+// Push validates, writes each segment under the user in its own transaction (C25), and
+// enqueues one article/day message per touched key for the installation. It accepts any
+// installation status; an empty installationID means the user has none (apperr.NoInstallation).
+func (s *Service) Push(ctx context.Context, userID, installationID, deviceID string, req PushRequest) (*PushResponse, error) {
 	if installationID == "" {
 		return nil, apperr.NewNoInstallation()
 	}
@@ -63,7 +63,7 @@ func (s *Service) Push(ctx context.Context, installationID, deviceID string, req
 			continue
 		}
 		writes = append(writes, domain.SegmentWrite{
-			InstallationID: installationID, DeviceID: deviceID, SegmentID: seg.ID, SessionID: seg.SessionID, Seq: seg.Seq,
+			UserID: userID, DeviceID: deviceID, SegmentID: seg.ID, SessionID: seg.SessionID, Seq: seg.Seq,
 			URLHash: domain.URLHash(meta.CanonicalURL), Date: start.In(loc).Format(time.DateOnly),
 			StartedAt: start, EndedAt: end, ActiveSeconds: seg.ActiveSeconds, MaxProgress: seg.MaxProgress, Article: meta,
 		})

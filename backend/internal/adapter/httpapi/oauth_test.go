@@ -188,7 +188,7 @@ func TestOAuthReconnectWithoutTemplateKeepsDatabases(t *testing.T) {
 	env.connect(t, tokenResponse("tpl-1"))
 	ctx := context.Background()
 	must(t, env.db.Store.SetInstallationStatus(ctx, testBotID, domain.StatusRevoked, "", env.now))
-	_, err := env.db.Store.PushSegment(ctx, domain.SegmentWrite{InstallationID: testBotID, DeviceID: "d", SegmentID: "00000000-0000-4000-8000-000000000001",
+	_, err := env.db.Store.PushSegment(ctx, domain.SegmentWrite{UserID: env.readerID(), DeviceID: "d", SegmentID: "00000000-0000-4000-8000-000000000001",
 		SessionID: "s", URLHash: domain.URLHash("https://a.example/x"), Date: "2026-10-06", StartedAt: env.now, EndedAt: env.now.Add(time.Minute),
 		ActiveSeconds: 60, Article: domain.ArticleMeta{CanonicalURL: "https://a.example/x", Source: "generic"}})
 	must(t, err)

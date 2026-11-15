@@ -50,18 +50,18 @@ type ArticleMeta struct {
 
 // SegmentWrite is one validated segment ready to be applied exactly once (C2).
 type SegmentWrite struct {
-	InstallationID string
-	DeviceID       string
-	SegmentID      string
-	SessionID      string
-	Seq            int
-	URLHash        string
-	Date           string // YYYY-MM-DD of StartedAt in the request tz
-	StartedAt      time.Time
-	EndedAt        time.Time
-	ActiveSeconds  int
-	MaxProgress    float64
-	Article        ArticleMeta
+	UserID        string
+	DeviceID      string
+	SegmentID     string
+	SessionID     string
+	Seq           int
+	URLHash       string
+	Date          string // YYYY-MM-DD of StartedAt in the request tz
+	StartedAt     time.Time
+	EndedAt       time.Time
+	ActiveSeconds int
+	MaxProgress   float64
+	Article       ArticleMeta
 }
 
 // PushOutcome is how one segment was applied.

@@ -56,10 +56,13 @@ func Must(t *testing.T, err error) {
 	}
 }
 
-// Segment builds a bot-1 segment of secs seconds starting at started.
+// UserID is the user whose reading the checks push and read.
+const UserID = "u1"
+
+// Segment builds a segment of UserID, secs seconds long, starting at started.
 func Segment(id, url string, seq, secs int, progress float64, started time.Time) domain.SegmentWrite {
 	return domain.SegmentWrite{
-		InstallationID: "bot-1", DeviceID: "dev-1", SegmentID: id, SessionID: "sess-1", Seq: seq,
+		UserID: UserID, DeviceID: "dev-1", SegmentID: id, SessionID: "sess-1", Seq: seq,
 		URLHash: domain.URLHash(url), Date: started.UTC().Format("2006-01-02"),
 		StartedAt: started, EndedAt: started.Add(time.Duration(secs) * time.Second),
 		ActiveSeconds: secs, MaxProgress: progress,

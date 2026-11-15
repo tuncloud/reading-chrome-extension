@@ -37,9 +37,9 @@ func TestPurgeRemovesAllUserData(t *testing.T) {
 		{"device_tokens", "token_hmac = $1", "h-u1"},
 		{"notion_user_links", "notion_user_id = $1", "n-u1"},
 		{"installations", "id = $1", testBot},
-		{"articles", "installation_id = $1", testBot},
-		{"segments", "installation_id = $1", testBot},
-		{"days", "installation_id = $1", testBot},
+		{"articles", "user_id = $1", testUser},
+		{"segments", "user_id = $1", testUser},
+		{"days", "user_id = $1", testUser},
 	} {
 		if n := e.db.Count(t, c.table, c.where, c.arg); n != 0 {
 			t.Errorf("%s still has %d rows", c.table, n)

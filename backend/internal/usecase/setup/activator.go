@@ -33,7 +33,7 @@ type Activator struct {
 func (a *Activator) Activate(ctx context.Context, inst *domain.Installation, full bool) error {
 	var err error
 	for attempt := 1; attempt <= resyncAttempts; attempt++ {
-		if err = a.resync(ctx, inst.ID, full); err == nil {
+		if err = a.resync(ctx, inst, full); err == nil {
 			return nil
 		}
 		if attempt < resyncAttempts {
@@ -48,12 +48,13 @@ func (a *Activator) Activate(ctx context.Context, inst *domain.Installation, ful
 	return nil
 }
 
-func (a *Activator) resync(ctx context.Context, id string, full bool) error {
-	hashes, dates, err := a.Reading.PendingSync(ctx, id, full)
+// resync enqueues the user's pending reading data for the installation.
+func (a *Activator) resync(ctx context.Context, inst *domain.Installation, full bool) error {
+	hashes, dates, err := a.Reading.PendingSync(ctx, inst.UserID, full)
 	if err != nil {
 		return err
 	}
-	return a.Queue.EnqueueResync(ctx, id, hashes, dates)
+	return a.Queue.EnqueueResync(ctx, inst.ID, hashes, dates)
 }
 
 func (a *Activator) sleep(d time.Duration) {
