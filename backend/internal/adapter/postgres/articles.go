@@ -64,6 +64,30 @@ func (s *Store) BatchGetArticles(ctx context.Context, uid string, hashes []strin
 	return out, nil
 }
 
+// RecentArticles returns up to limit of the user's articles, most recently read first.
+// Articles without last_read_at come last; ties break on url_hash ascending.
+func (s *Store) RecentArticles(ctx context.Context, uid string, limit int) ([]domain.Article, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+articleColumns+` FROM articles
+		WHERE user_id = $1 ORDER BY last_read_at DESC NULLS LAST, url_hash ASC LIMIT $2`, uid, limit)
+	if err != nil {
+		return nil, tagged(err)
+	}
+	list, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (domain.Article, error) {
+		a, err := scanArticle(r)
+		if err != nil {
+			return domain.Article{}, err
+		}
+		return *a, nil
+	})
+	if err != nil {
+		return nil, tagged(err)
+	}
+	if list == nil {
+		list = []domain.Article{}
+	}
+	return list, nil
+}
+
 func (s *Store) SetArticlePage(ctx context.Context, uid, hash, pageID, url, dataSourceID string) error {
 	return s.guarded(ctx, `UPDATE articles SET notion_page_id = $3, notion_url = $4, notion_ds_id = $5
 		WHERE user_id = $1 AND url_hash = $2`, uid, hash, pageID, url, dataSourceID)

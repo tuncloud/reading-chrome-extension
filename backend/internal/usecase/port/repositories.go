@@ -55,6 +55,8 @@ type Reading interface {
 	PushSegment(ctx context.Context, w domain.SegmentWrite) (domain.PushOutcome, error)
 	GetArticle(ctx context.Context, uid, hash string) (*domain.Article, error)
 	BatchGetArticles(ctx context.Context, uid string, hashes []string) (map[string]*domain.Article, error)
+	// RecentArticles lists the user's articles by last_read_at descending (never-read last), ties by url_hash.
+	RecentArticles(ctx context.Context, uid string, limit int) ([]domain.Article, error)
 	SetArticlePage(ctx context.Context, uid, hash, pageID, url, dataSourceID string) error
 	ClearArticlePage(ctx context.Context, uid, hash string) error
 	MarkArticleSynced(ctx context.Context, uid, hash string, version int64, completed bool, now time.Time) error

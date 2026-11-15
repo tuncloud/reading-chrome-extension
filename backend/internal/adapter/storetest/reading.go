@@ -25,6 +25,7 @@ var readingChecks = []struct {
 	{"PurgeRemovesInstallationAndUserData", purgeRemovesInstallationAndUserData},
 	{"BatchGetArticlesReturnsOnlyExisting", batchGetArticlesReturnsOnlyExisting},
 	{"ReadingIsPerUser", readingIsPerUser},
+	{"RecentArticlesNewestFirst", recentArticlesNewestFirst},
 }
 
 // T10 AC + scenario 2: the same segment twice increments aggregates once (C2).
@@ -268,5 +269,41 @@ func readingIsPerUser(t *testing.T, s ReadingStore) {
 	Must(t, err)
 	if len(hashes) != 0 || len(dates) != 0 {
 		t.Fatalf("PendingSync as u2: %v %v, want empty", hashes, dates)
+	}
+}
+
+// recentArticlesNewestFirst: RecentArticles lists one user's articles by last_read_at descending, capped by limit.
+func recentArticlesNewestFirst(t *testing.T, s ReadingStore) {
+	const (
+		urlA = "https://medium.com/p/aaaaaaaaaaaa"
+		urlB = "https://medium.com/p/bbbbbbbbbbbb"
+		urlC = "https://medium.com/p/cccccccccccc"
+	)
+	// Each segment lasts 60 s and ends at the given offset from TestNow.
+	endingAt := func(id, url string, offset time.Duration) domain.SegmentWrite {
+		return Segment(id, url, 0, 60, 0.5, TestNow.Add(offset-time.Minute))
+	}
+	Push(t, s, endingAt("00000000-0000-4000-8000-0000000000a1", urlA, time.Minute))
+	Push(t, s, endingAt("00000000-0000-4000-8000-0000000000b1", urlB, 3*time.Minute))
+	Push(t, s, endingAt("00000000-0000-4000-8000-0000000000c1", urlC, 2*time.Minute))
+	other := endingAt("00000000-0000-4000-8000-0000000000d1", ArticleURL, 10*time.Minute)
+	other.UserID = "u2"
+	Push(t, s, other)
+
+	got, err := s.RecentArticles(ctx, UserID, 2)
+	Must(t, err)
+	if len(got) != 2 || got[0].CanonicalURL != urlB || got[1].CanonicalURL != urlC ||
+		got[0].TotalSeconds != 60 || got[1].TotalSeconds != 60 {
+		t.Fatalf("RecentArticles(u1, 2) = %+v, want B then C", got)
+	}
+	got, err = s.RecentArticles(ctx, UserID, 10)
+	Must(t, err)
+	if len(got) != 3 || got[0].CanonicalURL != urlB || got[1].CanonicalURL != urlC || got[2].CanonicalURL != urlA {
+		t.Fatalf("RecentArticles(u1, 10) = %+v, want B, C, A", got)
+	}
+	got, err = s.RecentArticles(ctx, "nobody", 10)
+	Must(t, err)
+	if got == nil || len(got) != 0 {
+		t.Fatalf("RecentArticles(nobody) = %#v, want empty non-nil slice", got)
 	}
 }

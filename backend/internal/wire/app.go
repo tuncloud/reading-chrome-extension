@@ -70,7 +70,7 @@ func NewAPI(d APIDeps) *echo.Echo {
 			Sealer: d.Config.Keys, Activator: activator, AllowedExtensionIDs: d.Config.AllowedExtensionIDs, Now: d.Now, Log: d.Log},
 		Setup:    &setup.Service{Installations: d.Store, Workspace: gw, Sealer: d.Config.Keys, Activator: activator, Now: d.Now},
 		ReadSync: &readsync.Service{Reading: d.Store, Queue: sq, Now: d.Now},
-		Library:  &library.Service{Reading: d.Store},
+		Library:  &library.Service{Reading: d.Store, Now: d.Now},
 		Account:  &account.Service{Users: d.Store, Devices: d.Store, Installations: d.Store, Queue: sq, Now: d.Now},
 		Log:      d.Log,
 	})
