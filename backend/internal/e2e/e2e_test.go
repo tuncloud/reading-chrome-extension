@@ -17,30 +17,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-lambda-go/events"
 	"github.com/labstack/echo/v4"
 
-	"reading-tracker/backend/internal/adapter/dynamo/dynamotest"
 	"reading-tracker/backend/internal/adapter/notion"
 	"reading-tracker/backend/internal/adapter/notion/notiontest"
-	"reading-tracker/backend/internal/adapter/postgres"
+	"reading-tracker/backend/internal/adapter/postgres/postgrestest"
 	"reading-tracker/backend/internal/adapter/queue"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/config"
 	"reading-tracker/backend/internal/platform/crypto"
-	"reading-tracker/backend/internal/platform/pgtest"
+	"reading-tracker/backend/internal/usecase/port"
 	"reading-tracker/backend/internal/wire"
-	"reading-tracker/backend/internal/wire/awswire"
 )
 
 const extID = "abcdefghijklmnopabcdefghijklmnop"
-
-// stores lists the wire.Store backends the e2e suite runs each test against.
-var stores = []string{"dynamo", "postgres"}
-
-type noVisibility struct{}
-
-func (noVisibility) ChangeVisibility(context.Context, string, time.Duration) error { return nil }
 
 func call(t *testing.T, e *echo.Echo, method, target string, body any, token string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -60,18 +50,17 @@ func call(t *testing.T, e *echo.Echo, method, target string, body any, token str
 }
 
 // deliver feeds every queued message to the worker until the queue is empty.
-func deliver(t *testing.T, wk *queue.Consumer, q *queue.Recorder) {
+func deliver(t *testing.T, wk port.JobHandler, q *queue.Recorder) {
 	t.Helper()
 	for round := 0; round < 5; round++ {
 		sent := q.Drain()
 		if len(sent) == 0 {
 			return
 		}
-		for i, o := range sent {
-			body, _ := json.Marshal(o.Message)
-			resp, err := wk.HandleSQS(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: strconv.Itoa(i), Body: string(body)}}})
-			if err != nil || len(resp.BatchItemFailures) > 0 {
-				t.Fatalf("worker failed on %s: %v %+v", body, err, resp)
+		for _, o := range sent {
+			if err := wk.HandleJob(context.Background(), o.Message.Job()); err != nil {
+				body, _ := json.Marshal(o.Message)
+				t.Fatalf("worker failed on %s: %v", body, err)
 			}
 		}
 	}
@@ -92,14 +81,12 @@ type system struct {
 	tpl   notiontest.Template
 	q     *queue.Recorder
 	api   *echo.Echo
-	wk    *queue.Consumer
+	wk    port.JobHandler
 	now   time.Time
 }
 
-// newSystem wires the API, worker and fake Notion onto a fresh instance of the
-// given store ("dynamo" or "postgres"), proving the two adapters equivalent at
-// the system level.
-func newSystem(t *testing.T, kind string) *system {
+// newSystem wires the API, worker and fake Notion onto a fresh Postgres database.
+func newSystem(t *testing.T) *system {
 	sys := &system{t: t, ns: notiontest.New(t), q: &queue.Recorder{}, now: time.Date(2026, 10, 6, 3, 0, 0, 0, time.UTC)}
 	sys.tpl = sys.ns.AddTemplate("tpl-1")
 	clock := func() time.Time { return sys.now }
@@ -109,20 +96,10 @@ func newSystem(t *testing.T, kind string) *system {
 		"TOKEN_ENC_KEYS":      "v1:" + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
 		"DEVICE_TOKEN_PEPPER": base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32)),
 	}
-	switch kind {
-	case "dynamo":
-		env := dynamotest.New(t)
-		sys.store = env.Store
-		vars["TABLE_NAME"] = env.Table
-		vars["QUEUE_URL"] = "local"
-	case "postgres":
-		env := pgtest.New(t)
-		sys.store = postgres.New(env.Pool)
-		vars["STORE"] = "postgres"
-		vars["DATABASE_URL"] = env.URL
-	default:
-		t.Fatalf("unknown store kind %q", kind)
-	}
+	env := postgrestest.New(t)
+	sys.store = env.Store
+	vars["STORE"] = "postgres"
+	vars["DATABASE_URL"] = env.URL
 	cfg, err := config.Load(config.RoleAPI, func(k string) string { return vars[k] })
 	if err != nil {
 		t.Fatal(err)
@@ -130,8 +107,8 @@ func newSystem(t *testing.T, kind string) *system {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	nc := &notion.Client{BaseURL: sys.ns.URL, Version: cfg.NotionVersion, ClientID: cfg.NotionClientID, ClientSecret: cfg.NotionClientSecret}
 	sys.api = wire.NewAPI(wire.APIDeps{Config: cfg, Store: sys.store, Notion: nc, Queue: sys.q, Now: clock, Log: log})
-	sys.wk = awswire.NewWorker(awswire.WorkerDeps{SyncDeps: wire.SyncDeps{Store: sys.store, Notion: nc, Keys: cfg.Keys, Queue: sys.q,
-		Tracking: cfg.Public.Tracking, DebounceBucket: cfg.DebounceBucket, Now: clock, Log: log}, Visibility: noVisibility{}})
+	sys.wk = wire.NewJobHandler(wire.SyncDeps{Store: sys.store, Notion: nc, Keys: cfg.Keys, Queue: sys.q,
+		Tracking: cfg.Public.Tracking, DebounceBucket: cfg.DebounceBucket, Now: clock, Log: log})
 	return sys
 }
 
@@ -158,13 +135,7 @@ func (sys *system) connect() string {
 }
 
 func TestReadArticleEndToEnd(t *testing.T) {
-	for _, kind := range stores {
-		t.Run(kind, func(t *testing.T) { testReadArticleEndToEnd(t, kind) })
-	}
-}
-
-func testReadArticleEndToEnd(t *testing.T, kind string) {
-	sys := newSystem(t, kind)
+	sys := newSystem(t)
 	ns, tpl, q, api, wk := sys.ns, sys.tpl, sys.q, sys.api, sys.wk
 
 	// 1. Connect Notion, accepting the template (scenario 1).
@@ -241,13 +212,7 @@ func (sys *system) read(token, url, segID string) {
 // after setup on the same page, every article (including one already synced into the
 // deleted Library) and the day land in new, correctly related databases.
 func TestDeletedLibraryRecoversAfterSetup(t *testing.T) {
-	for _, kind := range stores {
-		t.Run(kind, func(t *testing.T) { testDeletedLibraryRecoversAfterSetup(t, kind) })
-	}
-}
-
-func testDeletedLibraryRecoversAfterSetup(t *testing.T, kind string) {
-	sys := newSystem(t, kind)
+	sys := newSystem(t)
 	ns, tpl := sys.ns, sys.tpl
 	token := sys.connect()
 	urlA, urlB := "https://a.example/one", "https://b.example/two"

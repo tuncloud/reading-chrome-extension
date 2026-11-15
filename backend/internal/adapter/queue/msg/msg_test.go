@@ -147,3 +147,11 @@ func TestRequeueAndPurge(t *testing.T) {
 		t.Fatalf("sent %+v", sent)
 	}
 }
+
+func TestJobCarriesEveryField(t *testing.T) {
+	m := Message{Type: TypePurge, InstallationID: "bot-1", URLHash: "h1", Date: "2026-10-06", UserID: "u1"}
+	want := port.Job{Type: port.JobPurge, InstallationID: "bot-1", URLHash: "h1", Date: "2026-10-06", UserID: "u1"}
+	if got := m.Job(); got != want {
+		t.Fatalf("Job() = %+v, want %+v", got, want)
+	}
+}

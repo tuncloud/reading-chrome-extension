@@ -131,6 +131,28 @@ func TestSendDedupsWithinBucket(t *testing.T) {
 	}
 }
 
+// R2: a resync right after a push in the same bucket is not deduplicated away; the two pushes are.
+func TestResyncAfterPushInSameBucketIsQueued(t *testing.T) {
+	env := pgtest.New(t)
+	ctx := context.Background()
+	at := time.Unix(1000*120, 0).Add(5 * time.Second)
+	q := &msg.SyncQueue{Sender: &pgqueue.Sender{Pool: env.Pool}, Bucket: 120 * time.Second, Now: func() time.Time { return at }}
+	for range 2 {
+		if err := q.EnqueueSync(ctx, inst, []string{"h1"}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := count(t, env.Pool, "true"); n != 1 {
+		t.Fatalf("rows after two pushes = %d, want 1", n)
+	}
+	if err := q.EnqueueResync(ctx, inst, []string{"h1"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, env.Pool, "true"); n != 2 {
+		t.Fatalf("rows after the resync = %d, want 2 (the pushes collapsed, the resync did not)", n)
+	}
+}
+
 func TestSendIsAllOrNothing(t *testing.T) {
 	env := pgtest.New(t)
 	bg := context.Background()
