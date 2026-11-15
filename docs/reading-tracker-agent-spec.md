@@ -54,7 +54,7 @@ graph TB
 | 404 | `not_found` | |
 | 409 | `conflict` / `no_installation` | state conflict / user has no installation |
 | 413 | `payload_too_large` | body > 256 KB or list limits exceeded |
-| 503 | `capacity_exceeded` | the store was busy (Postgres serialization failure, deadlock, or no connection available) — for a push, every segment came back `retry`; client retries with backoff |
+| 503 | `capacity_exceeded` | the store was busy (Postgres serialization failure, deadlock, or the server refused a connection: too many connections, or still starting up) — for a push, every segment came back `retry`; client retries with backoff |
 | 500 | `internal` | |
 
 ### 2.1 `GET /v1/oauth/notion/start`
@@ -182,9 +182,9 @@ Calls Notion `POST /v1/search` `{ "query": q, "filter": {"property":"object","va
 1. `url_hash = hex(SHA-256(canonical_url))[:32]`; `date = started_at` in `tz`, `YYYY-MM-DD`.
 2. Per valid segment, **one** Postgres transaction (§3.2 "push transaction").
    - The segment row already exists (its insert affects no row) → `duplicate`.
-   - Serialization failure or deadlock → the transaction is retried, at most 3 attempts in all, then `retry`. Other capacity errors (no connection available) → `retry`.
+   - Serialization failure or deadlock → the transaction is retried, at most 3 attempts in all, then `retry`. Other capacity errors (the server refused a connection: too many connections, or still starting up) → `retry`.
 3. In the same transaction, the monotonic raise of `articles.max_progress` and `articles.last_read_at` (§3.2), also for a duplicate.
-4. For each distinct `(url_hash)` and `(date)` touched by ≥1 accepted segment: enqueue a job (§2.12).
+4. For each distinct `(url_hash)` and `(date)` touched by ≥1 accepted or duplicate segment (a duplicate re-enqueues because the push that committed it may have failed to enqueue): enqueue a job (§2.12).
 5. If every segment came back `retry` → 503 `capacity_exceeded`.
 
 **Response** `200`
@@ -462,7 +462,7 @@ reading-chrome-extension/
 
 **Backend (Go)**
 - [ ] **T8 — Config.** Parse/validate env (§3.5); fail fast on missing; parse `TOKEN_ENC_KEYS`; embed default tracking config; `import _ "time/tzdata"`.
-  - *AC:* unit test: missing `DATABASE_URL` → error; `time.LoadLocation("Asia/Ho_Chi_Minh")` works without system zoneinfo (the distroless image has none).
+  - *AC:* unit test: missing `DATABASE_URL` → error; `QUEUE_DELAY_SECONDS` below `DEBOUNCE_BUCKET_SECONDS` or above 900, or `DEBOUNCE_BUCKET_SECONDS` above 300 → startup error (C5); `time.LoadLocation("Asia/Ho_Chi_Minh")` works without system zoneinfo (the distroless image has none).
 - [ ] **T9 — Crypto.** Keyring `Seal(plain, aad) → "<ver>:<b64(nonce‖ct)>"`, `Open`; token HMAC; PKCE S256 verify (constant-time).
   - *AC:* round-trip test; `Open` with different AAD fails; ciphertext from `v0` opens after `v1` is prepended; tampered byte fails.
 - [ ] **T10 — Store.** Typed repos for every table in §3.1, push transaction (§3.2), capacity-error classification (serialization failure, deadlock, connection exhaustion → `retry`/503).
@@ -559,7 +559,7 @@ reading-chrome-extension/
 | C2 | Segment insert + aggregate increments in **one** transaction; the increments run only when the segment insert created a row (`ON CONFLICT DO NOTHING`). | Retries double-count reading time. |
 | C3 | Only the worker calls Notion page/write APIs; the API server calls Notion only for OAuth/setup/search. | Parallel API requests exceed 3 req/s → 429s; push latency tied to Notion. |
 | C4 | `group_id = installation_id` for every job (`user#<uid>` for a purge with no installation); one job per group at a time, in order. | Concurrent writes per connection → rate-limit violations and token-refresh races. |
-| C5 | Queue delay **D ≥ B** (bucket) and **B ≤ 300**. | Last updates in a bucket are dropped until the next read (stale Notion data). |
+| C5 | Queue delay **D ≥ B** (bucket) and **B ≤ 300**. | Last updates in a bucket are dropped until the next read (stale Notion data). `B ≤ 300` dates from the SQS deduplication window; the Postgres queue no longer needs it (it deduplicates for as long as the row exists), but it stays enforced until deliberately relaxed. |
 | C6 | Worker writes **absolute** values read from the store, never deltas. | Redelivered messages corrupt totals. |
 | C7 | On refresh, persist **both** new access and refresh tokens, guarded by `token_version`. | Notion rotates refresh tokens; keeping the old one → `invalid_grant` → user forced to reconnect. |
 | C8 | Only the worker refreshes tokens. | Two refreshers invalidate each other. |

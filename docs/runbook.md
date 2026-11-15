@@ -186,7 +186,16 @@ pnpm build
 
    A non-zero count means jobs that failed 10 times; inspect their `last_error` column for the cause.
 
-6. Record the spec's open items in its §7:
+6. Check the server and poller logs for errors over the test window:
+
+   ```bash
+   ssh master 'sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf -n reading-tracker logs deploy/reading-tracker-server --since=15m' | grep -i error
+   ssh master 'sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf -n reading-tracker logs deploy/reading-tracker-poller --since=15m' | grep -i error
+   ```
+
+   Expect no output. Any line is a failed request or job attempt to look into, even if no job died.
+
+7. Record the spec's open items in its §7:
    - Status property creation;
    - the archived-page error text;
    - whether relations carry `data_source_id`.

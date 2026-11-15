@@ -56,7 +56,8 @@ func (s *Service) HandleJob(ctx context.Context, job port.Job) error {
 }
 
 // classify maps a job error to ack (nil), back-off (*port.RetryAfterError) or retry.
-// Retried (redelivered; DLQ after maxReceive, so it stays visible): storage and network
+// Retried (the poller re-runs the job with back-off and marks it dead after 10 attempts,
+// so it stays visible): storage and network
 // errors, Notion 5xx, 409 conflict_error, and a 401 that escaped session.call (the
 // refresh endpoint rejected us, e.g. invalid_client). Acked and logged: every other
 // Notion 4xx (400 validation_error poison, 403, untranslated 404s).

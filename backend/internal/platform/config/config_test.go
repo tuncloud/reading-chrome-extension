@@ -33,7 +33,8 @@ func workerEnv() map[string]string {
 	return env
 }
 
-// The cluster manifest still sets STORE=postgres and an old .env.local may say dynamo.
+// A cluster ConfigMap applied before this change still sets STORE=postgres, and an old
+// .env.local may say dynamo.
 func TestStoreEnvIsIgnored(t *testing.T) {
 	for _, v := range []string{"", "postgres", "dynamo", "anything"} {
 		env := apiEnv()

@@ -67,7 +67,7 @@ Clean architecture: dependencies point inward, enforced by `internal/archtest`.
 | Test helpers | `adapter/postgres/postgrestest` (fresh migrated database + store), `adapter/notion/notiontest` (fake Notion server), `adapter/storetest` (conformance suite for the store, run by `adapter/postgres`), `platform/pgtest` (throwaway, fully migrated Postgres databases) | live inside their adapter |
 
 Flow of a read: extension → `adapter/httpapi` → `usecase/readsync` → `port.Reading` (`adapter/postgres`) +
-`port.SyncQueue` (`pgqueue.Sender`) → `sync_jobs` → `pgqueue.Poller` → `usecase/notionsync` →
+`port.SyncQueue` (`msg.SyncQueue`, wrapping a `msg.Sender`: `pgqueue.Sender` in production) → `sync_jobs` → `pgqueue.Poller` → `usecase/notionsync` →
 `port.Reading` (`adapter/postgres`) + `port.NotionPages` (`adapter/notion`).
 
 Adding a feature: put rules in `domain`, orchestration in a `usecase` package that depends on the
@@ -94,8 +94,9 @@ rollout are [`.github/workflows/backend-image.yml`](../.github/workflows/backend
    private network; confirm which with the operator.
 3. DNS: `reading.tuando.app` → the ingress IP (same as `gateway.tuando.app`).
 4. Notion integration: add `https://reading.tuando.app/v1/oauth/notion/callback` as a redirect URI.
-5. Replace `REPLACE_WITH_EXTENSION_ID` in both the ConfigMap and the Ingress CORS annotation of
-   `deploy/manifest.yaml` with the store extension id, then validate the manifest against the
+5. Confirm the store extension id in both the ConfigMap (`ALLOWED_EXTENSION_IDS`) and the Ingress CORS
+   annotation of `deploy/manifest.yaml` (both already hold it; change them together if it changes),
+   then validate the manifest against the
    cluster (this checks the ExternalSecret CRD shape, which offline checks cannot) and expect no
    errors:
    `ssh master 'sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf apply --dry-run=server -f -' < backend/deploy/manifest.yaml`.

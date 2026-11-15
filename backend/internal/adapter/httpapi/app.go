@@ -32,7 +32,7 @@ type Deps struct {
 type handlers struct{ Deps }
 
 // New builds the app: /v1 routes, §2.0 JSON errors, 256 KB body limit and
-// path-only request logs. CORS is configured on the Function URL, not here.
+// path-only request logs. CORS is configured on the Kubernetes Ingress, not here.
 func New(d Deps) *echo.Echo {
 	e := echo.New()
 	e.HideBanner, e.HidePort = true, true

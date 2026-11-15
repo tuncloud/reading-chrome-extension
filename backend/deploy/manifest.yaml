@@ -8,8 +8,8 @@ metadata:
   name: reading-tracker
 ---
 # Non-sensitive config only. Hosts/ports may live here or in the secret param (one atomic unit).
-# ALLOWED_EXTENSION_IDS: replace the placeholder with the store extension id before applying
-# (same id as the Ingress cors-allow-origin annotation).
+# ALLOWED_EXTENSION_IDS is the store extension id. Keep it in sync with the Ingress
+# cors-allow-origin annotation if it ever changes.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -136,7 +136,7 @@ spec:
 ---
 # No `tls:` block: nginx serves the *.tuando.app wildcard cert by default. DNS reading.tuando.app →
 # the ingress IP (same as gateway.tuando.app).
-# CORS allows only the extension origin; replace REPLACE_WITH_EXTENSION_ID with the store extension id.
+# CORS allows only the extension origin; the origin is the store extension id; keep it in sync with ALLOWED_EXTENSION_IDS in the ConfigMap if it changes.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

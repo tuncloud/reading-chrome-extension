@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"log/slog"
 	"testing"
@@ -16,7 +15,6 @@ import (
 	"reading-tracker/backend/internal/adapter/queue/msg"
 	"reading-tracker/backend/internal/domain"
 	"reading-tracker/backend/internal/platform/crypto"
-	"reading-tracker/backend/internal/usecase/port"
 )
 
 var (
@@ -29,8 +27,6 @@ const (
 	artURL  = "https://medium.com/p/8f3c2a1b9d4e"
 )
 
-type fakeVisibility struct{ calls []time.Duration }
-
 type wenv struct {
 	t      *testing.T
 	s      *Service
@@ -38,7 +34,6 @@ type wenv struct {
 	db     *postgrestest.Env
 	ns     *notiontest.Server
 	q      *msg.Recorder
-	vis    *fakeVisibility
 	tpl    notiontest.Template
 	keys   *crypto.Keyring
 	now    time.Time
@@ -62,7 +57,7 @@ func newEnvWithKeys(t *testing.T, keys string) *wenv {
 	t.Helper()
 	kr, err := crypto.ParseKeyring(keys)
 	must(t, err)
-	e := &wenv{t: t, db: postgrestest.New(t), ns: notiontest.New(t), q: &msg.Recorder{}, vis: &fakeVisibility{},
+	e := &wenv{t: t, db: postgrestest.New(t), ns: notiontest.New(t), q: &msg.Recorder{},
 		keys: kr, now: testNow, logs: &bytes.Buffer{}}
 	e.tpl = e.ns.AddTemplate("tpl-1")
 	e.gw = &notion.Gateway{Client: &notion.Client{BaseURL: e.ns.URL, Version: "2025-09-03", ClientID: "cid", ClientSecret: "csecret"}}
@@ -122,17 +117,13 @@ func (e *wenv) readMeta(meta domain.ArticleMeta, seq, secs int, progress float64
 type failure struct{ ItemIdentifier string }
 
 // handle runs the messages in order, as the queue consumer did: on the first error it
-// records any retry delay, then reports that message and every later one as failed.
+// reports that message and every later one as failed.
 func (e *wenv) handle(msgs ...msg.Message) []failure {
 	e.t.Helper()
 	for i, m := range msgs {
 		err := e.s.HandleJob(ctx, m.Job())
 		if err == nil {
 			continue
-		}
-		var ra *port.RetryAfterError
-		if errors.As(err, &ra) {
-			e.vis.calls = append(e.vis.calls, ra.Delay)
 		}
 		var out []failure
 		for k := i; k < len(msgs); k++ {
