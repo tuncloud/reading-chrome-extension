@@ -3,7 +3,7 @@
 //   CHROME_BIN=<Chrome for Testing binary> pnpm smoke
 //
 // Needs: `pnpm build` done, the backend's local server running at VITE_API_BASE
-// (backend/: make ddb-up && make run-local), and openssl on PATH.
+// (backend/: make pg-up && make run), and openssl on PATH.
 // It never touches Notion: it checks config, alarms, the popup, the options page and local tracking only.
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
@@ -67,7 +67,7 @@ async function main() {
   if (!existsSync(join(dist, 'manifest.json'))) throw new Error('run pnpm build first')
   if (!apiBase) throw new Error('VITE_API_BASE is not set (.env.local)')
   const cfg = await fetch(`${apiBase}/v1/config`).then((r) => r.json()).catch(() => null)
-  if (!cfg?.tracking) throw new Error(`backend not reachable at ${apiBase}/v1/config (backend: make ddb-up && make run-local)`)
+  if (!cfg?.tracking) throw new Error(`backend not reachable at ${apiBase}/v1/config (backend: make pg-up && make run)`)
 
   const tmp = mkdtempSync(join(tmpdir(), 'rt-smoke-'))
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=medium.com',

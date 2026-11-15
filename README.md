@@ -11,12 +11,10 @@ reading time and records it in a user's Notion workspace.
 3. Pending segments are sent to the backend over the HTTP API.
 4. The backend persists the data and queues a debounced Notion synchronization
    job.
-5. A worker or poller updates the user's Notion Library and Daily Log.
+5. A poller updates the user's Notion Library and Daily Log.
 
-The backend supports two deployment modes:
-
-- **AWS:** API Lambda, worker Lambda, DynamoDB, and SQS FIFO.
-- **Kubernetes:** API and poller processes backed by Postgres.
+The backend runs on Kubernetes as two processes, an API server and a poller,
+backed by Postgres, which also holds the sync queue.
 
 See the [C4 architecture documentation](docs/c4-architecture.md) for Mermaid
 diagrams and system details.
@@ -26,8 +24,7 @@ diagrams and system details.
 | Directory | Description |
 | --- | --- |
 | [`extension/`](extension/) | Chrome MV3 extension |
-| [`backend/`](backend/) | Go API, sync worker, domain, use cases, and adapters |
-| [`infra/`](infra/) | Terraform configuration for AWS deployment |
+| [`backend/`](backend/) | Go API, sync poller, domain, use cases, and adapters |
 | [`docs/`](docs/) | Architecture, onboarding, specifications, and runbooks |
 
 ## Local development
@@ -53,21 +50,18 @@ Requirements: Go 1.26 and Podman.
 
 ```sh
 cd backend
-make ddb-up
-make run-local
+make pg-up
+make run
 ```
 
 The local API listens on `http://localhost:8080`. Configure the extension with
 `VITE_API_BASE=http://localhost:8080`.
-
-For Postgres development, use `make pg-up` followed by `make run-pg`.
 
 ## Useful documentation
 
 - [C4 architecture](docs/c4-architecture.md)
 - [Extension guide](extension/README.md)
 - [Backend guide](backend/README.md)
-- [AWS infrastructure guide](infra/README.md)
 - [End-to-end runbook](docs/runbook.md)
 - [Product and implementation specification](docs/reading-tracker-agent-spec.md)
 

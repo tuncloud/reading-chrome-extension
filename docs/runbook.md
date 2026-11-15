@@ -2,9 +2,9 @@
 
 Two procedures:
 - **Local development:** run the whole system on one machine, and run every test suite.
-- **End-to-end first deploy:** go from an empty AWS account to a working extension that writes to Notion.
+- **End-to-end first deploy:** deploy the backend to the Kubernetes cluster and get a working extension that writes to Notion.
 
-Each component's README has more detail: [`backend/README.md`](../backend/README.md), [`extension/README.md`](../extension/README.md), [`infra/README.md`](../infra/README.md). The spec is [`reading-tracker-agent-spec.md`](reading-tracker-agent-spec.md).
+Each component's README has more detail: [`backend/README.md`](../backend/README.md), [`extension/README.md`](../extension/README.md). The spec is [`reading-tracker-agent-spec.md`](reading-tracker-agent-spec.md).
 
 **Every code block starts from the repository root.**
 
@@ -16,12 +16,10 @@ Each component's README has more detail: [`backend/README.md`](../backend/README
 |---|---|---|
 | Go 1.26 | backend | `brew install go` |
 | Node ≥ 22 and pnpm | extension | `brew install node pnpm` |
-| Podman (machine running) | DynamoDB Local | `brew install podman && podman machine init && podman machine start` |
+| Podman (machine running) | local Postgres | `brew install podman && podman machine init && podman machine start` |
 | openssl | secrets, extension key | preinstalled |
 | Chrome (or Chromium) | loading the extension | — |
 | Chrome for Testing | `pnpm smoke` only | see [Run all tests](#7-run-all-tests) |
-| Terraform ≥ 1.10 | deploy | `brew install hashicorp/tap/terraform` |
-| AWS CLI v2 + credentials | deploy | `brew install awscli`, then `aws configure` |
 
 ---
 
@@ -58,7 +56,7 @@ You can skip this step if you only want to work on tracking. Pages are still tra
 ```bash
 podman machine start              # if not already running
 cd backend
-make ddb-up                       # DynamoDB Local on :8000 (container reading-ddb, in-memory)
+make pg-up                        # Postgres on :5432 (container reading-pg, no volume)
 make .env.local                   # generates TOKEN_ENC_KEYS and DEVICE_TOKEN_PEPPER
 ```
 
@@ -72,7 +70,7 @@ ALLOWED_EXTENSION_IDS=<extension id from step 1>
 
 ```bash
 cd backend
-make run-local                    # API on :8080, worker in-process; leave it running
+make run                          # API on :8080 and the poller; leave it running
 ```
 
 Check it from another terminal: `curl -s localhost:8080/v1/config` returns JSON starting with `{"version":1,"tracking":`.
@@ -98,21 +96,19 @@ After a code change, `pnpm dev` rebuilds `dist/`. Click the reload icon on the e
 
 ### 6. Stop everything
 
-```bash
-lsof -ti tcp:8080 | xargs kill    # backend
-cd backend && make ddb-down       # DynamoDB Local (in-memory: data is gone)
-```
+Stop `make run` (server and poller) and `pnpm dev` with Ctrl-C, then:
 
-Stop `pnpm dev` with Ctrl-C.
+```bash
+cd backend && make pg-down        # Postgres (no volume: data is gone)
+```
 
 ### 7. Run all tests
 
 | Suite | Command | Needs |
 |---|---|---|
-| Backend | `cd backend && gofmt -l . ; go vet ./... && go test -race ./...` | `make ddb-up` and `make pg-up` |
+| Backend | `cd backend && gofmt -l . ; go vet ./... && go test -race ./...` | `make pg-up` |
 | Extension | `cd extension && pnpm check` | — (typecheck, tests, both builds) |
 | Extension in a real browser | `cd extension && pnpm smoke` | the backend running (step 3) and `CHROME_BIN` (below) |
-| Infrastructure | `cd infra/terraform && make check && make test` | Terraform only, no AWS (offline, mocked providers) |
 
 Chrome for Testing, needed by `pnpm smoke` only, because branded Chrome ignores `--load-extension`:
 
@@ -127,92 +123,45 @@ pnpm smoke                        # expect 8 PASS lines, then "smoke: all checks
 
 | Symptom | Cause and fix |
 |---|---|
-| `make ddb-up` hangs or fails | The Podman machine is not running: `podman machine start`. |
+| `make pg-up` hangs or fails | The Podman machine is not running: `podman machine start`. |
 | Backend exits with `config: missing env …` | `backend/.env.local` is missing a value. Run `make .env.local`, then fill in the Notion and extension values. |
-| "Link expired" or a 400 when connecting | The extension ID is not in `ALLOWED_EXTENSION_IDS`, or the extension was loaded without the key. Repeat step 1, rebuild, then restart `make run-local`. |
+| "Link expired" or a 400 when connecting | The extension ID is not in `ALLOWED_EXTENSION_IDS`, or the extension was loaded without the key. Repeat step 1, rebuild, then restart `make run`. |
 | Nothing is tracked | Open the service-worker console from `chrome://extensions`. The extension needs `/v1/config` from the backend before it tracks, so check that the backend is reachable. |
-| Notion never updates | Check the backend log for worker errors. The Notion integration must have access to the page (template or chosen parent). |
+| Notion never updates | Check the backend log for poller errors. The Notion integration must have access to the page (template or chosen parent). |
 
 ---
 
 ## Part 2 — End-to-end first deploy
 
-This takes you from an empty AWS account to a working extension. It deploys one environment, `dev`. For another environment, repeat from step 3 with a different `ENV`. Use a separate AWS account per environment to stay in the free tier.
+This deploys the backend, `cmd/server` + `cmd/poller` on Postgres, on the tuncloud cluster, and builds the extension against it.
 
 ### 1. Have the extension ID
 
-Use the same key and ID as Part 1, step 1. Terraform's `allowed_extension_ids` and the Function URL's CORS are built from it, so you need it before the first apply.
+Use the same key and ID as Part 1, step 1. The manifest's `ALLOWED_EXTENSION_IDS` and the Ingress CORS annotation are built from it, so you need it before the first apply.
 
 ### 2. Create the Notion integration
 
 Create a Notion **public** integration (you can reuse the development one):
 - Note the client ID and client secret.
 - Optional: set the template page (spec T24).
-- The production redirect URI is added in step 6, once the API URL exists.
+- The production redirect URI is added during the deploy (step 3).
 
-### 3. Store the secrets in SSM
+### 3. Deploy the backend
 
-```bash
-ENV=dev
-read -r NOTION_CLIENT_ID
-read -rs NOTION_CLIENT_SECRET     # not echoed, not in shell history
-aws ssm put-parameter --tier Standard --type String       --name /reading/$ENV/NOTION_CLIENT_ID     --value "$NOTION_CLIENT_ID"
-aws ssm put-parameter --tier Standard --type SecureString --name /reading/$ENV/NOTION_CLIENT_SECRET --value "$NOTION_CLIENT_SECRET"
-aws ssm put-parameter --tier Standard --type SecureString --name /reading/$ENV/TOKEN_ENC_KEYS       --value "v1:$(openssl rand -base64 32)"
-aws ssm put-parameter --tier Standard --type SecureString --name /reading/$ENV/DEVICE_TOKEN_PEPPER  --value "$(openssl rand -base64 32)"
-```
+The operator steps live in [`backend/README.md`](../backend/README.md) → "Deploy to tuncloud"; follow
+them in order.
 
-### 4. Configure Terraform
+Once deployed, smoke-test it:
 
 ```bash
-cd infra/terraform
-cp example.tfvars dev.tfvars
+curl -s https://reading.tuando.app/healthz    # ok
 ```
 
-Edit `infra/terraform/dev.tfvars`:
-- `allowed_extension_ids = ["<extension id>"]`
-- `budget_email = "<you@…>"`
-- Keep `debounce_bucket_seconds = 120` and `debounce_delay_seconds = 120`. The delay must be ≥ the bucket, or `plan` fails.
-
-`dev.tfvars` is gitignored.
-
-### 5. Deploy
-
-```bash
-cd infra/terraform
-make init
-make plan ENV=dev                 # builds both Lambda binaries, then plans; review the plan
-make apply ENV=dev                # applies, then deletes the saved plan (it holds secrets)
-terraform output -raw function_url
-```
-
-Verify:
-
-```bash
-cd infra/terraform
-curl -s "$(terraform output -raw function_url)v1/config" | head -c 60; echo    # {"version":1,"tracking":...
-```
-
-Then confirm the budget-alert email: AWS Budgets sends a subscription confirmation to `budget_email`.
-
-### 6. Register the production redirect URI
-
-In the Notion integration, add `<function_url>v1/oauth/notion/callback` as a redirect URI. `function_url` already ends with `/`, so do not add another. Keep the localhost URI too if you still develop locally.
-
-### 7. Back up the Terraform state
-
-`infra/terraform/terraform.tfstate` now exists. It holds the secrets in plain text and is gitignored.
-- Copy it to a private, encrypted place, such as a password-manager attachment.
-- Back it up again after every apply.
-- Run `apply` from one machine only, because local state has no locking.
-
-`infra/README.md` section 2 covers what to do if the state is lost.
-
-### 8. Build the extension for the deployed API
+### 4. Build the extension for the deployed API
 
 ```bash
 cd extension
-echo "VITE_API_BASE=$(cd ../infra/terraform && terraform output -raw function_url | sed 's:/$::')" > .env.production.local
+echo "VITE_API_BASE=https://reading.tuando.app" > .env.production.local
 pnpm build
 ```
 
@@ -223,63 +172,29 @@ pnpm build
 
 `pnpm build` and `pnpm dev` both build in production mode, so while `.env.production.local` exists, both target the deployed API. To develop against the local backend again, delete `extension/.env.production.local`, then rebuild.
 
-### 9. Smoke-test the deployment (spec T32)
+### 5. Smoke-test the deployment (spec T32)
 
 1. In the popup, click **Connect Notion** and accept the template. The popup shows today's minutes.
-2. Read a Freedium article for 3 minutes. Within about 5 minutes, the Library has a page with Reading time ≈ 3 and Progress > 0. That is D + B + 60 s with the 120 s defaults.
+2. Read a Freedium article for 3 minutes. Within about 5 minutes, the Library has a page with Reading time ≈ 3 and Progress > 0. That is D + B + 60 s with the manifest's 120 s values.
 3. In Notion, set Tags, Status and Rating, then read again. Those values stay and the metrics update.
 4. A Daily Log row for today exists.
-5. Check the logs (`/aws/lambda/reading-api-dev`, `/aws/lambda/reading-worker-dev`) for errors, and check that the dead-letter queue is empty:
+5. Check that no sync job has died:
 
    ```bash
-   cd infra/terraform
-   aws sqs get-queue-attributes --queue-url "$(terraform output -raw dlq_url)" --attribute-names ApproximateNumberOfMessages
+   ssh worker "sudo -u postgres psql reading_tracker -Atc \"select count(*) from sync_jobs where state='dead'\""   # 0
    ```
+
+   A non-zero count means jobs that failed 10 times; inspect their `last_error` column for the cause.
 
 6. Record the spec's open items in its §7:
    - Status property creation;
    - the archived-page error text;
    - whether relations carry `data_source_id`.
 
-### 10. Ship later changes
+### 6. Ship later changes
 
 | Change | Do |
 |---|---|
-| Backend code | `cd infra/terraform && make plan ENV=dev && make apply ENV=dev`. `plan` rebuilds the binaries. Back up the state afterwards. |
+| Backend code | Push to `main`. [`.github/workflows/backend-image.yml`](../.github/workflows/backend-image.yml) runs the tests, builds the image and rolls out the poller, then the server. |
 | Extension code | `cd extension && pnpm build`, then reload the extension, or zip `dist/` again. |
-| Infrastructure | Edit `infra/terraform`, run `make check && make test`, then plan and apply. Back up the state afterwards. |
-| Rotate `TOKEN_ENC_KEYS` | Prepend the new key (`v2:<b64>,v1:<b64>`) with `aws ssm put-parameter --overwrite`, then plan and apply (spec scenario 19). |
-| Tear down | Set `deletion_protection_enabled = false` in `dynamodb.tf`, apply, then `terraform destroy -var-file=dev.tfvars`. Notion pages are not touched. |
-
----
-
-## Part 3 — Kubernetes (Postgres)
-
-This deploys the second mode: `cmd/server` + `cmd/poller` on Postgres, on the tuncloud cluster. The
-operator steps live in [`backend/README.md`](../backend/README.md) → "Deploy to tuncloud"; follow
-them in order.
-
-Once deployed, smoke-test it:
-
-```bash
-curl -s https://reading.tuando.app/healthz    # ok
-```
-
-Then build the extension against it:
-
-```bash
-cd extension
-echo "VITE_API_BASE=https://reading.tuando.app" > .env.production.local
-pnpm build
-```
-
-Load it and repeat [Part 2, step 9](#9-smoke-test-the-deployment-spec-t32) against this build,
-exactly as for the Lambda deployment.
-
-In place of the dead-letter queue check, count dead jobs:
-
-```bash
-ssh worker "sudo -u postgres psql reading_tracker -Atc \"select count(*) from sync_jobs where state='dead'\""   # 0
-```
-
-A non-zero count means jobs that failed 10 times; inspect their `last_error` column for the cause.
+| Kubernetes manifest | Edit `backend/deploy/manifest.yaml`, then validate and apply it as in `backend/README.md` → "Deploy to tuncloud", steps 5 and 6. |

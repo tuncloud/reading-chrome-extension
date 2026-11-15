@@ -1,6 +1,6 @@
 # Reading Tracker — Onboarding / Design
 
-> **Purpose:** A Chrome extension that records what you read on the web (starting with Medium via the Freedium mirror, extensible to any source) and how long you *actually* read each piece, then files every article into the user's own Notion workspace as a searchable reading library. A small serverless Go backend on AWS sits in between to hold OAuth credentials and absorb Notion's rate limits.
+> **Purpose:** A Chrome extension that records what you read on the web (starting with Medium via the Freedium mirror, extensible to any source) and how long you *actually* read each piece, then files every article into the user's own Notion workspace as a searchable reading library. A small Go backend on Kubernetes (an API server and a poller, backed by Postgres) sits in between to hold OAuth credentials and absorb Notion's rate limits.
 > **Companion:** Build instructions (contracts, schemas, tasks) live in [`reading-tracker-agent-spec.md`](./reading-tracker-agent-spec.md).
 > **Status:** Design chosen, not built. Items marked 🔶 OPEN are undecided — see §7.
 
@@ -15,7 +15,7 @@ The author reads Medium through `freedium-mirror.cfd` and wants:
 1. A history of every article read, with **active reading time** (not "tab was open" time), progress and number of sessions.
 2. Support for **many sources**, not just Medium (Substack, dev.to, docs sites, arbitrary blogs).
 3. A place to **search and review** that history comfortably — on desktop and mobile — without building a UI for it.
-4. The integration usable by **other people** (public Notion integration), at **$0/month** running cost.
+4. The integration usable by **other people** (public Notion integration), running on infrastructure the operator already has (a Kubernetes cluster and a Postgres server), with no separate stack to pay for.
 
 ### 1.2 Scope of v1
 
@@ -54,49 +54,35 @@ Each of these was debated; the table exists so nobody silently undoes them.
 
 #### D3 — Compute
 
-| | Long-running Echo server (VM/container) | **AWS Lambda (chosen) ✅** |
-|---|---|---|
-| Idle cost | Always paying | **$0 inside Always Free** |
-| In-memory rate limiter | Works | Doesn't — instances share nothing |
-| Ops | Patching, uptime | None |
-
-**Why Lambda:** traffic is tiny and bursty (a batch push every couple of minutes per active reader). We keep **Echo** as the HTTP framework by running it inside Lambda via `aws-lambda-go-api-proxy` (Echo adapter, payload v2), so handlers are ordinary Echo handlers and the app also runs locally as a normal server.
+**Two long-running Go processes on Kubernetes (chosen) ✅:** `cmd/server` (the HTTP API, Echo) and `cmd/poller` (the Notion sync). The motive is consolidation: the operator's tuncloud cluster and its Postgres already run, so the app adds no separate stack. The API and the poller stay separate processes so request latency never depends on Notion. An earlier design ran on AWS Lambda; it was removed (history in [`superpowers/specs/2026-11-15-remove-aws-path-design.md`](superpowers/specs/2026-11-15-remove-aws-path-design.md)).
 
 #### D4 — HTTP entry point
 
-| | API Gateway HTTP API | **Lambda Function URL (chosen) ✅** |
-|---|---|---|
-| Cost | Free tier not guaranteed forever | **No extra charge** |
-| Authorizers, throttling, custom domain | Built-in | Do auth in Echo middleware; custom domain needs CloudFront (🔶 OPEN) |
+**Kubernetes Ingress (chosen) ✅** in front of `cmd/server`, at `reading.tuando.app`. CORS is restricted to the allowed extension IDs at the Ingress; authentication is the device token, checked in Echo middleware.
 
 #### D5 — Server-side database
 
-| | SQLite | PostgreSQL (RDS) | **DynamoDB, single table, provisioned 25/25 (chosen) ✅** |
-|---|---|---|---|
-| Works with Lambda | No (no shared disk) | Yes, but connection pooling + cost | **Native** |
-| Cost | — | Not free long-term | **Always Free: 25 GB, 25 WCU, 25 RCU** |
-
-**Why provisioned, not on-demand:** only provisioned capacity is covered by Always Free. A single table means all 25 units go to one place. Consequence: write paths must be frugal (transactions cost 2× WCU).
+**Postgres, one table per record type (chosen) ✅**, on the cluster's existing Postgres server. The schema is plain SQL migrations embedded in the binaries and applied forward-only at startup. The pool is capped at 5 connections per pod, because the server is shared with other apps.
 
 #### D6 — Respecting Notion's rate limit without shared memory
 
-| | In-memory `rate.Limiter` | Distributed token bucket in DynamoDB | **SQS FIFO, `MessageGroupId = installation` (chosen) ✅** |
-|---|---|---|---|
-| Correct across Lambda instances | No | Yes, but costs WCU on every call | **Yes — FIFO processes one message per group at a time** |
-| Debouncing bursts | Manual | Manual | **Free via deduplication IDs (§4.3)** |
+| | In-memory `rate.Limiter` | **Postgres job queue `sync_jobs`, `group_id = installation` (chosen) ✅** |
+|---|---|---|
+| Correct across processes and pods | No | **Yes — only one job per group is processed at a time, claimed in the database** |
+| Debouncing bursts | Manual | **Free via deduplication IDs (§4.3)** |
 
 #### D7 — Encrypting Notion tokens at rest
 
-| | AWS KMS customer key | **App-level AES-256-GCM, keys from SSM Parameter Store → Lambda env (chosen) ✅** |
+| | AWS KMS customer key | **App-level AES-256-GCM, keys from the process environment (chosen) ✅** |
 |---|---|---|
-| Cost | $1/key/month + requests | **$0** (Standard parameters, AWS-managed `aws/ssm` key) |
-| Risk | Key never leaves KMS | Key is in Lambda env and in Terraform state — mitigate with IAM + encrypted, private state bucket |
+| Cost | $1/key/month + requests | **$0** |
+| Risk | Key never leaves KMS | Key is in the pods' environment (delivered as a Kubernetes Secret) — never in the repo or the image |
 
 Key versioning (`v1:`, `v2:` prefixes) allows rotation without re-encrypting everything at once.
 
-#### D8 — Infrastructure as code
+#### D8 — Deployment
 
-**Terraform owns all infrastructure** (DynamoDB, SQS, Lambdas, Function URL, IAM, SSM reads, log groups, budget). **AWS SAM CLI is used only as a build/local-test tool** on top of the Terraform project (`--hook-name terraform`). We don't write a SAM template; having two IaC tools both declare resources would drift.
+**One Kubernetes manifest**, [`backend/deploy/manifest.yaml`](../backend/deploy/manifest.yaml) (namespace, ConfigMap, ExternalSecret, two Deployments, Service, Ingress). The container image is built for arm64 and rolled out by [`.github/workflows/backend-image.yml`](../.github/workflows/backend-image.yml). Secrets are created by hand in the cluster's secret source and never committed.
 
 #### D9 — Notion integration type
 
@@ -132,49 +118,52 @@ graph TB
         UI <--> SW
     end
 
-    subgraph AWS["AWS (Terraform, $0 Always Free)"]
-        API["Lambda api<br/>Echo via Function URL"]
-        DDB[("DynamoDB<br/>single table")]
-        Q["SQS FIFO<br/>group = installation"]
-        W["Lambda notion-writer"]
-        DLQ["SQS FIFO DLQ"]
-        SSM["SSM Parameter Store<br/>(secrets → env at deploy)"]
+    subgraph K8S["Kubernetes (backend/deploy/manifest.yaml)"]
+        API["cmd/server<br/>Echo behind Ingress"]
+        W["cmd/poller<br/>Notion sync"]
+        SEC["Secret<br/>(secrets → env)"]
+    end
+
+    subgraph PGS["Postgres"]
+        PGT[("store tables")]
+        Q["sync_jobs<br/>group = installation"]
+        DLQ["state = dead"]
     end
 
     NOTION["Notion API<br/>user's workspace"]
 
     SW -->|"HTTPS push (Bearer device token)"| API
     UI -->|"OAuth via chrome.identity"| API
-    API <-->|"r/w"| DDB
+    API <-->|"r/w"| PGT
     API -->|"enqueue (dedup bucket)"| Q
-    Q --> W
-    W <-->|"r/w aggregates, tokens"| DDB
+    W -->|"claim group head"| Q
+    W <-->|"r/w aggregates, tokens"| PGT
     W -->|"create/update pages"| NOTION
     API -->|"OAuth code exchange, setup"| NOTION
-    Q -.->|"after N failures"| DLQ
-    SSM -.->|"terraform apply"| API
-    SSM -.->|"terraform apply"| W
+    Q -.->|"after 10 failures"| DLQ
+    SEC -.->|"envFrom"| API
+    SEC -.->|"envFrom"| W
 ```
 
 **Responsibilities and separation of duties**
 
 - **Content script** measures; it never talks to the network. Measuring in the page is the only way to see scroll, visibility and interaction.
 - **Service worker** is the only network client. It stores everything locally first (offline-first) and syncs in batches; losing connectivity or the server never loses data.
-- **Lambda `api`** authenticates devices, writes reading data to DynamoDB atomically, and enqueues work. It **never writes reading data to Notion** — it only calls Notion for OAuth and one-time setup. This keeps request latency independent of Notion's rate limit.
-- **Lambda `notion-writer`** is the only component that writes pages to Notion and the only one that refreshes Notion tokens. Because it runs one message at a time per installation, token refresh can't race (Notion rotates refresh tokens; two concurrent refreshes would invalidate one another).
-- **Secrets:** the Notion client secret and encryption keys exist only in SSM and Lambda env. **The extension holds no secret** except its own revocable device token.
+- **`cmd/server` (API)** authenticates devices, writes reading data to Postgres atomically, and enqueues work. It **never writes reading data to Notion** — it only calls Notion for OAuth and one-time setup. This keeps request latency independent of Notion's rate limit.
+- **`cmd/poller` (the worker)** is the only component that writes pages to Notion and the only one that refreshes Notion tokens. Because it runs one job at a time per installation, token refresh can't race (Notion rotates refresh tokens; two concurrent refreshes would invalidate one another).
+- **Secrets:** the Notion client secret and encryption keys exist only in the cluster's secret source and the pods' environment. **The extension holds no secret** except its own revocable device token.
 
 ---
 
 ## 4. Core problem
 
-> **Turn a noisy, high-frequency stream of reading measurements from many devices into a small number of correct, idempotent writes to a slow, rate-limited store (Notion) that the user is simultaneously editing by hand — on serverless compute that shares no memory, at $0.**
+> **Turn a noisy, high-frequency stream of reading measurements from many devices into a small number of correct, idempotent writes to a slow, rate-limited store (Notion) that the user is simultaneously editing by hand — from processes that share nothing but a database.**
 
-Get this wrong and you see one of: double-counted minutes (retries), lost minutes (debounce dropping the last update), 429 storms (parallel Lambdas), or the server overwriting the tags/status the user just set in Notion. The design resolves each of these deliberately:
+Get this wrong and you see one of: double-counted minutes (retries), lost minutes (debounce dropping the last update), 429 storms (parallel workers), or the server overwriting the tags/status the user just set in Notion. The design resolves each of these deliberately:
 
 ### 4.1 Count every second exactly once
 
-The extension sends **segments**, each with a client-generated UUID. The API writes the segment row *and* adds its seconds to the article and day aggregates in **one DynamoDB transaction**, conditioned on the segment not already existing. A retried push hits the condition, the whole transaction is cancelled, nothing is double-counted, and the API reports the segment as a duplicate so the extension can mark it synced. Segments are append-only, so there is nothing to merge.
+The extension sends **segments**, each with a client-generated UUID. The API writes the segment row *and* adds its seconds to the article and day aggregates in **one Postgres transaction**, and adds them only if the segment row is new. A retried push finds the segment already there, nothing is added, nothing is double-counted, and the API reports the segment as a duplicate so the extension can mark it synced. Segments are append-only, so there is nothing to merge.
 
 ### 4.2 Never clobber the user
 
@@ -187,18 +176,14 @@ This is why completion is a separate `Completed` checkbox rather than the server
 
 ### 4.3 Debounce and rate-limit with the queue itself
 
-Every push enqueues a message to an SQS **FIFO** queue:
+Every push enqueues a job in the Postgres table `sync_jobs`:
 
-- `MessageGroupId = installation_id` → at most one in-flight message per installation, so each user's Notion connection is naturally serialized (and naturally paused while a 429 back-off is in effect).
-- `MessageDeduplicationId = <type>#<installation>#<key>#<time bucket>` with a bucket of **B** seconds → all pushes for the same article in the same bucket collapse into one message.
-- A queue-level **delivery delay D ≥ B** guarantees that by the time the message is processed, every push that was deduplicated into it has already landed in DynamoDB. (If D < B, the last updates of a bucket would be dropped until the next read.) B must also be ≤ 300 s, SQS FIFO's dedup window.
+- `group_id = installation_id` → the poller only claims the oldest job of a group, and only while no other job of that group is running, so each user's Notion connection is naturally serialized (and naturally paused while a 429 back-off is in effect).
+- `dedup_id = <type>#<installation>#<key>#<time bucket>` with a bucket of **B** seconds → all pushes for the same article in the same bucket collapse into one job (a second insert with the same `dedup_id` is dropped).
+- A **delay D ≥ B** on every job (`run_at = now + D`) guarantees that by the time the job is processed, every push that was deduplicated into it has already landed in Postgres. (If D < B, the last updates of a bucket would be dropped until the next read.) B must also be ≤ 300 s (C5).
 - The worker always **reads the latest aggregate** and writes absolute values to Notion, so processing twice is harmless.
 
 The result: reading one article for an hour yields roughly 30 Notion writes instead of hundreds, and a user with many tabs can't starve others.
-
-### 4.4 Fit Always Free capacity
-
-25 WCU is small. A segment costs roughly 6 WCU (3-item transaction × 2) plus 1–2 WCU for the "max" updates. Segments are therefore coarse (≈60 s of active time), and pushes are batched. Provisioned tables have burst credit for short spikes; sustained overload returns a retryable error and the extension backs off.
 
 ---
 
@@ -211,18 +196,18 @@ sequenceDiagram
     autonumber
     participant U as User
     participant X as Extension
-    participant A as Lambda api
+    participant A as API server
     participant N as Notion
-    participant D as DynamoDB
+    participant D as Postgres
 
     U->>X: Click "Connect Notion"
     X->>X: generate PKCE verifier + challenge
     X->>A: launchWebAuthFlow → GET /v1/oauth/notion/start?code_challenge&ext_redirect
-    A->>D: put OAUTHSTATE (TTL 10 min)
+    A->>D: insert oauth_states row (expires in 10 min)
     A-->>X: 302 → Notion authorize (owner=user, state)
     U->>N: Pick workspace, pages, accept template
     N-->>A: GET /v1/oauth/notion/callback?code&state
-    A->>D: consume OAUTHSTATE
+    A->>D: consume oauth_states row
     A->>N: POST /v1/oauth/token (Basic client_id:secret)
     N-->>A: access_token, refresh_token, bot_id, workspace, owner, duplicated_template_id
     alt template duplicated
@@ -231,7 +216,7 @@ sequenceDiagram
     else template skipped
         Note over A: installation.status = needs_setup
     end
-    A->>D: upsert USER, INST (tokens encrypted), put AUTHCODE (TTL 2 min)
+    A->>D: upsert users, installations (tokens encrypted), insert auth_codes row (expires in 2 min)
     A-->>X: 302 → https://EXT_ID.chromiumapp.org/?code=…
     X->>A: POST /v1/auth/token {code, code_verifier, device_name}
     A-->>X: device_token, installation status
@@ -248,10 +233,10 @@ sequenceDiagram
     autonumber
     participant P as Page (content script)
     participant S as Service worker
-    participant A as Lambda api
-    participant D as DynamoDB
-    participant Q as SQS FIFO
-    participant W as notion-writer
+    participant A as API server
+    participant D as Postgres
+    participant Q as sync_jobs
+    participant W as poller
     participant N as Notion
 
     P->>P: adapter matches → canonical URL + metadata
@@ -262,15 +247,15 @@ sequenceDiagram
     end
     S->>A: alarm → POST /v1/sync/push {articles, segments}
     loop each segment
-        A->>D: TransactWrite: put SEG (if not exists) + ADD to ART + ADD to DAY
-        A->>D: conditional SET max_progress / last_read_at
+        A->>D: one transaction: insert segment (if new) + add to article + add to day
+        A->>D: same transaction: raise max_progress / last_read_at
     end
-    A->>Q: send article + day messages (group = installation, dedup = bucket)
+    A->>Q: insert article + day jobs (group = installation, dedup = bucket)
     A-->>S: accepted / duplicate / rejected
     S->>S: mark accepted + duplicate as synced
-    Note over Q: delivery delay D
-    Q->>W: message
-    W->>D: read ART aggregate (+ decrypt token)
+    Note over Q: run_at = now + D
+    W->>Q: claim group head
+    W->>D: read article aggregate (+ decrypt token)
     alt no Notion page yet and total ≥ min seconds
         W->>N: query data source by URL → create page if absent
     else page exists
@@ -284,16 +269,16 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Q as SQS FIFO
-    participant W as notion-writer
+    participant Q as sync_jobs
+    participant W as poller
     participant N as Notion
-    participant D as DynamoDB
+    participant D as Postgres
 
-    Q->>W: message
+    W->>Q: claim job
     W->>N: PATCH page
     alt 429 rate_limited
         N-->>W: 429 Retry-After: s
-        W->>Q: ChangeMessageVisibility(s), report failure (group pauses)
+        W->>Q: release job, run_at = now + s (group pauses)
     else 401 unauthorized
         W->>N: refresh token
         alt refresh ok
@@ -356,10 +341,10 @@ stateDiagram-v2
 
 ## 6. Where things live
 
-- **Build spec:** [`reading-tracker-agent-spec.md`](./reading-tracker-agent-spec.md) — exact API contracts, DynamoDB keys, Notion schema, task list, constraints.
-- **Repo layout (planned):** `extension/` (MV3 + TS + Vite), `backend/` (Go: `cmd/api`, `cmd/worker`, `cmd/local`, `internal/…`), `infra/terraform/`.
-- **Secrets:** SSM Parameter Store under `/reading/<env>/…`.
-- **Runtime health:** CloudWatch Logs (7-day retention), DLQ depth, AWS Budgets alert at $1.
+- **Build spec:** [`reading-tracker-agent-spec.md`](./reading-tracker-agent-spec.md) — exact API contracts, Postgres tables, Notion schema, task list, constraints.
+- **Repo layout:** `extension/` (MV3 + TS + Vite), `backend/` (Go: `cmd/server`, `cmd/poller`, `cmd/migrate`, `internal/…`, `deploy/manifest.yaml`).
+- **Secrets:** AWS Parameter Store parameters under `/reading-tracker/…`, synced into a Kubernetes Secret by the cluster's External Secrets Operator (`aws-parameter-store` ClusterSecretStore). Steps in [`backend/README.md`](../backend/README.md) → "Deploy to tuncloud".
+- **Runtime health:** `/healthz` on the server (:8080) and the poller (:8081), pod logs, and the count of `sync_jobs` rows in state `dead`.
 - **Notion template:** a public Notion page containing the two databases and default views; its URL is configured in the Notion integration settings.
 
 ---
@@ -369,12 +354,10 @@ stateDiagram-v2
 - 🔶 **Stats dashboard location.** Notion views + a Daily Log chart may be enough. If not: (a) inside the extension (offline, but only this device's local data unless we add a stats endpoint), or (b) a small static web app reading a `/v1/stats` endpoint (works anywhere, more surface). Depends on how much Notion charts satisfy in practice.
 - 🔶 **Tracking thresholds.** Idle threshold (60–90 s), segment size (~60 s), minimum active time before a Notion page is created (~30 s), and the completion rule (progress ≥ 90 % and active time ≥ some fraction of estimated reading time). Defaults are reasonable; tune after real use. They're served from `/v1/config` so they can change without an extension release.
 - 🔶 **Debounce bucket B / delay D.** Smaller = Notion updates sooner, more writes. Starting point B = D = 120 s.
-- 🔶 **Custom domain.** The Function URL is stable as long as the function isn't recreated, but it's ugly and it's baked into Notion's redirect URI and the extension. CloudFront in front gives a stable custom domain (CloudFront has its own always-free allowance); adds one more resource.
 - 🔶 **Freedium mirror list.** Mirrors change; the default list is bundled and overridable via `/v1/config`. Which mirrors to ship initially?
 - 🔶 **Multiple workspaces per user.** v1 keeps one active installation per user (reconnecting to another workspace switches). Supporting several means routing each article to a chosen workspace.
 - 🔶 **Device token lifetime.** Non-expiring until revoked (simple) vs. rotating (safer). v1 assumes non-expiring + revocation.
 - 🔶 **Notion access-token expiry semantics.** The design refreshes reactively on 401; if Notion returns explicit expiry, refresh proactively in the worker.
-- 🔶 **Lambda concurrency caps.** New AWS accounts can have a low account concurrency limit, which blocks `reserved_concurrency`. Fallback is SQS `maximum_concurrency` for the worker and relying on device auth for the API.
 
 ---
 
@@ -383,8 +366,7 @@ stateDiagram-v2
 - Notion API version pinned: **`2025-09-03`** (databases contain *data sources*; most database operations moved to `/v1/data_sources`).
 - Notion limits: average **3 requests/s per connection**, plus a per-workspace limit; 429 with `Retry-After`. Rich text ≤ 2000 chars per item; ≤ 100 blocks per append.
 - Notion OAuth: refresh tokens rotate — always persist the newest one.
-- AWS Always Free (all accounts, no expiry): Lambda 1M requests/month, DynamoDB 25 GB + 25 WCU/RCU provisioned, SQS 1M requests/month. Accounts created after 2025-07-15 on the *Free plan* close after 6 months — use a Paid-plan account and stay within Always Free.
-- References: [Notion — Authorization](https://developers.notion.com/docs/authorization) · [Notion — Upgrading to 2025-09-03](https://developers.notion.com/docs/upgrade-guide-2025-09-03) · [Notion — Request limits](https://developers.notion.com/reference/request-limits) · [Notion — Public integrations](https://developers.notion.com/guides/get-started/public-integrations) · [AWS Free Tier](https://aws.amazon.com/free/)
+- References: [Notion — Authorization](https://developers.notion.com/docs/authorization) · [Notion — Upgrading to 2025-09-03](https://developers.notion.com/docs/upgrade-guide-2025-09-03) · [Notion — Request limits](https://developers.notion.com/reference/request-limits) · [Notion — Public integrations](https://developers.notion.com/guides/get-started/public-integrations)
 
 ---
 *Living document — update as 🔶 OPEN items resolve.*

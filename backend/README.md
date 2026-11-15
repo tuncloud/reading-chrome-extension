@@ -1,9 +1,8 @@
 # Reading Tracker backend
 
-Go service behind the Reading Tracker Chrome extension, with two deployment modes: on AWS
-it runs as an API Lambda (Echo) and a notion-writer worker Lambda (SQS FIFO) sharing one
-DynamoDB table; on Kubernetes it runs as two long-running processes, `cmd/server` and
-`cmd/poller`, sharing one Postgres database (`STORE=postgres`).
+Go service behind the Reading Tracker Chrome extension. It runs on Kubernetes as two long-running
+processes, `cmd/server` (the HTTP API, Echo) and `cmd/poller` (the Notion sync), sharing one
+Postgres database that holds both the data and the sync queue (`sync_jobs`).
 Spec: [`../docs/reading-tracker-agent-spec.md`](../docs/reading-tracker-agent-spec.md).
 
 For the project-wide C4 architecture diagrams, see [`../docs/c4-architecture.md`](../docs/c4-architecture.md).
@@ -13,17 +12,16 @@ For a single end-to-end checklist (local development and first deploy), see [`do
 ## Prerequisites
 
 - Go 1.26
-- Podman with a running machine (`podman machine start`) for DynamoDB Local
+- Podman with a running machine (`podman machine start`) for the local Postgres
 - `openssl` (used by `make .env.local` to generate secrets)
 
 ## Common tasks
 
 ```sh
-make ddb-up        # start DynamoDB Local on :8000 (container reading-ddb, in-memory)
 make pg-up         # start Postgres on :5432 (container reading-pg)
-make test          # go test ./... (needs both DynamoDB Local and Postgres running)
-make ddb-down      # stop DynamoDB Local
+make test          # go test ./... (needs Postgres running)
 make pg-down       # stop Postgres
+make image         # build the container image with Podman (linux/arm64)
 ```
 
 Before committing: `gofmt -l . ; go vet ./... && go test -race ./...`.
@@ -31,42 +29,28 @@ Before committing: `gofmt -l . ; go vet ./... && go test -race ./...`.
 ## Run locally
 
 ```sh
+make pg-up         # start Postgres on :5432 (container reading-pg)
 make .env.local    # copies .env.local.example and generates TOKEN_ENC_KEYS / DEVICE_TOKEN_PEPPER
 # edit .env.local: NOTION_CLIENT_ID, NOTION_CLIENT_SECRET, ALLOWED_EXTENSION_IDS
-make run-local     # API on :8080, worker in-process, DynamoDB Local
+make run           # cmd/server (API on :8080) and cmd/poller together
 ```
 
-`cmd/local` creates the table if needed and runs the worker behind an in-process
-queue (`LOCAL_QUEUE_DELAY_SECONDS`). Keep that delay ≥ `DEBOUNCE_BUCKET_SECONDS`
-(C5); it logs a WARN at startup otherwise. Register
-`http://localhost:8080/v1/oauth/notion/callback` (or `PUBLIC_BASE_URL` + that path)
-as a redirect URI of the Notion integration.
+`make run-pg` is an alias of `make run`.
 
-To run against a fake Notion instead of api.notion.com, set `NOTION_API_BASE` to its
-base URL (the in-memory fake in `internal/adapter/notion/notiontest` is what the tests use).
-
-## Run locally on Postgres
-
-```sh
-make pg-up         # start Postgres on :5432 (container reading-pg)
-make .env.local    # if you haven't already (see "Run locally" above)
-make run-pg        # runs cmd/server and cmd/poller together, STORE=postgres
-```
-
-`make run-pg` applies pending migrations at startup (same as the binaries do in Kubernetes)
+`make run` applies pending migrations at startup (same as the binaries do in Kubernetes)
 and starts `cmd/server` and `cmd/poller` against the local Postgres. To apply migrations on
 their own, without starting either process: `make pg-migrate`.
+
+`QUEUE_DELAY_SECONDS` defaults to `DEBOUNCE_BUCKET_SECONDS`; keep it ≥ the bucket and ≤ 900
+(C5). Both processes refuse to start otherwise. Register
+`http://localhost:8080/v1/oauth/notion/callback` (or `PUBLIC_BASE_URL` + that path)
+as a redirect URI of the Notion integration.
 
 Check it from another terminal: `curl -s localhost:8080/healthz` (the server) and
 `curl -s localhost:8081/healthz` (the poller) both return `ok`.
 
-## Build
-
-```sh
-make build         # build/api/bootstrap and build/worker/bootstrap (linux/arm64, lambda.norpc)
-```
-
-`events/` holds a sample SQS event for invoking the worker locally.
+To run against a fake Notion instead of api.notion.com, set `NOTION_API_BASE` to its
+base URL (the in-memory fake in `internal/adapter/notion/notiontest` is what the tests use).
 
 ## Architecture
 
@@ -76,15 +60,15 @@ Clean architecture: dependencies point inward, enforced by `internal/archtest`.
 |---|---|---|
 | Domain | `internal/domain` — entities and business rules | standard library only |
 | Use cases | `internal/usecase/{auth,connect,setup,readsync,library,account,notionsync}`; all ports (the interfaces use cases need) live centrally in `usecase/port`, owned by this layer; error kinds in `usecase/apperr` | domain, other use cases, `platform/{crypto,textutil}`, stdlib, `oklog/ulid` (id generation) |
-| Adapters | `internal/adapter/dynamo` (DynamoDB), `adapter/postgres` (Postgres store), `adapter/notion` (Notion API), `adapter/queue` (SQS/local queue, consumer), `adapter/queue/pgqueue` (Postgres-backed sync queue + poller), `adapter/queue/msg` (queue message/dedup-id types shared by both queues), `adapter/httpapi` (Echo) | domain, use cases, platform — never another adapter |
+| Adapters | `internal/adapter/postgres` (Postgres store), `adapter/notion` (Notion API), `adapter/queue/pgqueue` (Postgres-backed sync queue + poller), `adapter/queue/msg` (queue message/dedup-id types, the `SyncQueue` port implementation, a test `Recorder`), `adapter/httpapi` (Echo) | domain, use cases, platform — never another adapter |
 | Platform | `internal/platform/{crypto,config,textutil}`, `platform/pgmigrate` (applies SQL migrations) | platform only |
-| Composition | `internal/wire` (the composition root), `wire/awswire` (AWS clients + SQS consumer), used by `cmd/{api,worker,local}` (Lambda API, Lambda worker, the all-in-one local server) and `cmd/{server,poller,migrate}` (Kubernetes API process, Kubernetes poller, standalone migration runner) | everything |
-| Test-only | `internal/archtest` (enforces this table), `internal/e2e` (API + worker against DynamoDB Local and a fake Notion) | — |
-| Test helpers | `adapter/dynamo/dynamotest` (DynamoDB Local store), `adapter/notion/notiontest` (fake Notion server), `adapter/storetest` (store-agnostic conformance suite run by both `adapter/dynamo` and `adapter/postgres`), `platform/pgtest` (throwaway, fully migrated Postgres databases) | live inside their adapter |
+| Composition | `internal/wire` (the composition root), used by `cmd/{server,poller,migrate}` (API process, Notion-sync poller, standalone migration runner) | everything |
+| Test-only | `internal/archtest` (enforces this table), `internal/e2e` (API + Notion sync against Postgres and a fake Notion) | — |
+| Test helpers | `adapter/postgres/postgrestest` (fresh migrated database + store), `adapter/notion/notiontest` (fake Notion server), `adapter/storetest` (conformance suite for the store, run by `adapter/postgres`), `platform/pgtest` (throwaway, fully migrated Postgres databases) | live inside their adapter |
 
-Flow of a read: extension → `adapter/httpapi` → `usecase/readsync` → `port.Reading` (`adapter/dynamo`) +
-`port.SyncQueue` (`adapter/queue`) → SQS → `adapter/queue.Consumer` → `usecase/notionsync` →
-`port.Reading` (`adapter/dynamo`) + `port.NotionPages` (`adapter/notion`).
+Flow of a read: extension → `adapter/httpapi` → `usecase/readsync` → `port.Reading` (`adapter/postgres`) +
+`port.SyncQueue` (`pgqueue.Sender`) → `sync_jobs` → `pgqueue.Poller` → `usecase/notionsync` →
+`port.Reading` (`adapter/postgres`) + `port.NotionPages` (`adapter/notion`).
 
 Adding a feature: put rules in `domain`, orchestration in a `usecase` package that depends on the
 ports in `usecase/port` (add a method there if one is missing), implement those ports in an adapter,

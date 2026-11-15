@@ -3,14 +3,11 @@
 This document describes the Reading Tracker Chrome extension and Go backend using
 the [C4 model](https://c4model.com/). Diagrams use Mermaid's C4 diagram syntax.
 
-The system has two supported backend deployment modes:
+The backend runs on Kubernetes as two processes, `cmd/server` and
+`cmd/poller`, backed by Postgres, which also holds the sync queue.
 
-- **AWS serverless:** API Lambda, worker Lambda, DynamoDB, and SQS.
-- **Kubernetes:** `cmd/server` and `cmd/poller`, backed by Postgres and a
-  Postgres-backed sync queue.
-
-In both modes, the extension records active reading time locally and the backend
-eventually updates the user's Notion workspace.
+The extension records active reading time locally and the backend eventually
+updates the user's Notion workspace.
 
 ## 1. System context
 
@@ -42,7 +39,7 @@ C4Context
 2. The service worker stores flushed reading segments in IndexedDB.
 3. The service worker pushes pending records to the backend.
 4. The backend persists the record and enqueues a debounced synchronization job.
-5. A worker or poller consumes the job and updates the user's Notion pages.
+5. The poller consumes the job and updates the user's Notion pages.
 
 ## 2. Container view
 
@@ -56,7 +53,7 @@ The browser-side containers are bundled from `extension/src`:
   authentication, API calls, alarms, and synchronization scheduling.
 
 The backend containers are implemented in `backend` and share the same use cases
-and ports. The storage and queue containers vary by deployment mode.
+and ports. The store and the sync queue live in the same Postgres database.
 
 ```mermaid
 C4Container
@@ -75,8 +72,8 @@ C4Container
     System_Boundary(backend, "Reading Tracker backend") {
         Container(api, "HTTP API", "Go + Echo", "Auth, Notion connection, setup, reading sync, library, and account endpoints")
         Container(sync, "Notion sync processor", "Go", "Consumes sync jobs, applies reading policy, and updates Notion")
-        ContainerDb(store, "Application store", "DynamoDB or Postgres", "Users, devices, OAuth grants, installations, reading records, and sync state")
-        Container(queue, "Sync queue", "SQS FIFO or Postgres queue", "Debounced, ordered Notion synchronization jobs")
+        ContainerDb(store, "Application store", "Postgres", "Users, devices, OAuth grants, installations, reading records, and sync state")
+        ContainerDb(queue, "Sync queue", "Postgres table sync_jobs", "Debounced, ordered Notion synchronization jobs")
     }
 
     Person(reader) --> content : Reads an article
@@ -94,8 +91,8 @@ C4Container
 ```
 
 The API and sync processor do not call each other directly. The queue is the
-boundary that makes Notion writes asynchronous and allows retry/dead-letter
-handling.
+boundary that makes Notion writes asynchronous and allows retry handling; a job
+that fails 10 times is kept as `dead` for 14 days.
 
 ## 3. Backend component view
 
@@ -125,8 +122,8 @@ C4Component
     }
 
     Container_Boundary(adapterContainer, "Adapters") {
-        Component(httpStore, "DynamoDB/Postgres adapters", "Go", "Implements repository ports")
-        Component(queueAdapter, "SQS/local/Postgres queue adapters", "Go", "Implements queue sending and consuming")
+        Component(httpStore, "Postgres adapter", "Go", "Implements repository ports")
+        Component(queueAdapter, "Postgres queue adapter", "Go", "Implements queue sending and polling")
         Component(notionAdapter, "Notion gateway", "Go", "Calls Notion API with pacing and token handling")
     }
 
@@ -163,54 +160,17 @@ C4Component
     Rel(wire, notionAdapter, "Injects")
 ```
 
-The same use-case and adapter contracts are used in both deployment modes:
+The containers map to code as follows:
 
-| Concern | AWS mode | Kubernetes mode |
-| --- | --- | --- |
-| API process | `cmd/api` in API Lambda | `cmd/server` |
-| Sync process | `cmd/worker` in worker Lambda | `cmd/poller` |
-| Store adapter | `internal/adapter/dynamo` | `internal/adapter/postgres` |
-| Queue adapter | SQS FIFO | Postgres-backed queue |
-| Infrastructure | Terraform resources | `backend/deploy/manifest.yaml` |
+| Concern | Implementation |
+| --- | --- |
+| API process | `cmd/server` |
+| Sync process | `cmd/poller` |
+| Store adapter | `internal/adapter/postgres` |
+| Queue adapter | `internal/adapter/queue/pgqueue` (table `sync_jobs`) |
+| Infrastructure | `backend/deploy/manifest.yaml` |
 
 ## 4. Deployment view
-
-### AWS serverless deployment
-
-```mermaid
-C4Deployment
-    title Deployment View - AWS serverless
-
-    Deployment_Node(aws, "AWS account", "Managed AWS resources") {
-        Deployment_Node(edge, "Public edge", "Lambda Function URL") {
-            Container_Instance(apiLambda, "API Lambda", "Go + Echo", "Handles HTTPS API requests")
-        }
-        Deployment_Node(compute, "Lambda", "arm64, provided.al2023") {
-            Container_Instance(workerLambda, "Worker Lambda", "Go", "Processes SQS sync jobs")
-        }
-        Deployment_Node(data, "Data services", "Managed AWS services") {
-            ContainerDb(dynamo, "DynamoDB table", "Single table", "Application data and sync state")
-            ContainerDb(sqs, "SQS FIFO queue", "FIFO + DLQ", "Debounced sync jobs")
-        }
-    }
-    System_Ext(notion, "Notion API", "OAuth and page API")
-    System_Ext(extension, "Chrome extension", "User-installed MV3 extension")
-
-    Rel(extension, apiLambda, "HTTPS")
-    Rel(apiLambda, dynamo, "Reads/writes")
-    Rel(apiLambda, sqs, "Sends jobs")
-    Rel(sqs, workerLambda, "Event source mapping")
-    Rel(workerLambda, dynamo, "Reads/writes")
-    Rel(workerLambda, notion, "HTTPS")
-    Rel(apiLambda, notion, "OAuth/setup HTTPS")
-```
-
-The API Function URL is publicly reachable, but CORS is restricted to the
-configured extension IDs and application authentication uses the device token.
-Failed jobs are moved to the FIFO dead-letter queue after the configured retry
-count.
-
-### Kubernetes deployment
 
 ```mermaid
 C4Deployment
@@ -238,9 +198,11 @@ C4Deployment
     Rel(poller, notion, "HTTPS")
 ```
 
-The Kubernetes processes share the same Postgres database, but the API and
-poller remain separate processes so API latency is independent of Notion API
-work. Migrations are applied before the server and poller start.
+The two processes share the same Postgres database, but the API and poller
+remain separate processes so API latency is independent of Notion API work.
+Each process applies pending migrations at startup, before it serves or polls.
+The Ingress restricts CORS to the configured extension IDs; application
+authentication uses the device token.
 
 ## 5. Code map
 
@@ -251,16 +213,14 @@ work. Migrations are applied before the server and poller start.
 | Backend HTTP adapter | `backend/internal/adapter/httpapi` |
 | Backend use cases | `backend/internal/usecase` |
 | Backend domain | `backend/internal/domain` |
-| Storage adapters | `backend/internal/adapter/dynamo`, `backend/internal/adapter/postgres` |
-| Queue adapters | `backend/internal/adapter/queue` |
+| Storage adapter | `backend/internal/adapter/postgres` |
+| Queue adapter | `backend/internal/adapter/queue/pgqueue`, `backend/internal/adapter/queue/msg` |
 | Notion adapter | `backend/internal/adapter/notion` |
 | Composition roots | `backend/internal/wire`, `backend/cmd` |
-| AWS infrastructure | `infra/terraform` |
 | Kubernetes deployment | `backend/deploy/manifest.yaml` |
 
 For behavior and operational procedures, see:
 
 - [`extension/README.md`](../extension/README.md)
 - [`backend/README.md`](../backend/README.md)
-- [`infra/README.md`](../infra/README.md)
 - [`runbook.md`](runbook.md)

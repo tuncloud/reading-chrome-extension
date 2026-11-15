@@ -39,10 +39,10 @@ For a single end-to-end checklist (local development and first deploy), see [`do
 ## Prerequisites
 
 - Node ≥ 22 and pnpm.
-- The backend running locally, using Podman for DynamoDB Local:
+- The backend running locally, using Podman for Postgres:
 
   ```bash
-  cd ../backend && make ddb-up && make run-local
+  cd ../backend && make pg-up && make run
   ```
 
 - For connecting Notion: a Notion public integration whose redirect URI is `http://localhost:8080/v1/oauth/notion/callback`. The backend's `.env.local` must hold its client id and secret, and `ALLOWED_EXTENSION_IDS` must include this extension's ID (next section).
@@ -77,7 +77,7 @@ openssl rsa -in extension-key.pem -pubout -outform DER | shasum -a 256 | head -c
 
 Then:
 1. Put that ID in the backend's `ALLOWED_EXTENSION_IDS`.
-2. Restart `make run-local`.
+2. Restart `make run`.
 3. Run `pnpm build` and reload the extension.
 
 ## Commands
