@@ -1,5 +1,6 @@
 // The snake_case JSON of spec §2 and its mapping to shared types.
-import type { ArticleStatus, Installation, Me, PushBody, PushResult, TokenGrant } from '../shared/types'
+import { ApiError } from '../shared/errors'
+import type { ArticleStatus, History, Installation, Me, PushBody, PushResult, TokenGrant } from '../shared/types'
 
 export interface WireInstallation {
   id: string
@@ -83,5 +84,45 @@ export function articleStatus(w: WireArticleStatus): ArticleStatus {
   return {
     totalSeconds: w.total_seconds, maxProgress: w.max_progress, sessions: w.sessions, completed: w.completed,
     lastReadAt: w.last_read_at, notionUrl: w.notion_url ?? null,
+  }
+}
+
+export interface WireHistoryArticle {
+  canonical_url: string
+  source: string
+  title: string
+  author: string
+  site_name: string
+  word_count: number
+  published_at: string
+  total_seconds: number
+  max_progress: number
+  last_read_at: string
+  completed: boolean
+  notion_url: string | null
+}
+
+export interface WireHistory {
+  articles: WireHistoryArticle[]
+  today: { date: string; seconds: number }
+}
+
+// history maps GET /v1/history; a body that is not a history throws, so a caller never stores half a restore.
+export function history(w: WireHistory | null | undefined): History {
+  if (!w || !Array.isArray(w.articles) || !w.today || typeof w.today.date !== 'string' || typeof w.today.seconds !== 'number') {
+    throw new ApiError(200, 'bad_response', 'GET /v1/history: response is not a history')
+  }
+  return {
+    articles: w.articles.map((a) => {
+      if (!a || typeof a.canonical_url !== 'string' || typeof a.total_seconds !== 'number') {
+        throw new ApiError(200, 'bad_response', 'GET /v1/history: malformed article')
+      }
+      return {
+        canonicalUrl: a.canonical_url, source: a.source ?? '', title: a.title ?? '', author: a.author ?? '', siteName: a.site_name ?? '',
+        wordCount: a.word_count ?? 0, publishedAt: a.published_at ?? '', totalSeconds: a.total_seconds, maxProgress: a.max_progress ?? 0,
+        lastReadAt: a.last_read_at ?? '', completed: a.completed === true, notionUrl: a.notion_url ?? null,
+      }
+    }),
+    today: { date: w.today.date, seconds: w.today.seconds },
   }
 }

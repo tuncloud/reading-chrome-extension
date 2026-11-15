@@ -1,6 +1,6 @@
 // Shared test helpers: a fresh IndexedDB, a fixed clock, a log capture and an API stub.
 import { parseRemoteConfig } from '../src/shared/config'
-import { mergeArticle, type ArticleMeta, type Segment, type StoredSegment } from '../src/shared/reading'
+import { localDate, mergeArticle, type ArticleMeta, type Segment, type StoredSegment } from '../src/shared/reading'
 import type { Installation } from '../src/shared/types'
 import type { Log } from '../src/shared/log'
 import { Db, ReadingDb } from '../src/background/db'
@@ -95,6 +95,10 @@ export function apiStub(over: Partial<ApiClient> = {}): ApiClient & { calls: Cal
     articlesStatus: async (t, urls) => {
       rec('articlesStatus', [t, urls])
       return over.articlesStatus ? over.articlesStatus(t, urls) : {}
+    },
+    history: async (t, p) => {
+      rec('history', [t, p])
+      return over.history ? over.history(t, p) : { articles: [], today: { date: localDate(new Date('2026-10-06T03:00:00.000Z'), p.timeZone), seconds: 0 } }
     },
     setupPages: async (t, q) => {
       rec('setupPages', [t, q])

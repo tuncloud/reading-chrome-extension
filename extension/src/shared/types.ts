@@ -53,6 +53,17 @@ export interface ArticleStatus {
   notionUrl: string | null
 }
 
+export interface HistoryArticle {
+  canonicalUrl: string; source: string; title: string; author: string; siteName: string
+  wordCount: number; publishedAt: string; totalSeconds: number; maxProgress: number
+  lastReadAt: string; completed: boolean; notionUrl: string | null
+}
+
+export interface History {
+  articles: HistoryArticle[]
+  today: { date: string; seconds: number }
+}
+
 export interface NotionPage {
   id: string
   title: string

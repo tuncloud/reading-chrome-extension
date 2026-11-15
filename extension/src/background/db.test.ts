@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import { META, record, segment, testDb } from '../../test/helpers'
+import { restoreArticle } from '../shared/reading'
+import type { HistoryArticle } from '../shared/types'
 import { Db, ReadingDb } from './db'
 
 describe('Db', () => {
@@ -87,6 +89,30 @@ describe('Db', () => {
     await db.deleteKv('installation', 'enabled_domains')
     expect(await db.getKv('installation')).toBeUndefined()
     expect(await db.getKv('enabled_domains')).toBeUndefined()
+  })
+
+  test('restoreArticles merges by larger-of and creates no segments', async () => {
+    await record(db, segment('a', { activeSeconds: 300 }))
+    const server = (over: Partial<HistoryArticle>): HistoryArticle => ({
+      canonicalUrl: META.canonicalUrl, source: 'medium', title: 'S', author: 'A', siteName: 'S', wordCount: 1000, publishedAt: '2026-09-30',
+      totalSeconds: 180, maxProgress: 0.2, lastReadAt: '2026-10-06T03:07:00Z', completed: false, notionUrl: null, ...over,
+    })
+    await db.restoreArticles([server({}), server({ canonicalUrl: 'https://e.com/new', totalSeconds: 60 })], restoreArticle)
+    const [same] = await db.articles([META.canonicalUrl])
+    const [added] = await db.articles(['https://e.com/new'])
+    expect(same?.totalSeconds).toBe(300)
+    expect(added).toMatchObject({ totalSeconds: 60, originalUrl: 'https://e.com/new' })
+    expect(await db.countUnsynced()).toBe(1) // only the pre-existing local segment
+    expect(await db.segmentsSince('')).toHaveLength(1)
+  })
+
+  test('restoreArticles on an empty store adds no segments', async () => {
+    await db.restoreArticles([{
+      canonicalUrl: 'https://e.com/x', source: 'web', title: 'X', author: '', siteName: '', wordCount: 0, publishedAt: '',
+      totalSeconds: 60, maxProgress: 1, lastReadAt: '2026-10-06T03:07:00Z', completed: true, notionUrl: null,
+    }], restoreArticle)
+    expect(await db.countUnsynced()).toBe(0)
+    expect(await db.segmentsSince('')).toEqual([])
   })
 })
 

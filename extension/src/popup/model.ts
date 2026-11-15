@@ -1,5 +1,5 @@
 // The popup's view model (spec T30), built from local data plus the server's article status.
-import { roundMinutes, todaySeconds, type LocalArticle } from '../shared/reading'
+import { localDate, roundMinutes, todaySeconds, type LocalArticle } from '../shared/reading'
 import type { ApiClient } from '../background/api'
 import type { Db } from '../background/db'
 import type { ArticleStatus, SessionState } from '../shared/types'
@@ -59,6 +59,8 @@ export async function buildPopupModel(deps: PopupDeps, session: SessionState, cu
   const { db, api, clock } = deps
   const now = clock.now()
   const todays = await db.segmentsSince(new Date(now.getTime() - TODAY_WINDOW_MS).toISOString())
+  const carry = await db.getKv('today_carry')
+  const restored = carry && carry.date === localDate(now, clock.timeZone()) ? carry.seconds : 0
   const recent = await db.recentArticles(RECENT)
   const current = currentUrl ? (await db.articles([currentUrl]))[0] : undefined
   const urls = [...new Set([...(currentUrl ? [currentUrl] : []), ...recent.map((a) => a.canonicalUrl)])]
@@ -77,7 +79,7 @@ export async function buildPopupModel(deps: PopupDeps, session: SessionState, cu
   return {
     kind: 'active',
     workspaceName: inst.workspaceName,
-    todayMinutes: roundMinutes(todaySeconds(todays, now, clock.timeZone())),
+    todayMinutes: roundMinutes(todaySeconds(todays, now, clock.timeZone()) + restored),
     current: currentView,
     recent: recent.map((a) => view(a.canonicalUrl, a, status[a.canonicalUrl])),
     libraryUrl: inst.libraryUrl,

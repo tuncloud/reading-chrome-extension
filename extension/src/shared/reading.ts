@@ -1,4 +1,5 @@
 // Local reading records (spec §3.4) and the rules that combine them.
+import type { HistoryArticle } from './types'
 
 export interface ArticleMeta {
   canonicalUrl: string
@@ -72,4 +73,32 @@ export function todaySeconds(segments: readonly Segment[], now: Date, timeZone: 
   return segments
     .filter((s) => localDate(new Date(s.startedAt), timeZone) === today)
     .reduce((sum, s) => sum + s.activeSeconds, 0)
+}
+
+// laterOf returns the later of two RFC 3339 instants (compared as times, since formats differ in fractional digits).
+function laterOf(a: string, b: string): string {
+  return new Date(b).getTime() > new Date(a).getTime() ? b : a
+}
+
+// restoreArticle merges a server article into the local one: larger total, larger progress, later last-read.
+// Totals are never added: the server already holds what this device pushed. Local descriptive fields win; empty ones are filled.
+export function restoreArticle(local: LocalArticle | undefined, server: HistoryArticle): LocalArticle {
+  return {
+    canonicalUrl: server.canonicalUrl,
+    source: keep(local?.source ?? '', server.source),
+    title: keep(local?.title ?? '', server.title),
+    author: keep(local?.author ?? '', server.author),
+    siteName: keep(local?.siteName ?? '', server.siteName),
+    wordCount: local && local.wordCount > 0 ? local.wordCount : server.wordCount,
+    publishedAt: keep(local?.publishedAt ?? '', server.publishedAt),
+    originalUrl: keep(local?.originalUrl ?? '', server.canonicalUrl),
+    totalSeconds: Math.max(local?.totalSeconds ?? 0, server.totalSeconds),
+    maxProgress: Math.max(local?.maxProgress ?? 0, server.maxProgress),
+    lastReadAt: local ? laterOf(local.lastReadAt, server.lastReadAt) : server.lastReadAt,
+  }
+}
+
+// todayCarry is how far the server's total for today exceeds what local segments add up to; never below 0.
+export function todayCarry(serverSeconds: number, localSeconds: number): number {
+  return Math.max(0, serverSeconds - localSeconds)
 }

@@ -6,6 +6,7 @@ import { ConfigService } from './config'
 import { Db, ReadingDb } from './db'
 import { DomainService } from './domains'
 import { RecordService } from './record'
+import { RestoreService } from './restore'
 import { SessionService } from './session'
 import { SetupService } from './setup'
 import { SyncService } from './sync'
@@ -17,6 +18,7 @@ export interface Services {
   config: ConfigService
   sync: SyncService
   recorder: RecordService
+  restore: RestoreService
   session: SessionService
   setup: SetupService
   domains: DomainService
@@ -34,10 +36,15 @@ export function createServices(scope: string): Services {
   const syncSoon = () => {
     sync.run().catch((e: unknown) => log.warn(`sync failed: ${e instanceof Error ? e.message : String(e)}`))
   }
+  const restore = new RestoreService({ db, api, clock: { now, timeZone }, log })
+  // After a connect: restore history first, then sync, whatever the restore's outcome.
+  const afterConnect = () => {
+    void restore.run().finally(syncSoon)
+  }
   return {
-    db, api, log, config, sync,
+    db, api, log, config, sync, restore,
     recorder: new RecordService({ db, now, config: () => config.current(), syncSoon, log }),
-    session: new SessionService({ db, api, log, afterConnect: syncSoon }),
+    session: new SessionService({ db, api, log, afterConnect }),
     setup: new SetupService({ db, api }),
     domains: new DomainService({ db }),
   }

@@ -115,6 +115,7 @@ export class SessionService {
       if (!isApiError(e, 401)) throw e // 401: the server already revoked the token, the account is gone
     }
     await this.forget()
+    await db.deleteKv('today_carry')
     await db.clearReading()
   }
 

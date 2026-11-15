@@ -1,7 +1,7 @@
 // Api is the backend over fetch (spec §2). It only moves JSON; decisions stay in use cases.
 import { parseRemoteConfig, type RemoteConfig } from '../shared/config'
 import { ApiError, NetworkError } from '../shared/errors'
-import type { ArticleStatus, Installation, Me, NotionPage, PushBody, PushResult, TokenGrant } from '../shared/types'
+import type { ArticleStatus, History, Installation, Me, NotionPage, PushBody, PushResult, TokenGrant } from '../shared/types'
 import * as wire from './api-wire'
 
 export type Fetch = (url: string, init?: RequestInit) => Promise<Response>
@@ -80,6 +80,12 @@ export class Api {
     return Object.fromEntries(Object.entries(res.items ?? {}).map(([url, s]) => [url, wire.articleStatus(s)]))
   }
 
+  async history(token: string, p: { timeZone: string; limit?: number }): Promise<History> {
+    const q = new URLSearchParams({ tz: p.timeZone })
+    if (p.limit !== undefined) q.set('limit', String(p.limit))
+    return wire.history(await this.request<wire.WireHistory>('GET', `/v1/history?${q.toString()}`, { token }))
+  }
+
   async setupPages(token: string, query: string): Promise<NotionPage[]> {
     const q = new URLSearchParams({ q: query })
     const res = await this.request<{ pages: NotionPage[] | null }>('GET', `/v1/setup/pages?${q.toString()}`, { token })
@@ -128,5 +134,5 @@ export class Api {
 // ApiClient is what services depend on, so tests can pass plain objects.
 export type ApiClient = Pick<
   Api,
-  'oauthStartUrl' | 'config' | 'exchangeCode' | 'me' | 'logout' | 'deleteAccount' | 'push' | 'articlesStatus' | 'setupPages' | 'setup'
+  'oauthStartUrl' | 'config' | 'exchangeCode' | 'me' | 'logout' | 'deleteAccount' | 'push' | 'articlesStatus' | 'history' | 'setupPages' | 'setup'
 >

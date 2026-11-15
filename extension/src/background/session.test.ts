@@ -167,10 +167,12 @@ describe('SessionService', () => {
     })
 
     test('deleteAccount clears auth and local reading data after the server accepts', async () => {
+      await store.setKv('today_carry', { date: '2026-10-06', seconds: 60 })
       const api = apiStub()
       await service(api).deleteAccount()
       expect(api.count('deleteAccount')).toBe(1)
       await nothingStored()
+      expect(await store.getKv('today_carry')).toBeUndefined()
       expect(await articleCount()).toBe(0)
       expect(await store.getKv('enabled_domains')).toEqual(['example.com'])
     })

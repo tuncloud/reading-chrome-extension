@@ -114,6 +114,39 @@ describe('Api requests', () => {
     } })
   })
 
+  const wireHistory = {
+    articles: [{
+      canonical_url: 'https://medium.com/p/1a2b3c4d5e6f', source: 'medium', title: 'T', author: 'Jane Doe', site_name: 'Better Programming',
+      word_count: 1000, published_at: '2026-09-30', total_seconds: 60, max_progress: 0.2, last_read_at: '2026-10-06T03:07:00Z',
+      completed: false, notion_url: null,
+    }],
+    today: { date: '2026-10-06', seconds: 240 },
+  }
+
+  test('history requests tz (and limit) with the bearer token and maps the body', async () => {
+    const { api, calls } = stub(() => json(200, wireHistory))
+    const h = await api.history('rt_x', { timeZone: 'Asia/Ho_Chi_Minh' })
+    expect(calls[0]).toMatchObject({ method: 'GET', url: 'https://api.example.com/v1/history?tz=Asia%2FHo_Chi_Minh' })
+    expect(calls[0]?.headers.authorization).toBe('Bearer rt_x')
+    expect(h).toEqual({
+      articles: [{
+        canonicalUrl: 'https://medium.com/p/1a2b3c4d5e6f', source: 'medium', title: 'T', author: 'Jane Doe', siteName: 'Better Programming',
+        wordCount: 1000, publishedAt: '2026-09-30', totalSeconds: 60, maxProgress: 0.2, lastReadAt: '2026-10-06T03:07:00Z',
+        completed: false, notionUrl: null,
+      }],
+      today: { date: '2026-10-06', seconds: 240 },
+    })
+    await api.history('rt_x', { timeZone: 'Asia/Ho_Chi_Minh', limit: 20 })
+    expect(calls[1]?.url).toBe('https://api.example.com/v1/history?tz=Asia%2FHo_Chi_Minh&limit=20')
+  })
+
+  test('history rejects a body that is not a history', async () => {
+    for (const body of [{}, { articles: 'x', today: { date: 'd', seconds: 1 } }, { articles: [], today: null }, null]) {
+      const { api } = stub(() => json(200, body))
+      await expect(api.history('rt_x', { timeZone: 'UTC' })).rejects.toMatchObject({ code: 'bad_response' })
+    }
+  })
+
   test('setupPages encodes q; setup posts parent_page_id (§2.6, §2.7)', async () => {
     const { api, calls } = stub((c) => c.url.includes('/pages')
       ? json(200, { pages: [{ id: 'p1', title: 'Reading', url: 'https://www.notion.so/p1' }] })

@@ -2,7 +2,7 @@
 // names; the mapping to domain types lives here only.
 import Dexie, { type Table } from 'dexie'
 import type { LocalArticle, StoredSegment } from '../shared/reading'
-import type { Installation, CachedConfig, User } from '../shared/types'
+import type { HistoryArticle, Installation, CachedConfig, User } from '../shared/types'
 
 // KvSchema is the kv table of spec §3.4.
 export interface KvSchema {
@@ -15,6 +15,8 @@ export interface KvSchema {
   denied_domains: string[]
   sync_backoff_until: string
   sync_failures: number
+  // today_carry is how much of the server's total for `date` local segments do not account for (restored history).
+  today_carry: { date: string; seconds: number }
 }
 
 export type KvKey = keyof KvSchema
@@ -108,6 +110,18 @@ export class Db {
       await db.articles.put(fromArticle(merge(prev ? toArticle(prev) : undefined)))
       await db.segments.put(fromSegment(segment))
       return true
+    })
+  }
+
+  // restoreArticles merges server articles into the local ones in one transaction. It never touches segments,
+  // so restored data is never pushed back.
+  restoreArticles(items: readonly HistoryArticle[], merge: (local: LocalArticle | undefined, server: HistoryArticle) => LocalArticle): Promise<void> {
+    const { db } = this
+    return db.transaction('rw', db.articles, async () => {
+      for (const item of items) {
+        const prev = await db.articles.get(item.canonicalUrl)
+        await db.articles.put(fromArticle(merge(prev ? toArticle(prev) : undefined, item)))
+      }
     })
   }
 

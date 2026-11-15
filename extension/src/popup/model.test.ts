@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import { apiStub, clock as makeClock, INSTALLATION, record, segment, testDb } from '../../test/helpers'
 import type { Db } from '../background/db'
-import { roundMinutes } from '../shared/reading'
+import { mergeArticle, restoreArticle, roundMinutes } from '../shared/reading'
 import { NetworkError } from '../shared/errors'
 import { buildPopupModel } from './model'
 import type { SessionState } from '../shared/types'
@@ -39,6 +39,36 @@ describe('buildPopupModel', () => {
     await record(store, segment('b', { startedAt: '2026-10-06T09:00:00.000Z', activeSeconds: 200 }))
     const m = await build(connected('active'))
     expect(m.kind === 'active' && m.todayMinutes).toBe(roundMinutes(325))
+  })
+
+  test('adds the restored carry to today', async () => {
+    await store.setKv('today_carry', { date: '2026-10-06', seconds: 1500 })
+    await record(store, segment('a', { startedAt: '2026-10-06T09:00:00.000Z', activeSeconds: 300 }))
+    const m = await build(connected('active'))
+    expect(m.kind === 'active' && m.todayMinutes).toBe(30)
+  })
+
+  test('ignores a carry from another date', async () => {
+    await store.setKv('today_carry', { date: '2026-10-05', seconds: 1500 })
+    await record(store, segment('a', { startedAt: '2026-10-06T09:00:00.000Z', activeSeconds: 300 }))
+    const m = await build(connected('active'))
+    expect(m.kind === 'active' && m.todayMinutes).toBe(5)
+  })
+
+  test('reading after restore adds on top', async () => {
+    const url = 'https://e.com/r'
+    await store.restoreArticles([{
+      canonicalUrl: url, source: 'web', title: 'R', author: '', siteName: '', wordCount: 0, publishedAt: '', totalSeconds: 180,
+      maxProgress: 0.3, lastReadAt: '2026-10-06T08:00:00Z', completed: false, notionUrl: null,
+    }], restoreArticle)
+    await store.setKv('today_carry', { date: '2026-10-06', seconds: 180 })
+    const seg = segment('after', { canonicalUrl: url, startedAt: '2026-10-06T09:00:00.000Z', endedAt: '2026-10-06T09:01:00.000Z', activeSeconds: 60 })
+    await store.applyRead(seg, (prev) => mergeArticle(prev, {
+      canonicalUrl: url, source: 'web', title: 'R', author: '', siteName: '', wordCount: 0, publishedAt: '', originalUrl: url,
+    }, seg))
+    expect((await store.articles([url]))[0]?.totalSeconds).toBe(240)
+    const m = await build(connected('active'))
+    expect(m.kind === 'active' && m.todayMinutes).toBe(4)
   })
 
   test('current article, last 5 and the library link; server status enriches them', async () => {
