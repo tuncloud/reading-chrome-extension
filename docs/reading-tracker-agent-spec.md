@@ -582,8 +582,8 @@ reading-chrome-extension/
 9. **User deletes the page** → next write gets 404/archived → page re-created once.
 10. **User deletes the Library database** → installation `needs_setup`; pushes still accepted; after setup, resync creates all pages.
 11. **Integration removed from workspace / refresh `invalid_grant`** → `revoked`; popup shows Reconnect; reconnect → resync.
-12. **429 storm:** Notion returns 429 `Retry-After: 5` → job's `run_at` pushed back ≥ 5 s; other installations' groups keep processing.
-13. **Concurrent refresh impossible:** two jobs of the same installation never run in parallel (same `group_id`) — assert refresh happens once.
+12. **429 storm:** Notion returns 429 `Retry-After: 5` → job's `run_at` pushed back ≥ 5 s; other users' groups keep processing.
+13. **Concurrent refresh impossible:** two jobs of the same user never run in parallel (same `group_id`) — assert refresh happens once.
 14. **Store busy:** simulate a serialization failure, deadlock or connection exhaustion → segments come back `retry` (or, when every segment does, the request is 503 `capacity_exceeded`); extension retries later; nothing double-counted.
 15. **Validation:** `active_seconds = 4000`, `ended_at < started_at`, segment URL not in `articles[]`, `started_at` 40 days ago → each `rejected` with a reason.
 16. **Timezone:** segment `2026-10-05T18:30:00Z`, `tz=Asia/Ho_Chi_Minh` → `days` row `2026-10-06`.
