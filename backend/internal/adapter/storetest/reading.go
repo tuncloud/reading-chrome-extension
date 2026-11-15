@@ -26,6 +26,7 @@ var readingChecks = []struct {
 	{"BatchGetArticlesReturnsOnlyExisting", batchGetArticlesReturnsOnlyExisting},
 	{"ReadingIsPerUser", readingIsPerUser},
 	{"RecentArticlesNewestFirst", recentArticlesNewestFirst},
+	{"RecentArticlesTiesByURLHash", recentArticlesTiesByURLHash},
 }
 
 // T10 AC + scenario 2: the same segment twice increments aggregates once (C2).
@@ -305,5 +306,38 @@ func recentArticlesNewestFirst(t *testing.T, s ReadingStore) {
 	Must(t, err)
 	if got == nil || len(got) != 0 {
 		t.Fatalf("RecentArticles(nobody) = %#v, want empty non-nil slice", got)
+	}
+}
+
+// recentArticlesTiesByURLHash: articles with the same last_read_at come in url_hash order.
+// (A NULL last_read_at cannot be produced through ReadingStore; the postgres package tests it with SQL.)
+func recentArticlesTiesByURLHash(t *testing.T, s ReadingStore) {
+	urls := []string{
+		"https://medium.com/p/aaaaaaaaaaaa",
+		"https://medium.com/p/bbbbbbbbbbbb",
+		"https://medium.com/p/cccccccccccc",
+	}
+	ids := []string{
+		"00000000-0000-4000-8000-0000000000e1",
+		"00000000-0000-4000-8000-0000000000e2",
+		"00000000-0000-4000-8000-0000000000e3",
+	}
+	for i, u := range urls {
+		Push(t, s, Segment(ids[i], u, 0, 60, 0.5, TestNow))
+	}
+	want := make([]string, len(urls))
+	for i, u := range urls {
+		want[i] = domain.URLHash(u)
+	}
+	slices.Sort(want)
+
+	got, err := s.RecentArticles(ctx, UserID, 10)
+	Must(t, err)
+	hashes := make([]string, len(got))
+	for i, a := range got {
+		hashes[i] = domain.URLHash(a.CanonicalURL)
+	}
+	if !slices.Equal(hashes, want) {
+		t.Fatalf("RecentArticles hashes = %v, want url_hash order %v", hashes, want)
 	}
 }

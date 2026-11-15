@@ -343,7 +343,7 @@ Key `token_hmac`. `user_id`, `device_id`. Inserted with its `devices` row in one
 Key `id` (= Notion `bot_id`). `user_id`, `workspace_id`, `workspace_name`, `workspace_icon?`, `status` (`active`\|`needs_setup`\|`revoked`, enforced by a check constraint), `setup_error?`, `access_token_enc`, `refresh_token_enc`, `token_expires_at?` (text), `token_version` (int), `duplicated_template_id?`, `library_db_id?`, `library_ds_id?`, `library_url?`, `daily_db_id?`, `daily_ds_id?`, `props` (jsonb: logical_key → property id), `created_at`, `updated_at`.
 
 #### `articles`
-Key (`user_id`, `url_hash`). Index `articles_user_last_read` on (`user_id`, `last_read_at` DESC) serves the history endpoint (§2.18). `canonical_url`, `source`, `title`, `author`, `site_name`, `word_count`, `published_at` (text), `first_read_at`, `last_read_at`, `total_seconds` (bigint), `sessions` (bigint), `max_progress` (double), `completed` (bool, default false), `version` (bigint), `notion_page_id?`, `notion_url?`, `notion_ds_id?`, `notion_synced_version?`, `notion_synced_at?`.
+Key (`user_id`, `url_hash`). Index `articles_user_last_read` on (`user_id`, `last_read_at` DESC NULLS LAST, `url_hash`) serves the history endpoint (§2.18). `canonical_url`, `source`, `title`, `author`, `site_name`, `word_count`, `published_at` (text), `first_read_at`, `last_read_at`, `total_seconds` (bigint), `sessions` (bigint), `max_progress` (double), `completed` (bool, default false), `version` (bigint), `notion_page_id?`, `notion_url?`, `notion_ds_id?`, `notion_synced_version?`, `notion_synced_at?`.
 
 #### `segments`
 Key (`user_id`, `id`). `session_id`, `seq`, `url_hash`, `device_id`, `started_at`, `ended_at`, `active_seconds`, `max_progress`, `expires_at` = `started_at + 90 d` (indexed for the sweep).
@@ -436,7 +436,7 @@ kv:       { key (PK), value }                    // device_token, device_id, ins
 ```
 Synced segments older than 30 days are deleted locally.
 
-**Restore after connect.** After each successful connect the service worker calls `GET /v1/history` (§2.18; the device's time zone, limit 50) once, **before** the sync, and ignores a failure (it is logged; connecting is not blocked). It writes only to `articles` and `kv`, never to `segments`, so restored data is never pushed.
+**Restore after connect.** After each successful connect the service worker calls `GET /v1/history` (§2.18; the device's time zone, limit 50) once, **before** the sync, and ignores a failure (it is logged; connecting is not blocked). It writes only to `articles` and `kv`, never to `segments`, so restored data is never pushed. The restore also runs once when the extension is updated and a device token is stored (after the startup sequence, then a sync).
 - Merge per article, by `canonical_url`: `total_seconds` and `max_progress` take the larger of local and server (never the sum); `last_read_at` the later; `source`, `title`, `author`, `site_name`, `published_at`, `original_url` keep the local value when it is non-empty, else the server's (`original_url` falls back to the canonical URL); `word_count` keeps the local value when above 0. An article only the server has is stored as is.
 - `today_carry` = `{ date, seconds }`: `date` is the date the server reported, `seconds` is how far the server's total for that date exceeds the sum of local segments that start on that date (in the device's time zone), never below 0. The popup adds `seconds` to today's local minutes only when `date` equals the device's current local date. Deleting the account clears the key.
 

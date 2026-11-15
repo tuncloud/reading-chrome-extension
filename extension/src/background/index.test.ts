@@ -12,6 +12,8 @@ const svc = {
   domains: { reconcile: stub('domains.reconcile') },
   sync: { prune: stub('sync.prune'), run: stub('sync.run') },
   session: { refresh: stub('session.refresh') },
+  // RestoreService.run itself returns false without a device token; here it stands for "history requested".
+  restore: { run: stub('restore.run', async () => true) },
   log: { info: vi.fn(), warn: vi.fn() },
 }
 
@@ -58,6 +60,30 @@ test('onInstalled runs the startup sequence in order', async () => {
     'sync.run',
   ])
   expect(ch.chrome.alarms.create).toHaveBeenCalledWith('daily', { periodInMinutes: 1440, delayInMinutes: 1440 })
+})
+
+const startupOrder = [
+  'config.refreshIfStale',
+  'config.ensureSchedule',
+  'alarms.create daily {"periodInMinutes":1440,"delayInMinutes":1440}',
+  'domains.reconcile',
+  'sync.prune',
+  'session.refresh',
+  'sync.run',
+]
+
+test('onInstalled with reason "update" restores once after startup, then syncs', async () => {
+  ch.listeners['runtime.onInstalled']![0]!({ reason: 'update' })
+  await flush()
+  expect(order).toEqual([...startupOrder, 'restore.run', 'sync.run'])
+  expect(svc.restore.run).toHaveBeenCalledTimes(1)
+})
+
+test('onInstalled with reason "install" does not restore', async () => {
+  ch.listeners['runtime.onInstalled']![0]!({ reason: 'install' })
+  await flush()
+  expect(order).toEqual(startupOrder)
+  expect(svc.restore.run).not.toHaveBeenCalled()
 })
 
 test('a failing reconcile does not stop startup', async () => {

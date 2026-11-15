@@ -29,7 +29,18 @@ function run(task: () => Promise<unknown>, what: string): void {
   task().catch((e: unknown) => s.log.warn(`${what} failed: ${e instanceof Error ? e.message : String(e)}`))
 }
 
-chrome.runtime.onInstalled.addListener(() => run(startup, 'startup'))
+// On an update, also restore history once (an already-connected extension never hits the
+// restore-after-connect path). restore.run() does nothing without a device token and never throws;
+// it merges by larger-of, so repeating it is safe.
+async function afterUpdate(): Promise<void> {
+  await startup()
+  await s.restore.run()
+  await s.sync.run()
+}
+
+chrome.runtime.onInstalled.addListener((details?: chrome.runtime.InstalledDetails) =>
+  details?.reason === 'update' ? run(afterUpdate, 'update') : run(startup, 'startup'),
+)
 chrome.runtime.onStartup.addListener(() => run(startup, 'startup'))
 
 chrome.alarms.onAlarm.addListener((alarm) => {

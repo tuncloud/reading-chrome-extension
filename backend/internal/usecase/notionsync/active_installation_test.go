@@ -68,6 +68,10 @@ func TestJobForUserWithoutActiveInstallationIsAcked(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
+		{"profile is deleted", func(e *wenv) {
+			e.seedInstallation("tok", "rt")
+			must(e.t, e.db.Store.MarkProfileDeleted(ctx, testUser, e.now))
+		}},
 		{"no active installation", func(e *wenv) {
 			e.seedInstallation("tok", "rt")
 			must(e.t, e.db.Store.SetActiveInstallation(ctx, testUser, ""))

@@ -3,7 +3,6 @@ package httpapi_test
 import (
 	"context"
 	"fmt"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -101,7 +100,6 @@ func TestHistoryReturnsRecentAndToday(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
-	t.Logf("body: %s", rec.Body)
 	got := decode[historyResp](t, rec)
 	if len(got.Articles) != 2 {
 		t.Fatalf("articles = %+v", got.Articles)
@@ -270,7 +268,7 @@ func TestHistoryRejectsBadTimeZone(t *testing.T) {
 
 func TestHistoryRequiresDevice(t *testing.T) {
 	env := newTestEnv(t)
-	var rec *httptest.ResponseRecorder = env.do("GET", "/v1/history?tz=UTC", nil, "")
+	rec := env.do("GET", "/v1/history?tz=UTC", nil, "")
 	if rec.Code != 401 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}

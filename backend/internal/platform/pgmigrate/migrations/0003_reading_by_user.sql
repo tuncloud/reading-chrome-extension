@@ -15,7 +15,12 @@
 --     above any notion_synced_version kept, so the next sync writes the merged totals.
 --   * A segment id present under several installations of one user is kept once.
 
+-- Writers from old server pods must wait here, then fail against the new schema (the
+-- extension retries); otherwise a push committed mid-migration would be lost. Reads stay allowed.
+LOCK TABLE articles, days, segments IN EXCLUSIVE MODE;
+
 -- owned_* attach the user to each row and flag the one from the active installation.
+-- A row whose installation's user has no users row is kept under that user id.
 CREATE TEMP TABLE owned_articles ON COMMIT DROP AS
 SELECT i.user_id, (i.id = u.active_installation_id) IS TRUE AS from_active, a.*
 FROM articles a
@@ -64,7 +69,7 @@ LEFT JOIN synced s USING (user_id, url_hash);
 DROP TABLE articles;
 ALTER TABLE articles_by_user RENAME TO articles;
 ALTER INDEX articles_by_user_pkey RENAME TO articles_pkey;
-CREATE INDEX articles_user_last_read ON articles (user_id, last_read_at DESC);
+CREATE INDEX articles_user_last_read ON articles (user_id, last_read_at DESC NULLS LAST, url_hash);
 
 -- days ----------------------------------------------------------------------------------
 
