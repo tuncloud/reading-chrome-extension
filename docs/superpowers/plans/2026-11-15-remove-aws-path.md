@@ -430,7 +430,7 @@ Expected: nothing that describes a current code path or instruction.
 Run: `cd backend && go list -deps ./... | grep -E 'aws-sdk-go|aws-lambda-go|smithy-go' ; gofmt -l . ; go vet ./... && go test -race ./...`
 Expected: no dependency output, no gofmt output, every package `ok`.
 
-Run: `git status --short docs/superpowers` 
+Run: `git status --short docs/superpowers`
 Expected: only this plan file.
 
 - [ ] **Step 6: Commit**
